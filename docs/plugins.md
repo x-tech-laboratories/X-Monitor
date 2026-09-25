@@ -46,6 +46,7 @@ config examples. For what Vigil is and how to run it, see the
   [`filesystems`](#filesystems) ·
   [`folders`](#folders) ·
   [`vms`](#vms) ·
+  [`host_control`](#host_control) ·
   [`cloud`](#cloud) ·
   [`group`](#group)
 - [Plugin Layout](#plugin-layout) — arranging a plugin's widgets on its page
@@ -59,7 +60,7 @@ config examples. For what Vigil is and how to run it, see the
 
 | Type | Monitors | Collection | Key metrics | Actions |
 |------|----------|------------|-------------|---------|
-| [`uptime`](#uptime)                     | Host reachability                     | ICMP ping                                        | `up`, `latency_ms`                              | — |
+| [`uptime`](#uptime)                     | Host reachability                     | ICMP ping                                        | `up`, `latency_ms`                              | Wake (Wake-on-LAN, with `mac`) |
 | [`push`](#push)                         | External heartbeat (dead man's switch) | REST API (caller pushes in)                     | `last_push_epoch`, `reported_up`, `value`       | — |
 | [`http`](#http)                         | HTTP(S)/WebSocket endpoint health     | HTTP from the Vigil host, or `websocat` over SSH | `probe_ok`, `probe_status`, `probe_latency_ms`  | — |
 | [`dns_record`](#dns_record)             | DNS record resolution                 | DNS query (via dnspython, in-process)            | `resolved`, `ttl`, `matches_expected`            | — |
@@ -98,6 +99,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`filesystems`](#filesystems)           | All mounted filesystems (auto-discovered) | SSH (`df`)                                    | `worst_used_pct`, `fs_<mount>_used_pct`         | — |
 | [`folders`](#folders)                   | Sizes of arbitrary directories        | SSH (`du`)                                        | `worst_folder_gb`, `folder_<path>_gb`           | — |
 | [`vms`](#vms)                           | libvirt/KVM virtual machines          | SSH (`virsh`)                                     | `vms_total`, `vms_running`, `vms_stopped`       | Start, Shutdown (per expected VM) |
+| [`host_control`](#host_control)         | Host power, boot and identify controls | SSH (`powerprofilesctl`, `bootctl`/GRUB/`efibootmgr`, `/sys/power`) | `power_profiles`, `boot_entries`, `suspend_supported` | Reboot, Shut Down, Suspend, Power Profile, Next Boot, Identify (each opt-in) |
 | [`cloud`](#cloud)                       | Cloud instance metadata (AWS/GCP/Azure) | SSH (metadata endpoint)                         | `on_cloud`                                      | — |
 | [`group`](#group)                       | Container for nested monitors         | — (aggregates children)                          | —                                               | — |
 
@@ -107,18 +109,27 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `host_control`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 
 ---
 
 ### `uptime`
-Checks host availability using ICMP ping.
+Checks host availability using ICMP ping. With `mac:` set it can also wake the host with a Wake-on-LAN magic packet.
 
-| Option        | Description                                        |
-|---------------|----------------------------------------------------|
-| `target_host` | IP address or hostname to ping                     |
-| `interval`    | Polling frequency in seconds (default: `60`)       |
+| Option              | Description                                        |
+|---------------------|----------------------------------------------------|
+| `target_host`       | IP address or hostname to ping                     |
+| `interval`          | Polling frequency in seconds (default: `60`)       |
+| `mac`               | *(Optional)* The host's MAC address; adds a **Wake** button (asks for confirmation) |
+| `wol_broadcast`     | Address the packet is sent to (default: `255.255.255.255`); a subnet's broadcast address such as `192.168.1.255` reaches it from a host with several networks |
+| `wol_port`          | UDP port (default: `9`)                            |
+| `wol_password`      | *(Optional)* SecureOn password, as six hex bytes (`01:02:03:04:05:06`) or a dotted quad |
+| `wake_via`          | *(Optional)* The `id` of another monitor whose host sends the packet instead of the Vigil server — for a host on a subnet only that one reaches. It uses that monitor's SSH connection or agent |
+| `wake_command`      | *(Optional, with `wake_via`)* The command that sends it there, overriding the default. `{mac}`, `{hex}` (the whole packet), `{broadcast}`, `{port}` and `{password}` are filled in, shell-quoted; write other braces doubled |
+| `wake_on_down`      | Send a wake automatically when the host goes **failed** (default: `false`) |
+| `wake_retry`        | Time between automatic wakes while it stays down (default: `10m`) |
+| `wake_max_attempts` | Automatic wakes before giving up until the host is seen up again (default: `3`) |
 
 **Metrics**: `up` (1/0), `latency_ms`
 
@@ -128,6 +139,19 @@ Checks host availability using ICMP ping.
   type: "uptime"
   target_host: "192.168.1.1"
   interval: 30
+```
+
+Without `wake_via`, the packet is one UDP broadcast from the Vigil server, so it reaches hosts on the server's own network. With it, Vigil builds the packet and the other host sends it with `python3` or, failing that, `socat`; a host with neither needs a `wake_command`, such as `wakeonlan -i {broadcast} -p {port} {mac}` or `etherwake -i eth0 {mac}` (which sends raw Ethernet frames and so usually needs root). Every wake, manual or automatic, is logged to the monitor's events with where it was sent and whether that worked; the last automatic one says it is giving up.
+
+```yaml
+- name: "NAS"
+  id: "nas-ping"
+  type: "uptime"
+  target_host: "192.168.20.5"
+  mac: "00:11:22:33:44:55"
+  wake_via: "host1-cpu"            # any monitor on a host in that subnet
+  wol_broadcast: "192.168.20.255"
+  wake_on_down: true               # wake it whenever it drops, every 10m, 3 times at most
 ```
 
 ---
@@ -1492,6 +1516,87 @@ Monitors libvirt/KVM virtual machines over SSH via `virsh list --all`, counting 
 
 ---
 
+### `host_control`
+A host's power and boot controls, one monitor per host. It shows the current power profile and the ones available, the boot entries with the default and the one-shot next-boot entry, and whether the host can suspend, and offers the actions below. It is a control surface rather than a health check: it is **online** whenever the host answers, and a host without one of the tools simply shows that control as `n/a`.
+
+What it reads, and from where:
+
+| Control | Read with | Fallbacks |
+|---------|-----------|-----------|
+| Power profile | `powerprofilesctl list` (power-profiles-daemon) | `tuned-adm list`, then `/sys/firmware/acpi/platform_profile` |
+| Boot entries | `bootctl list --json=short` (systemd-boot), with the one-shot entry from the `LoaderEntryOneShot` EFI variable | `grub-editenv list` plus the `menuentry` titles in `grub.cfg` (GRUB), then `efibootmgr` (`BootOrder` / `BootNext`) |
+| Suspend | `/sys/power/state` (`mem` or `freeze`) | — |
+
+**Every action is off** unless it is listed under `allow:`. The dashboard only shows the buttons of allowed actions, and asks for confirmation, naming the host, before each one. An action that is not allowed is refused and logged (`… refused: not in allow`); every attempt, allowed or refused, is logged to the monitor's events with the action and its outcome.
+
+| Action | `allow:` name | Runs |
+|--------|---------------|------|
+| Reboot | `reboot` | `sudo -n systemctl reboot` |
+| Shut Down | `shutdown` | `sudo -n systemctl poweroff` |
+| Suspend | `suspend` | `sudo -n systemctl suspend` (shown only when the host can suspend) |
+| Power Profile | `power_profile` | `powerprofilesctl set <profile>`, `tuned-adm profile <profile>`, or writes `platform_profile` through `tee`, each through `sudo -n` |
+| Next Boot | `next_boot` | `bootctl set-oneshot <entry>`, `grub-reboot <entry>` (`grub2-reboot` on Fedora-style hosts), or `efibootmgr --bootnext <entry>`, through `sudo -n`; with **Reboot now** ticked (offered only when `reboot` is allowed too) it reboots straight afterwards |
+| Identify / Stop Identify | `identify` | `ledctl locate=<identify_device>` / `ledctl locate_off=<identify_device>`, or with `identify_method: beep`, `beep -r 5`, falling back to a bell on `/dev/console` |
+
+Reboot, shutdown and suspend take the host away mid-command, so a connection that drops after the command was sent counts as success; a host that could not be reached at all is a failure. The SSH connection is re-dialled on the next poll, and an agent reconnects by itself when the host is back.
+
+| Option            | Description |
+|-------------------|-------------|
+| `allow`           | Actions to offer: any of `reboot`, `shutdown`, `suspend`, `power_profile`, `next_boot`, `identify` (default: none) |
+| `privilege`       | `sudo` (default) runs each action as `sudo -n …`, which fails at once with a clear message instead of waiting for a password; `none` runs it as the SSH or agent user, for a root login or a polkit rule |
+| `identify_method` | `ledctl` (default when `identify_device` is set) or `beep` (the default otherwise) |
+| `identify_device` | The drive whose enclosure LED `ledctl` blinks, e.g. `/dev/sda` |
+| `ssh_config`      | SSH connection details — see [SSH Config](#ssh-config) below |
+
+**Metrics**: `power_profiles`, `boot_entries`, `suspend_supported` (1/0)
+
+```yaml
+- name: "host1 control"
+  id: "host1-control"
+  type: "host_control"
+  interval: 5m
+  allow: [reboot, shutdown, suspend, power_profile, next_boot, identify]
+  identify_device: "/dev/sda"
+  ssh_config:
+    host: "host1"
+```
+
+With `privilege: sudo`, the Vigil user needs passwordless sudo for exactly the commands it runs, and nothing else. Keep only the lines for the actions you allow; boot-entry reads fall back to running unprivileged, so their lines are needed only where the ESP or `grub.cfg` is root-only. Command paths vary by distribution (`command -v systemctl` on the host shows yours), and sudo matches the arguments exactly:
+
+```
+# /etc/sudoers.d/vigil — edit with: visudo -f /etc/sudoers.d/vigil
+vigil ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl suspend
+vigil ALL=(root) NOPASSWD: /usr/bin/powerprofilesctl set *, /usr/sbin/tuned-adm profile *
+vigil ALL=(root) NOPASSWD: /usr/bin/tee /sys/firmware/acpi/platform_profile
+vigil ALL=(root) NOPASSWD: /usr/bin/bootctl list --json=short, /usr/bin/bootctl set-oneshot *
+vigil ALL=(root) NOPASSWD: /usr/bin/cat /boot/grub/grub.cfg, /usr/bin/cat /boot/grub2/grub.cfg, /usr/sbin/grub-reboot *, /usr/sbin/grub2-reboot *
+vigil ALL=(root) NOPASSWD: /usr/bin/efibootmgr --bootnext *
+vigil ALL=(root) NOPASSWD: /usr/sbin/ledctl locate=/dev/sda, /usr/sbin/ledctl locate_off=/dev/sda
+vigil ALL=(root) NOPASSWD: /usr/bin/beep -r 5, /usr/bin/tee /dev/console
+```
+
+A `*` lets the profile or boot entry vary, which is safe here because Vigil only ever passes a name it read from the host, shell-quoted. On NixOS the same rule goes in the system configuration, with the store paths of the system profile:
+
+```nix
+security.sudo.extraRules = [{
+  users = [ "vigil" ];
+  commands = map (command: { inherit command; options = [ "NOPASSWD" ]; }) [
+    "/run/current-system/sw/bin/systemctl reboot"
+    "/run/current-system/sw/bin/systemctl poweroff"
+    "/run/current-system/sw/bin/systemctl suspend"
+    "/run/current-system/sw/bin/powerprofilesctl set *"
+    "/run/current-system/sw/bin/bootctl list --json=short"
+    "/run/current-system/sw/bin/bootctl set-oneshot *"
+    "/run/current-system/sw/bin/ledctl locate=/dev/sda"
+    "/run/current-system/sw/bin/ledctl locate_off=/dev/sda"
+  ];
+}];
+```
+
+GRUB's one-shot entry (`grub-reboot`) only takes effect when the host's GRUB config has `GRUB_DEFAULT=saved`.
+
+---
+
 ### `cloud`
 Detects the cloud provider of the target and surfaces its instance metadata (id, type, region/zone) over SSH via the link-local metadata endpoint (`169.254.169.254`). Auto-detects across AWS (IMDSv2), GCP, and Azure, or query one provider explicitly. Informational — no thresholds; reports online when metadata is reachable, unavailable when the host isn't on a recognized cloud.
 
@@ -1638,7 +1743,7 @@ The same keys can instead be given as a **mapping of widget name → properties*
 
 | Plugin             | Widget names                                                                 |
 |--------------------|------------------------------------------------------------------------------|
-| `uptime`           | `host_card`, `status_card`, `latency_card`, `chart`, `events`               |
+| `uptime`           | `host_card`, `status_card`, `latency_card`, `wake` (with `mac`), `chart`, `events` |
 | `systemd_service`  | hand-written UI — not individually addressable                              |
 | `cpu`              | `host_card`, `cpu_card`, `cores`, `cpu_chart`, `events`                     |
 | `memory`           | `host_card`, `mem_pct_card`, `mem_used_card`, `memory_chart`, `events`      |

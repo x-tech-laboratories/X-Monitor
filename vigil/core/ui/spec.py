@@ -155,10 +155,16 @@ kind 'edit'     Loads content via ``load_action_id``/``load_params`` into an edi
                 via ``save_action_id``/``save_params`` with the edited text passed under
                 ``save_content_kwarg`` (default ``'content'``), and notifies
                 ``success_message`` on success.
-kind 'form'     Shows one text input per ``fields`` entry (``{'name', 'label',
-                'placeholder', 'default'}``); ``submit_label`` (default ``'Run'``) runs
-                ``action_id`` with ``params`` plus each field's value under its name, and
-                shows the returned content below the inputs, so it can be resubmitted.
+kind 'form'     Shows one input per ``fields`` entry (``{'name', 'label',
+                'placeholder', 'default'}``): a text box, a select when the field has
+                ``options`` (a list, or a value -> label dict) or ``options_attr`` (a plugin
+                attribute holding them, with ``default_attr`` naming the preselected one),
+                or a checkbox for ``'type': 'checkbox'`` (passed as a bool).
+                ``submit_label`` (default ``'Run'``) runs ``action_id`` with ``params`` plus
+                each field's value under its name, first asking the user to confirm the
+                ``confirm`` template (field values substituted as ``{row[name]}``) when one
+                is set, and shows the returned content below the inputs, so it can be
+                resubmitted.
 
 Formatters (FORMATTERS)
 =======================

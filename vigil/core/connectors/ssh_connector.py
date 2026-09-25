@@ -22,6 +22,9 @@ _MAX_CONCURRENT_PER_HOST = 8
 COLLECT_TIMEOUT = 30.0
 CONTROL_TIMEOUT = 60.0
 
+# The error prefix of a command that never reached its host, as opposed to one cut off mid-run.
+CONNECT_FAILED = "Connect failed"
+
 asyncssh.set_log_level(logging.WARNING)
 
 
@@ -138,6 +141,11 @@ class SSHConnection:
         proc = None
         try:
             conn = await self._get_connection()
+        except (asyncssh.Error, OSError) as e:
+            reason = str(e) or type(e).__name__
+            logging.error(f"SSH connect failed on {self.host}: {reason}")
+            return -1, "", f"{CONNECT_FAILED}: {reason}"
+        try:
             async with self._channel_semaphore:
                 proc = await conn.create_process(command)
                 try:
@@ -154,7 +162,10 @@ class SSHConnection:
             logging.error(f"SSH execution failed on {self.host}: {e}")
             if proc is not None:
                 await self._kill_process(proc)
-            return -1, "", str(e)
+            # A host that rebooted or went down leaves a dead connection; forget it so the next command dials afresh.
+            if conn.is_closed() or isinstance(e, (asyncssh.ConnectionLost, asyncssh.DisconnectError)):
+                self._forget(conn)
+            return -1, "", str(e) or "Connection lost"
 
     @staticmethod
     async def _kill_process(proc: "asyncssh.SSHClientProcess") -> None:
@@ -168,6 +179,11 @@ class SSHConnection:
                 return
             except (asyncio.TimeoutError, OSError):
                 continue
+
+    def _forget(self, conn: "asyncssh.SSHClientConnection") -> None:
+        """Close and drop `conn` if it is still the pooled one, leaving a newer connection alone."""
+        if self._conn is conn:
+            self.close()
 
     def close(self):
         if self._conn is not None:

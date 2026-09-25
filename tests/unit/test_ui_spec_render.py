@@ -120,3 +120,60 @@ class TestPerCoreBars:
     async def test_no_snapshot_renders_no_bars(self, user: User, render_page):
         built = await _ticked(user, render_page)
         assert _bar_fills(built) == []
+
+
+class TestFormInputs:
+    async def test_select_checkbox_and_text_fields(self, user: User):
+        from types import SimpleNamespace
+        from nicegui.elements.checkbox import Checkbox
+        from nicegui.elements.input import Input
+        from nicegui.elements.select import Select
+        from vigil.core.ui.components import _form_input
+        plugin = SimpleNamespace(entries={'0001': 'Linux', '0003': 'Windows'}, chosen='0003')
+        built = {}
+
+        @ui.page('/form')
+        def _page():
+            built['select'] = _form_input(plugin, {'name': 'entry', 'options_attr': 'entries',
+                                                   'default_attr': 'chosen'})
+            built['fallback'] = _form_input(plugin, {'name': 'p', 'options': ['a', 'b'], 'default': 'z'})
+            built['checkbox'] = _form_input(plugin, {'name': 'reboot', 'type': 'checkbox'})
+            built['text'] = _form_input(plugin, {'name': 'path', 'default': '/etc'})
+
+        await user.open('/form')
+        assert isinstance(built['select'], Select) and built['select'].value == '0003'
+        assert built['fallback'].value == 'a'
+        assert isinstance(built['checkbox'], Checkbox) and built['checkbox'].value is False
+        assert isinstance(built['text'], Input) and built['text'].value == '/etc'
+
+
+class TestHostControlPage:
+    async def test_renders_its_cards_buttons_and_boot_table(self, user: User, make_plugin):
+        from nicegui.elements.button import Button
+        from nicegui.elements.table import Table
+        from vigil.core.connectors.types import CmdResult
+        from vigil.plugins.host_control import HostControl
+        control = make_plugin(HostControl, {"name": "host1 control", "id": "host1-control",
+                                            "allow": ["reboot", "next_boot"],
+                                            "ssh_config": {"host": "host1"}})
+        boot = ('loader=efi\n@@entries\nBootOrder: 0001\n'
+                'Boot0001* Linux Boot Manager\tHD(1)\nBoot0003* Windows Boot Manager\tHD(1)\n')
+        control.storage.apply(control.parse([CmdResult(0, "backend=none", ""), CmdResult(0, boot, ""),
+                                             CmdResult(0, "mem", "")]))
+        built = {}
+
+        @ui.page('/control')
+        def _page():
+            from nicegui import context
+            built['page'] = spec.generic_render(control, start=False)
+            built['client'] = context.client
+
+        await _ticked(user, built, '/control')
+        await user.should_see('Linux Boot Manager')
+        elements = list(built['client'].elements.values())
+        labels = [e.text for e in elements if isinstance(e, Button) and getattr(e, 'text', '')]
+        assert 'Reboot' in labels and 'Next Boot' in labels
+        assert 'Shut Down' not in labels
+        table = next(e for e in elements if isinstance(e, Table)
+                     and any(c['name'] == 'next' for c in e.columns))
+        assert [r['id'] for r in table.rows] == ['0001', '0003']
