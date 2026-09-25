@@ -56,6 +56,8 @@
                     asyncssh
                     # The apprise notification channel (vigil/core/notifications/mail.py).
                     apprise
+                    # The MQTT exporter (vigil/core/exporters/mqtt.py).
+                    aiomqtt
                     # The agent transport's client half (vigil_agent/client.py).
                     # The server side needs nothing extra: nicegui already
                     # brings FastAPI/uvicorn, which serve the agent WebSocket.
