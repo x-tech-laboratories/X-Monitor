@@ -35,4 +35,5 @@
 - [ ] Public IP / geolocation monitor
 - [ ] CSV / JSON file export (flat-file dump alongside the Prometheus/InfluxDB exporters)
 - [ ] Additional export backends — MQTT with Home Assistant discovery is done; Graphite, Elasticsearch, … remain
-- [ ] Per-core CPU breakdown in the CPU monitor
+- [x] Per-core CPU breakdown in the CPU monitor
+- [x] AMD and Intel GPUs in the GPU monitor, auto-detected alongside NVIDIA

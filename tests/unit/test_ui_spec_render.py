@@ -93,3 +93,30 @@ class TestInlineThresholdColoring:
         label = _cpu_label(built)
         assert label.text == '-- %'
         assert 'color' not in label._style
+
+
+def _bar_fills(built: dict) -> list:
+    """Every per-core bar's fill element, in render order."""
+    return [e for e in built['client'].elements.values() if 'halon-bar-fill' in e._classes]
+
+
+class TestPerCoreBars:
+    async def test_each_core_gets_a_bar_filled_to_its_share(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(
+            metrics={'cpu_pct': 50.0}, status='online',
+            snapshot=[{'label': '0', 'value': 20.0}, {'label': '1', 'value': 90.0}]))
+        built = await _ticked(user, render_page)
+        assert [f._style['width'] for f in _bar_fills(built)] == ['20.0%', '90.0%']
+
+    async def test_a_busy_core_is_filled_with_the_failed_color(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(
+            metrics={'cpu_pct': 50.0}, status='online',
+            snapshot=[{'label': '0', 'value': 10.0}, {'label': '1', 'value': 99.0}]))
+        built = await _ticked(user, render_page)
+        idle, busy = _bar_fills(built)
+        assert STATUS_COLORS['online'] in idle._style['background-color']
+        assert STATUS_COLORS['failed'] in busy._style['background-color']
+
+    async def test_no_snapshot_renders_no_bars(self, user: User, render_page):
+        built = await _ticked(user, render_page)
+        assert _bar_fills(built) == []

@@ -41,7 +41,8 @@ class RepeatSpec(TypedDict, total=False):
     GPUs, ...) rendered as repeated chips or mini-cards. `source` selects
     which of the three resolution strategies _resolve_repeat_items uses."""
     source: str                    # 'snapshot' (default) | 'setting' | 'metrics_prefix'
-    container: str                 # 'chips' (default) | anything else -> info_card grid
+    container: str                 # 'chips' (default) | 'bars' (percent bars in a titled card) | anything else -> info_card grid
+    title: str                     # heading of a 'bars' container
     item_label: str
     item_value: str
     item_format: str               # FORMATTERS key
