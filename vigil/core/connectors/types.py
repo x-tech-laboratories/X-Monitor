@@ -112,6 +112,8 @@ class HttpResult:
     elapsed_ms: float = 0.0
     """Wall-clock time the request took, measured by the connector. 0.0 on a
     transport error (nothing completed)."""
+    headers: Dict[str, str] = field(default_factory=dict)
+    """Response headers with lower-cased names; empty on a transport error."""
 
 
 @dataclass(frozen=True)
