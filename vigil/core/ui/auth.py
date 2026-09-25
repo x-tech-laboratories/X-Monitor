@@ -4,8 +4,10 @@ A browser signs in once at ``/login`` (see ``core/ui/login.py``) and is issued
 a signed, expiring cookie; every later request carries it and no credential
 prompt appears again. Machine callers — Prometheus scraping ``/metrics``, a
 script hitting ``/api/...`` — cannot follow a form redirect, so they may still
-present HTTP Basic credentials instead. The two are alternatives: either an
-intact session cookie or a valid Basic header lets a request through.
+present HTTP Basic credentials instead, or better a named API token from
+``auth.tokens`` (see ``core/ui/tokens.py``) as ``Authorization: Bearer``. Any
+one of an intact session cookie, a valid Basic header, or a token whose scope
+covers the route lets a request through; a token never opens the dashboard.
 
 The cookie is a self-contained token, ``v1.<payload>.<hmac>``, signed with a
 key from ``auth.session_secret``/``session_secret_file`` or generated at
@@ -32,6 +34,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
+from vigil.core.ui.tokens import TokenRegistry, bearer_token, build_tokens
+
 COOKIE_NAME = 'vigil_session'
 CSRF_COOKIE_NAME = 'vigil_csrf'
 LOGIN_PATH = '/login'
@@ -41,7 +45,7 @@ DEFAULT_SESSION_HOURS = 12
 DEFAULT_REMEMBER_DAYS = 30
 
 # Reachable without a session: the sign-in flow itself, the icon the login page
-# draws, and the push endpoint, which carries its own per-monitor token.
+# draws, and the push endpoint, which checks its own per-monitor or push token.
 _PUBLIC_PATHS = frozenset({LOGIN_PATH, LOGOUT_PATH, '/icon.svg', '/favicon.ico'})
 _PUBLIC_PREFIXES = ('/api/push/',)
 
@@ -241,22 +245,41 @@ def _wants_page(request: Request) -> bool:
     return 'text/html' in request.headers.get('accept', '')
 
 
-class SessionAuthMiddleware(BaseHTTPMiddleware):
-    """Gate every route on a session cookie, or Basic credentials for scripts."""
+def acting_client(request: Request) -> Optional[str]:
+    """Who made this request, for the audit trail: an account name, ``token '<name>'``, or None."""
+    return getattr(request.state, 'vigil_client', None)
 
-    def __init__(self, app: Any, config: AuthConfig):
+
+def _unauthorized() -> Response:
+    # No WWW-Authenticate: a browser must land on Vigil's own login page,
+    # not the native credential dialog this replaced.
+    return JSONResponse({'error': 'authentication required'}, status_code=401)
+
+
+class SessionAuthMiddleware(BaseHTTPMiddleware):
+    """Gate every route on a session cookie, an API token, or Basic credentials for scripts."""
+
+    def __init__(self, app: Any, config: AuthConfig, tokens: Optional[TokenRegistry] = None):
         super().__init__(app)
         self._config = config
+        self._tokens = tokens or TokenRegistry()
 
     async def dispatch(self, request: Request, call_next):
         if _is_public(request.url.path):
             return await call_next(request)
 
-        if read_session(request.cookies.get(COOKIE_NAME), self._config):
+        username = read_session(request.cookies.get(COOKIE_NAME), self._config)
+        if username:
+            request.state.vigil_client = username
             return await call_next(request)
 
         credentials = request.headers.get('authorization')
+        presented = bearer_token(credentials)
+        if presented is not None:
+            return await self._dispatch_token(request, call_next, presented)
+
         if credentials and _check_basic(credentials, self._config):
+            request.state.vigil_client = self._config.username
             return await call_next(request)
 
         if _wants_page(request):
@@ -265,19 +288,42 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                 target = f"{target}?{request.url.query}"
             return RedirectResponse(f"{LOGIN_PATH}?next={encode_next(target)}", status_code=303)
 
-        # No WWW-Authenticate: a browser must land on Vigil's own login page,
-        # not the native credential dialog this replaced.
-        return JSONResponse({'error': 'authentication required'}, status_code=401)
+        return _unauthorized()
+
+    async def _dispatch_token(self, request: Request, call_next, presented: str):
+        """Let a bearer token through to the API routes its scope covers, and nowhere else."""
+        method, path = request.method, request.url.path
+        token = self._tokens.match(presented)
+        if token is None:
+            logging.warning(f"auth: rejected an unknown API token for {method} {path}")
+            return _unauthorized()
+        if not token.allows_request(method, path):
+            logging.warning(f"auth: token {token.name!r} ({token.scope}) refused {method} {path}")
+            return JSONResponse({'error': f"token '{token.name}' may not {method} {path}"},
+                                status_code=403)
+        request.state.vigil_client = f"token '{token.name}'"
+        # Reads are logged quietly, since a scraper makes one every few seconds.
+        level = logging.DEBUG if method in ('GET', 'HEAD') else logging.INFO
+        logging.log(level, f"auth: token {token.name!r} {method} {path}")
+        return await call_next(request)
 
 
-def register_auth(app: Any, auth_settings: Dict[str, Any]) -> Optional[AuthConfig]:
+def register_auth(app: Any, auth_settings: Dict[str, Any],
+                  tokens: Optional[TokenRegistry] = None) -> Optional[AuthConfig]:
     """Install the login routes and session gate when credentials are configured."""
+    if tokens is None:
+        tokens = build_tokens(auth_settings)
     config = build_config(auth_settings)
     if config is None:
+        if any(t.scope != 'push' for t in tokens):
+            logging.warning(
+                "auth: read and control tokens have no effect without auth.username "
+                "and auth.password — the dashboard and API are open to anyone."
+            )
         return None
 
     from vigil.core.ui.login import register_login_routes
     register_login_routes(app, config)
-    app.add_middleware(SessionAuthMiddleware, config=config)
-    logging.info("auth: session login enabled for the dashboard and API")
+    app.add_middleware(SessionAuthMiddleware, config=config, tokens=tokens)
+    logging.info(f"auth: session login enabled for the dashboard and API, with {len(tokens)} API token(s)")
     return config

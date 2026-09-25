@@ -60,11 +60,24 @@ class MemorySettings(TypedDict, total=False):
     finished_job_output: int
 
 
+class ApiTokenSettings(TypedDict, total=False):
+    """One entry in ``auth.tokens``: a named client's bearer token and its scope.
+    Give the secret as ``token_hash`` (from ``vigil token new``), or as
+    ``token_file`` or ``token``, which are hashed at startup."""
+    name: str
+    scope: str                  # read, control or push
+    token_hash: str             # sha256:<64 hex digits>
+    token_file: str
+    token: str
+    monitors: List[str]         # push only: the monitor ids it may push to; all when absent
+
+
 class AuthSettings(TypedDict, total=False):
-    """The single operator account guarding the dashboard, and how long a
-    sign-in lasts. Each secret may be given inline or as a ``*_file`` path read
-    once at startup. Without ``session_secret`` a key is generated per start,
-    so a restart signs everyone out."""
+    """The single operator account guarding the dashboard, how long a sign-in
+    lasts, and the API tokens other clients use. Each secret may be given
+    inline or as a ``*_file`` path read once at startup. Without
+    ``session_secret`` a key is generated per start, so a restart signs
+    everyone out."""
     username: str
     password: str
     password_file: str
@@ -72,6 +85,7 @@ class AuthSettings(TypedDict, total=False):
     session_secret_file: str
     session_hours: int
     remember_days: int
+    tokens: List[ApiTokenSettings]
 
 
 class InfluxDBExporterSettings(TypedDict, total=False):
