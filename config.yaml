@@ -23,6 +23,12 @@ logging:
                               # monitor; they double the metric row count, so
                               # set false to shed them. vigil_self's cycle-time
                               # table is kept in memory and works either way.
+  # level: INFO               # Root log level at startup: DEBUG, INFO, WARNING,
+                              # ERROR or CRITICAL. Change it while running from
+                              # the dashboard's System menu, POST /api/log-levels,
+                              # or SIGUSR1 (more verbose) / SIGUSR2 (quieter).
+  # levels:                   # Per-logger levels; a logger is its module path.
+  #   vigil.core.connectors.ssh_connector: DEBUG
 
 # In-memory state (optional).
 # Live state is held in Python objects and served to the UI from there; the

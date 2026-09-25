@@ -16,6 +16,8 @@ import logging
 import threading
 from typing import Callable, Optional
 
+log = logging.getLogger(__name__)
+
 # Change kinds, one per datatype the store holds.
 STATUS = "status"
 METRIC = "metric"
@@ -56,7 +58,7 @@ class ChangeBus:
             try:
                 subscriber(kind, plugin_id)
             except Exception as e:
-                logging.error(f"change subscriber failed for {kind!r}: {e}")
+                log.error(f"change subscriber failed for {kind!r}: {e}")
 
 
 # One bus per process: the Database Engine publishes to it and the dashboard

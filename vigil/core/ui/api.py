@@ -2,6 +2,7 @@
 import hmac
 from typing import Any, Optional
 
+from fastapi import Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from vigil.core.exporters import prometheus
@@ -30,6 +31,28 @@ def _register_notification_routes(app: Any, engine: EngineLike) -> None:
         except Exception as e:
             return JSONResponse({'sent': False, 'error': str(e)}, status_code=502)
         return JSONResponse({'sent': True})
+
+
+def _register_log_level_routes(app: Any, engine: EngineLike) -> None:
+    """Mount the endpoints that read and change logging verbosity at runtime."""
+    @app.get('/api/log-levels')
+    def log_levels():
+        return JSONResponse({'levels': engine.log_levels(), 'loggers': engine.known_loggers()})
+
+    @app.post('/api/log-levels')
+    async def set_log_level(request: Request):
+        # A body that is not a JSON object is the caller's mistake, answered like any other bad value.
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return JSONResponse({'error': 'expected a JSON object with logger and level'}, status_code=400)
+        try:
+            levels = engine.set_log_level(body.get('logger'), body.get('level'), source='REST API')
+        except ValueError as e:
+            return JSONResponse({'error': str(e)}, status_code=400)
+        return JSONResponse({'levels': levels})
 
 
 def register_api(app: Any, engine: EngineLike) -> None:
@@ -113,6 +136,7 @@ def register_api(app: Any, engine: EngineLike) -> None:
         return JSONResponse(db.recent_events(limit=limit, level=level, target=target, search=search))
 
     _register_notification_routes(app, engine)
+    _register_log_level_routes(app, engine)
 
     @app.get('/metrics')
     def prometheus_metrics():

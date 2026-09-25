@@ -11,6 +11,9 @@ from .auth import LOGOUT_PATH, AuthConfig
 from .sidebar import render_sidebar
 from .views import render_overview, render_events, render_plugin_detail
 from .views.notifications import open_notifications_dialog
+from .views.system import render_system_menu
+
+log = logging.getLogger(__name__)
 
 _ICON = Path(__file__).parent / 'static' / 'icon.svg'
 
@@ -70,14 +73,14 @@ def _register_endpoints(engine: EngineLike) -> Optional[AuthConfig]:
         from vigil.core.ui.api import register_api
         register_api(app, engine)
     except Exception as e:
-        logging.error(f"Failed to register REST API — /api endpoints will be unavailable: {e}")
+        log.error(f"Failed to register REST API — /api endpoints will be unavailable: {e}")
 
     # A broken agent endpoint must not stop the dashboard from starting.
     try:
         from vigil.core.ui.agent_endpoint import register_agent_endpoint
         register_agent_endpoint(app, engine.connectors.agents)
     except Exception as e:
-        logging.error(f"Failed to register the agent endpoint — agents will be unable to connect: {e}")
+        log.error(f"Failed to register the agent endpoint — agents will be unable to connect: {e}")
 
     return auth_config
 
@@ -106,6 +109,7 @@ def _render_header(engine: EngineLike, left_drawer_toggle: Callable,
             with ui.button(on_click=lambda: open_notifications_dialog(engine), icon='notifications',
                            color=None).props('flat dense round'):
                 ui.tooltip('Notifications')
+        render_system_menu(engine)
         if auth_config is not None:
             _render_account_menu(auth_config)
 

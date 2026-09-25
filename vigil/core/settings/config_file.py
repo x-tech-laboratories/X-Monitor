@@ -3,13 +3,15 @@ import difflib
 import yaml
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from vigil.core.settings.config_schema import (
     AuthSettings, DatabaseSettings, ExporterSettings, NotificationSettings, PluginConfig,
     SSHConfig, ThemeSettings, VigilConfig,
 )
 from vigil.core.state import BufferSizes
+
+log = logging.getLogger(__name__)
 
 # Which shape each top-level section must have, so a section written as the wrong
 # kind of YAML is named at startup rather than raising inside whoever reads it.
@@ -39,10 +41,10 @@ def _warn_on_structure(data: Dict[str, Any], path: Path) -> None:
         if expected is None:
             near = difflib.get_close_matches(str(key), _SECTION_SHAPES, n=1)
             hint = f" — did you mean '{near[0]}'?" if near else ""
-            logging.warning(f"{path}: unknown top-level section '{key}', ignored{hint}")
+            log.warning(f"{path}: unknown top-level section '{key}', ignored{hint}")
         elif not isinstance(value, expected):
             wanted = 'a list' if expected is list else 'a mapping'
-            logging.warning(
+            log.warning(
                 f"{path}: section '{key}' should be {wanted}, "
                 f"got {type(value).__name__} — it will be ignored or fail when read"
             )
@@ -54,13 +56,13 @@ def _warn_on_structure(data: Dict[str, Any], path: Path) -> None:
         required = 'type' if section == 'plugins' else 'id'
         for position, entry in enumerate(entries, start=1):
             if not isinstance(entry, dict):
-                logging.warning(
+                log.warning(
                     f"{path}: {section} entry {position} should be a mapping, "
                     f"got {type(entry).__name__}"
                 )
             elif not entry.get(required):
                 label = entry.get('name') or f"entry {position}"
-                logging.warning(f"{path}: {section} {label} has no '{required}' and cannot load")
+                log.warning(f"{path}: {section} {label} has no '{required}' and cannot load")
 
 
 class ConfigFileManager:
@@ -70,7 +72,7 @@ class ConfigFileManager:
 
     def _load(self) -> VigilConfig:
         if not self.path.exists():
-            logging.warning(f"Configuration file not found at {self.path}. Using empty configuration defaults.")
+            log.warning(f"Configuration file not found at {self.path}. Using empty configuration defaults.")
             return {}
 
         try:
@@ -81,7 +83,7 @@ class ConfigFileManager:
                 _warn_on_structure(data, self.path)
                 return data
         except yaml.YAMLError as e:
-            logging.error(f"Failed to parse YAML configuration at {self.path}: {e}")
+            log.error(f"Failed to parse YAML configuration at {self.path}: {e}")
             return {}
 
     @property
@@ -96,7 +98,7 @@ class ConfigFileManager:
         try:
             return float(value)
         except (TypeError, ValueError):
-            logging.warning(
+            log.warning(
                 f"Invalid database.write_batch_seconds={value!r}; "
                 f"falling back to {self.DEFAULT_WRITE_BATCH_SECONDS}"
             )
@@ -139,7 +141,7 @@ class ConfigFileManager:
         try:
             return int(value)
         except (TypeError, ValueError):
-            logging.warning(
+            log.warning(
                 f"Invalid logging.retention_days={value!r}; "
                 f"falling back to {self.DEFAULT_LOG_RETENTION_DAYS}"
             )
@@ -157,7 +159,7 @@ class ConfigFileManager:
         try:
             return int(value)
         except (TypeError, ValueError):
-            logging.warning(
+            log.warning(
                 f"Invalid logging.metric_retention_days={value!r}; "
                 f"falling back to log retention ({self.log_retention_days}d)"
             )
@@ -171,7 +173,7 @@ class ConfigFileManager:
         try:
             return int(value)
         except (TypeError, ValueError):
-            logging.warning(
+            log.warning(
                 f"Invalid logging.metric_downsample_days={value!r}; disabling downsampling"
             )
             return 0
@@ -181,6 +183,21 @@ class ConfigFileManager:
         """Whether the engine records cycle_collect/parse_seconds metrics; they
         double the metric row count, so they can be turned off."""
         return bool(self.logging_settings.get('cycle_timings', True))
+
+    @property
+    def log_level(self) -> Optional[str]:
+        """The root log level from `logging.level`, or None to keep the command line's default."""
+        value = self.logging_settings.get('level')
+        return str(value) if value else None
+
+    @property
+    def log_levels(self) -> Dict[str, str]:
+        """Per-logger levels from `logging.levels`, keyed by logger name."""
+        value = self.logging_settings.get('levels') or {}
+        if not isinstance(value, dict):
+            log.warning(f"logging.levels should be a mapping of logger name to level, got {type(value).__name__}")
+            return {}
+        return {str(k): str(v) for k, v in value.items()}
 
     @property
     def memory_settings(self) -> Dict[str, Any]:
@@ -203,13 +220,13 @@ class ConfigFileManager:
             try:
                 parsed = int(raw)
             except (TypeError, ValueError):
-                logging.warning(
+                log.warning(
                     f"Invalid memory.{field}={raw!r}; falling back to "
                     f"{getattr(defaults, field)}"
                 )
                 continue
             if parsed <= 0:
-                logging.warning(
+                log.warning(
                     f"memory.{field} must be positive (got {parsed}); falling back "
                     f"to {getattr(defaults, field)}"
                 )

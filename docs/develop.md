@@ -192,6 +192,27 @@ when config omits it) would silently overwrite each other's status/metrics/logs
 every cycle, since everything is keyed by `id`. Startup detects and logs this
 once, loudly.
 
+## Runtime log levels
+
+A module logs through its own `logging.getLogger(__name__)`, so a logger's
+name is its module path and one module's verbosity can change without touching
+the rest. A module still calling `logging.info()` directly logs on the root
+logger and follows only the root level. `LogLevels` (`core/settings/log_levels.py`) is the one
+place levels change: `configure()` applies `logging.level` / `logging.levels`
+at startup and on a config reload, and undoes a per-logger level only when the
+config that set it drops it, so a level set by hand on some other logger
+survives a reload. The engine exposes it as `log_levels()`, `known_loggers()`
+and `set_log_level()`, which the REST route, the dashboard's System menu and the
+signal handlers all call.
+
+Every change is logged at WARNING on `vigil.log_levels`, a logger with its own
+explicit WARNING level, so the record of who made logging quieter survives the
+change it describes. SIGUSR1 and SIGUSR2 step only the root level, one notch at
+a time, because a signal carries no argument; they are installed with
+`loop.add_signal_handler` in `run()` and only when `main()` asks
+(`handle_signals=True`), so an engine built in a test never takes over the
+process's signals.
+
 ## Agent transport
 
 `core/connectors/agent_connector.py` is the server half of the agent link; the

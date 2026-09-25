@@ -15,6 +15,8 @@ import asyncssh
 
 from vigil.core.settings.config_schema import PluginConfig
 
+log = logging.getLogger(__name__)
+
 _STATE_DIR = Path(os.environ.get("VIGIL_SSH_CONTROL_DIR",
                                  Path(tempfile.gettempdir()) / "vigil-ssh"))
 
@@ -75,7 +77,7 @@ class _TofuClient(asyncssh.SSHClient):
             exact = asyncssh.read_known_hosts(str(path)).match(self._alias, '', 0)[0]
             return {k.get_fingerprint() for k in exact}
         except Exception as e:
-            logging.warning(f"ssh: could not read known_hosts for {self._alias}: {e}")
+            log.warning(f"ssh: could not read known_hosts for {self._alias}: {e}")
             return set()
 
     def validate_host_public_key(self, host: str, addr: str, port: int,
@@ -84,7 +86,7 @@ class _TofuClient(asyncssh.SSHClient):
         if known:
             if key.get_fingerprint() in known:
                 return True
-            logging.error(
+            log.error(
                 f"ssh: host key for {self._alias} does NOT match the stored "
                 f"key — refusing to connect (possible MITM or reinstalled host)"
             )
@@ -94,10 +96,10 @@ class _TofuClient(asyncssh.SSHClient):
             line = f"{self._alias} {key.export_public_key().decode().strip()}\n"
             with open(_known_hosts_path(), 'a') as f:
                 f.write(line)
-            logging.info(f"ssh: trusting and storing new host key for {self._alias}")
+            log.info(f"ssh: trusting and storing new host key for {self._alias}")
             return True
         except OSError as e:
-            logging.error(f"ssh: could not persist host key for {self._alias}: {e}")
+            log.error(f"ssh: could not persist host key for {self._alias}: {e}")
             return False
 
 
@@ -183,7 +185,7 @@ class SSHConnection:
                     result.stderr.strip(),
                 )
         except (asyncssh.Error, OSError) as e:
-            logging.error(f"SSH execution failed on {self.host}: {e}")
+            log.error(f"SSH execution failed on {self.host}: {e}")
             if proc is not None:
                 await self._kill_process(proc)
             return -1, "", str(e)

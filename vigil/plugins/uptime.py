@@ -13,6 +13,8 @@ from vigil.core.connectors.types import (
     CollectResult, PingRequest, PingResult, Request, Result,
 )
 
+log = logging.getLogger(__name__)
+
 _DEFAULT_LAYOUT = [
     ['host_card', 'status_card', 'latency_card'],
     ['chart'],
@@ -31,7 +33,7 @@ class Uptime(Plugin):
         result: PingResult = results[0]
 
         if result.exception is not None:
-            logging.error(f"Uptime plugin error for {host}: {result.exception}")
+            log.error(f"Uptime plugin error for {host}: {result.exception}")
             return CollectResult(
                 metrics={'up': 0.0},
                 logs=[(f"Ping execution failed: {result.exception}", "ERROR")],

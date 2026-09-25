@@ -22,6 +22,7 @@ import logging
 import importlib
 import inspect
 import random
+import signal
 import sys
 import time
 from dataclasses import replace
@@ -35,11 +36,14 @@ from vigil.core.coordination.cycle_stats import CycleStats, CycleTiming
 from vigil.core.coordination.data_view import PluginDataView
 from vigil.core.coordination.jobs import JobsGateway
 from vigil.core.settings.config_file import ConfigFileManager as VigilConfig
+from vigil.core.settings.log_levels import LogLevels
 from vigil.core.database.database import DatabaseManager as VigilDatabase
 from vigil.core.exporters import ExporterEngine
 from vigil.core.notifications import NotificationEngine
 from vigil.core.connectors import ConnectorEngine, ExecContext
 from vigil.core.connectors.ssh_connector import measure_channel_wait
+
+log = logging.getLogger(__name__)
 
 STARTUP_JITTER_SECONDS = 3.0
 
@@ -75,9 +79,15 @@ def _settle(plugin: Plugin, results: List[Any], result: CollectResult) -> Collec
     return replace(result, status=str(Status.UNAVAILABLE))
 
 class VigilEngine:
-    def __init__(self, config_path: str, db_path_override: Optional[str] = None):
+    def __init__(self, config_path: str, db_path_override: Optional[str] = None,
+                 handle_signals: bool = False):
         self.config_loader = VigilConfig(config_path)
         self.config = self.config_loader.data
+        self._log_levels = LogLevels()
+        self._log_levels.configure(self.config_loader.log_level, self.config_loader.log_levels)
+        # Only the real process takes over signals; an engine built in a test leaves them alone.
+        self._handle_signals = handle_signals
+        self._signals_installed: List[int] = []
         self.plugins: List[Plugin] = []
         self.log_retention_days = self.config_loader.log_retention_days
         self.metric_retention_days = self.config_loader.metric_retention_days
@@ -116,7 +126,7 @@ class VigilEngine:
                 hydrate=False,
             )
         except OperationalError as e:
-            logging.critical(f"Failed to initialize database: {e}. Exiting.")
+            log.critical(f"Failed to initialize database: {e}. Exiting.")
             sys.exit(1)
 
         self.exporters = ExporterEngine(self.db, self.config_loader.exporters)
@@ -159,7 +169,7 @@ class VigilEngine:
         try:
             return bool(plugin.event_driven())
         except Exception as e:
-            logging.error(f"{plugin.name}: event_driven() failed: {e}")
+            log.error(f"{plugin.name}: event_driven() failed: {e}")
             return False
 
     def _wire_subscriptions(self, plugin: Plugin, net: "ExecContext") -> None:
@@ -170,7 +180,7 @@ class VigilEngine:
         try:
             specs = plugin.subscriptions()
         except Exception as e:
-            logging.error(f"{plugin.name}: subscriptions() failed: {e}")
+            log.error(f"{plugin.name}: subscriptions() failed: {e}")
             return
         if not specs:
             return
@@ -179,7 +189,7 @@ class VigilEngine:
             self._event_targets[spec.id] = plugin
             if spec.kind == 'sample':
                 self._collection_streams.add(spec.id)
-        logging.info(
+        log.info(
             f"{plugin.name}: subscribed to {len(specs)} agent event stream(s) "
             f"on {net.conn.agent_id!r}"
         )
@@ -198,7 +208,7 @@ class VigilEngine:
             return
         plugin = self._event_targets.get(stream_id)
         if plugin is None:
-            logging.debug(f"agent {agent_id!r}: event for unknown stream {stream_id!r}")
+            log.debug(f"agent {agent_id!r}: event for unknown stream {stream_id!r}")
             return
         # A sample stream is this monitor's whole collection path, so its event
         # is what records the cycle the suppressed polling loop never runs.
@@ -210,7 +220,7 @@ class VigilEngine:
         try:
             result = plugin.parse_event(stream_id, payload, timestamp)
         except Exception as e:
-            logging.error(f"{plugin.name}: parse_event failed for {stream_id!r}: {e}")
+            log.error(f"{plugin.name}: parse_event failed for {stream_id!r}: {e}")
             return
         if result is not None:
             self._apply(plugin, result)
@@ -236,7 +246,7 @@ class VigilEngine:
                     and getattr(self._exec_context_for(p).conn, 'agent_id', None) == agent_id]
         if not monitors:
             return
-        logging.info(
+        log.info(
             f"agent {agent_id!r} connected: collecting its {len(monitors)} monitor(s) now"
         )
         for plugin in monitors:
@@ -247,7 +257,7 @@ class VigilEngine:
         try:
             await self.run_cycle_now(plugin)
         except Exception as e:
-            logging.error(f"{plugin.name}: collection on agent connect failed: {e}")
+            log.error(f"{plugin.name}: collection on agent connect failed: {e}")
 
     def _apply(self, plugin: Plugin, result) -> None:
         """Persist a plugin's CollectResult. The engine owns the write path and
@@ -300,14 +310,14 @@ class VigilEngine:
                     )
 
                 current_level_plugins.append(plugin_instance)
-                logging.info(f"Loaded plugin '{name}' of type '{p_type}'")
+                log.info(f"Loaded plugin '{name}' of type '{p_type}'")
             # One bad plugin config or module must not stop the rest from loading.
             except Exception as e:
-                logging.error(f"Failed to load plugin '{name}' ({p_type}) — this monitor will not run: {e}")
+                log.error(f"Failed to load plugin '{name}' ({p_type}) — this monitor will not run: {e}")
 
         if plugins_cfg is None:
             self.plugins = current_level_plugins
-            logging.info(f"Plugin registry built with {len(self.plugins)} root-level monitors.")
+            log.info(f"Plugin registry built with {len(self.plugins)} root-level monitors.")
             self._warn_on_duplicate_ids()
             self._wire_self_monitor()
 
@@ -326,7 +336,7 @@ class VigilEngine:
                 seen[p.id] = p.name
 
         for dup_id, names in duplicates.items():
-            logging.error(
+            log.error(
                 f"Duplicate monitor id {dup_id!r} used by {len(names)} monitors "
                 f"({', '.join(sorted(set(names)))}). Their status, metrics and logs "
                 f"will overwrite each other — give each an explicit unique `id`."
@@ -342,7 +352,7 @@ class VigilEngine:
         try:
             from vigil.plugins.vigil_self import VigilSelfPlugin
         except ImportError as e:
-            logging.debug(f"Self-monitoring plugin unavailable: {e}")
+            log.debug(f"Self-monitoring plugin unavailable: {e}")
             return
         VigilSelfPlugin.engine = self
 
@@ -403,7 +413,7 @@ class VigilEngine:
         """Single-flight wrapper for out-of-band (dashboard-poll-triggered)
         collection, sharing the same reentrancy guard as the scheduler."""
         if self._collecting.get(plugin.id):
-            logging.debug(f"{plugin.name}: previous collection still running, skipping poll-triggered cycle")
+            log.debug(f"{plugin.name}: previous collection still running, skipping poll-triggered cycle")
             return False
         self._collecting[plugin.id] = True
         try:
@@ -482,7 +492,7 @@ class VigilEngine:
             try:
                 await self.run_cycle_now(plugin)
             except Exception as e:
-                logging.error(f"Plugin execution error ({plugin.name}): {e}")
+                log.error(f"Plugin execution error ({plugin.name}): {e}")
             # interval is the period, not the gap: sleep to the next due time
             # so a slow cycle does not stretch the schedule, and re-anchor
             # rather than burst when a cycle overruns the whole period.
@@ -504,16 +514,56 @@ class VigilEngine:
         task.add_done_callback(self._tasks.discard)
         return task
 
+    def log_levels(self) -> Dict[str, str]:
+        """The root log level plus every logger given a level of its own."""
+        return self._log_levels.levels()
+
+    def known_loggers(self) -> List[str]:
+        """The names of Vigil's loggers, for picking one to change."""
+        return self._log_levels.known_loggers()
+
+    def set_log_level(self, logger: Optional[str], level: Optional[str],
+                      source: str = 'runtime') -> Dict[str, str]:
+        """Change one logger's level now, or the root's when logger is empty; no level makes a named logger inherit again."""
+        return self._log_levels.set_level(logger, level, source=source)
+
+    def _install_signal_handlers(self) -> None:
+        """SIGUSR1 makes logging one step more verbose and SIGUSR2 one step quieter, for when the dashboard is unreachable."""
+        loop = asyncio.get_running_loop()
+        handlers = {
+            signal.SIGUSR1: lambda: self._log_levels.step(more_verbose=True, source='SIGUSR1'),
+            signal.SIGUSR2: lambda: self._log_levels.step(more_verbose=False, source='SIGUSR2'),
+        }
+        for signum, handler in handlers.items():
+            # A loop that cannot take signal handlers (not the main thread, not Unix) just goes without.
+            try:
+                loop.add_signal_handler(signum, handler)
+                self._signals_installed.append(signum)
+            except (NotImplementedError, RuntimeError, ValueError) as e:
+                log.warning(f"Cannot handle {signal.Signals(signum).name}: {e}")
+
+    def _remove_signal_handlers(self) -> None:
+        # The loop may already be closed at shutdown, in which case it dropped the handlers itself.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        for signum in self._signals_installed:
+            if loop is not None:
+                loop.remove_signal_handler(signum)
+        self._signals_installed = []
+
     def shutdown(self) -> None:
         """Stop background tasks, close every transport, and flush pending
         writes to SQLite; registered as the UI server's shutdown hook."""
+        self._remove_signal_handlers()
         for task in list(self._tasks):
             task.cancel()
         self.notifications.stop()
         self.connectors.close()
         self.db.stop_downsampling()
         self.db.flush()
-        logging.info("Vigil Engine shut down cleanly.")
+        log.info("Vigil Engine shut down cleanly.")
 
     def load_state(self) -> None:
         """Restores the store from the database and records the restart; blocking, so run() calls it off the event loop."""
@@ -522,8 +572,8 @@ class VigilEngine:
         self.db.insert_event("INFO", "Vigil Engine initialized.", "vigil_core")
         orphaned = self.db.reconcile_orphaned_jobs()
         if orphaned:
-            logging.warning(f"Marked {orphaned} orphaned job(s) as failed after restart")
-        logging.info(f"Saved state loaded in {time.monotonic() - started:.1f}s")
+            log.warning(f"Marked {orphaned} orphaned job(s) as failed after restart")
+        log.info(f"Saved state loaded in {time.monotonic() - started:.1f}s")
 
     async def run(self):
         if not self.ready:
@@ -532,7 +582,7 @@ class VigilEngine:
             for agent_id in sorted(self._early_agents):
                 self._on_agent_connected(agent_id)
             self._early_agents.clear()
-        logging.info("Vigil Engine started...")
+        log.info("Vigil Engine started...")
 
         self.db.insert_event("INFO", "Vigil Engine started polling loop.", "vigil_core")
 
@@ -541,12 +591,12 @@ class VigilEngine:
         try:
             self.notifications.start(self.plugins)
         except Exception as e:
-            logging.error(f"Failed to start notifications — none will be sent: {e}")
+            log.error(f"Failed to start notifications — none will be sent: {e}")
 
         monitors = list(self._flatten(self.plugins))
         polled = [p for p in monitors if not self._is_event_driven(p)]
         pushed = len(monitors) - len(polled)
-        logging.info(
+        log.info(
             f"Starting {len(polled)} independent monitor schedule(s); "
             f"{pushed} collect on their agent."
         )
@@ -554,6 +604,8 @@ class VigilEngine:
             self._spawn(self._monitor_loop(plugin))
 
         self._spawn(self._prune_loop())
+        if self._handle_signals:
+            self._install_signal_handlers()
 
     def _maybe_prune_logs(self, interval: float = 3600.0):
         # Nothing to prune if both retention windows are disabled (0/negative).
@@ -576,4 +628,4 @@ class VigilEngine:
             self.db.prune_status(self.metric_retention_days)
             self.db.downsample_metrics(self.metric_downsample_days)
         except Exception as e:
-            logging.error(f"Retention prune failed: {e}")
+            log.error(f"Retention prune failed: {e}")

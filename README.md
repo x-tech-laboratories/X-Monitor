@@ -190,6 +190,8 @@ The primary entry point starts both the background engine and the web dashboard:
 vigil --config config.yaml
 ```
 
+Logging verbosity can change while Vigil runs, for the whole process or one module: from the dashboard's **System** menu (**Log levels**), through `POST /api/log-levels` (see [integrations](docs/integrations.md#runtime-control)), or, when the dashboard is unreachable, with `kill -USR1` (one step more verbose) and `kill -USR2` (one step quieter). `logging.level` and `logging.levels` in `config.yaml` set the starting values.
+
 To run just the dashboard against an existing database:
 
 ```bash

@@ -30,7 +30,7 @@ def main():
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
-    engine = VigilEngine(args.config, db_path_override=args.db)
+    engine = VigilEngine(args.config, db_path_override=args.db, handle_signals=True)
     engine.setup_modules()
     theme.configure(engine.config_loader.theme_settings)
     init_gui(engine=engine, port=args.port)
