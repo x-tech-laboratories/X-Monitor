@@ -308,6 +308,14 @@ plugins:
         quality_threshold: 20    # link quality floor (fail below)
         ssh_config:
           host: "server.example.com"
+      - name: "Interfaces"
+        id: "server-interfaces"
+        type: "interfaces"       # every NIC with state, carrier, MAC, MTU, speed and addresses
+        interval: 1m
+        exclude: ["veth*", "docker*", "br-*"]
+        expect_up: ["eth0"]      # down or no carrier -> failed; address change -> warning
+        ssh_config:
+          host: "server.example.com"
 
   - name: "Reachability"
     type: "group"

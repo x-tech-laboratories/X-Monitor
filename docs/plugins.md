@@ -38,6 +38,7 @@ config examples. For what Vigil is and how to run it, see the
   [`power`](#power) ·
   [`reboot_required`](#reboot_required) ·
   [`package_updates`](#package_updates) ·
+  [`interfaces`](#interfaces) ·
   [`borg`](#borg) ·
   [`containers`](#containers) ·
   [`command`](#command) ·
@@ -87,6 +88,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`power`](#power)                       | Battery charge, external power, wear   | SSH (`/sys/class/power_supply`)                 | `charge_pct`, `plugged_in`, `capacity_health_pct`, `battery_<name>_charge_pct` | — |
 | [`reboot_required`](#reboot_required)   | Whether the host needs a reboot        | SSH (`/var/run/reboot-required`, `needs-restarting`, `/run/booted-system`, `/usr/lib/modules`) | `reboot_required` | — |
 | [`package_updates`](#package_updates)   | Pending package and security updates   | SSH (`apt list`, `dnf --cacheonly check-update`, `checkupdates`/`pacman -Qu`) | `updates_pending`, `security_updates_pending` | — |
+| [`interfaces`](#interfaces)             | Network interface inventory and addressing | SSH (`ip -j addr`, `/sys/class/net`)        | `interfaces_up`, `interfaces_total`, `interface_<name>_up` | — |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
 | [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
 | [`containers`](#containers)             | Docker / Podman container states      | SSH (`docker`/`podman ps`)                       | `containers_total`, `containers_running`, `containers_stopped` | Restart (per expected container) |
@@ -103,7 +105,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 
 ---
@@ -1129,6 +1131,40 @@ A host with none of the three managers is `unavailable`. That includes NixOS, wh
   interval: 1h
   warning: 50              # a long-neglected host
   security_threshold: 5    # any security update warns; five fail
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `interfaces`
+Every network interface on the host with its state, carrier, MAC, MTU, link speed and IPv4/IPv6 addresses, from `ip -j addr` and `/sys/class/net` (plain `ip addr` stands in when `ip` has no JSON output). Where [`throughput`](#throughput) measures one busy interface, this lists them all — for catching a dropped link or a changed DHCP lease.
+
+An interface counts as up when its operstate is `up`, or `unknown` with a carrier (loopback, WireGuard and other tunnels report `unknown`). Interfaces you name in `expect_up` are checked:
+
+- **missing, down or without carrier** → `failed`;
+- **addresses changed since the previous cycle** (a new DHCP lease, a new IPv6 prefix) → `warning` for that cycle, with an event naming the old and new addresses. Temporary IPv6 privacy addresses rotate by design, so they are listed but never compared; a link that drops and comes back with the same address is not a change.
+
+Other interfaces are listed and counted, but never change the status. An `expect_up` interface is always listed, even when `include`/`exclude` would hide it.
+
+| Option             | Description                                                              |
+|--------------------|--------------------------------------------------------------------------|
+| `include`          | Glob patterns of interfaces to list, e.g. `["eth*", "wlan*"]` (default: all) |
+| `exclude`          | Glob patterns of interfaces to leave out, e.g. `["veth*", "docker*"]`     |
+| `include_loopback` | List the loopback interface too (default: `false`)                       |
+| `expect_up`        | Interfaces that must be up with carrier; also watched for address changes |
+| `interval`         | Polling frequency (default: `60`)                                         |
+| `ssh_config`       | SSH connection details — see [SSH Config](#ssh-config) below             |
+
+**Metrics**: `interfaces_up`, `interfaces_total` (both over the listed interfaces); `interface_<name>_up` (1/0) per `expect_up` interface
+
+```yaml
+- name: "Interfaces"
+  id: "server-interfaces"
+  type: "interfaces"
+  interval: 1m
+  exclude: ["veth*", "docker*", "br-*"]
+  expect_up: ["eth0", "wg0"]
   ssh_config:
     host: "server.example.com"
 ```
