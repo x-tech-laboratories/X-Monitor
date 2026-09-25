@@ -204,6 +204,16 @@ plugins:
         service_name: "nginx.service"
         ssh_config:
           host: "server.example.com"
+      # Power and boot controls; every action stays off unless it is listed
+      # under allow, and each needs passwordless sudo for its exact command
+      # (see docs/plugins.md#host_control).
+      # - name: "Server Control"
+      #   id: "server-control"
+      #   type: "host_control"
+      #   interval: 5m
+      #   allow: [reboot, power_profile, next_boot]
+      #   ssh_config:
+      #     host: "server.example.com"
 
   - name: "Backups"
     type: "group"
