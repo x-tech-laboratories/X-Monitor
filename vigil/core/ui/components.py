@@ -503,7 +503,8 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
         if not a.get('visible_if') or (resolve(ENABLED_PREDICATES, a['visible_if']) or (lambda p: True))(plugin)
     ]
 
-    render_columns = list(columns)
+    # A column's cell_color_by may be a callable, which the browser neither needs nor could be sent.
+    render_columns = [{k: v for k, v in col.items() if k != 'cell_color_by'} for col in columns]
     if row_actions:
         render_columns = render_columns + [
             {'name': 'actions', 'label': '', 'field': 'actions', 'sortable': False, 'align': 'center'},
