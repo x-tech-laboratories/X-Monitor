@@ -44,6 +44,10 @@ class DatabaseSettings(TypedDict, total=False):
 class LoggingSettings(TypedDict, total=False):
     retention_days: int
     metric_retention_days: int
+    metric_downsample_days: int
+    cycle_timings: bool
+    level: str                  # root log level at startup: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    levels: Dict[str, str]      # per-logger levels, e.g. {'vigil.core.connectors.ssh_connector': 'DEBUG'}
 
 
 class MemorySettings(TypedDict, total=False):
@@ -185,3 +189,4 @@ class VigilConfig(TypedDict, total=False):
     ssh_defaults: SSHConfig
     control: List[Dict[str, Any]]
     auth: AuthSettings
+    plugin_paths: List[Any]     # directories of out-of-tree plugins: a path, or {path, override}

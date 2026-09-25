@@ -48,9 +48,11 @@ config examples. For what Vigil is and how to run it, see the
   [`vms`](#vms) ·
   [`host_control`](#host_control) ·
   [`cloud`](#cloud) ·
+  [`vigil_self`](#vigil_self) ·
   [`group`](#group)
 - [Plugin Layout](#plugin-layout) — arranging a plugin's widgets on its page
 - [SSH Config](#ssh-config) — the `ssh_config` block SSH-based plugins accept
+- [Out-of-tree plugins](#out-of-tree-plugins) — adding your own plugin types without changing Vigil
 
 ---
 
@@ -101,6 +103,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`vms`](#vms)                           | libvirt/KVM virtual machines          | SSH (`virsh`)                                     | `vms_total`, `vms_running`, `vms_stopped`       | Start, Shutdown (per expected VM) |
 | [`host_control`](#host_control)         | Host power, boot and identify controls | SSH (`powerprofilesctl`, `bootctl`/GRUB/`efibootmgr`, `/sys/power`) | `power_profiles`, `boot_entries`, `suspend_supported` | Reboot, Shut Down, Suspend, Power Profile, Next Boot, Identify (each opt-in) |
 | [`cloud`](#cloud)                       | Cloud instance metadata (AWS/GCP/Azure) | SSH (metadata endpoint)                         | `on_cloud`                                      | — |
+| [`vigil_self`](#vigil_self)             | Vigil itself: memory, CPU, late and slow monitors | Local (`/proc/self`, engine state)     | `memory_mb`, `monitors_late`, `monitors_slow`, `slowest_cycle_seconds` | — |
 | [`group`](#group)                       | Container for nested monitors         | — (aggregates children)                          | —                                               | — |
 
 All plugin types share these common fields:
@@ -109,7 +112,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `host_control`, `cloud`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `host_control`, `cloud`, `vigil_self`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 
 ---
@@ -1619,6 +1622,34 @@ Detects the cloud provider of the target and surfaces its instance metadata (id,
 
 ---
 
+### `vigil_self`
+Vigil watching itself: its own memory, CPU and uptime, whether every other monitor is collecting on schedule, and how long each one's collection takes.
+
+A **late** monitor has gone `stale_warning` intervals without finishing a cycle, and a **stalled** one `stale_threshold` intervals. A **slow** monitor's recent cycles take, on average, more than `slow_cycle_fraction` of its interval, or more than `slow_cycle_seconds` when that is set.
+
+The page lists every monitor's last, average and longest cycle over its last 20 cycles, slowest first, with how long its SSH commands waited for a free channel. That wait is time spent queued behind other monitors on the same host at the `MaxSessions` ceiling (see [SSH Config](#ssh-config)), so a monitor that is slow because of the wait needs fewer neighbours or the agent, not a faster target.
+
+| Option                | Description                                                                     |
+|-----------------------|---------------------------------------------------------------------------------|
+| `memory_warning`      | RSS in MB that sets warning (default: `256`)                                   |
+| `memory_threshold`    | RSS in MB that sets failed (default: `512`)                                    |
+| `stale_warning`       | Intervals overdue before a monitor counts as late, a warning (default: `6`)    |
+| `stale_threshold`     | Intervals overdue before a monitor counts as stalled, a failure (default: `10`) |
+| `slow_cycle_fraction` | Share of its interval a monitor's average cycle may take before it counts as slow, a warning (default: `0.5`; `0` turns it off) |
+| `slow_cycle_seconds`  | Seconds a monitor's average cycle may take before it counts as slow (default: `0`, off) |
+
+**Metrics**: `memory_mb`, `cpu_pct`, `uptime_seconds`, `monitors_total`, `monitors_late`, `monitors_stalled`, `monitors_slow`, `slowest_cycle_seconds`
+
+```yaml
+- name: "Vigil"
+  id: "vigil"
+  type: "vigil_self"
+  interval: 60
+  slow_cycle_seconds: 20
+```
+
+---
+
 ### `group`
 A logical container for other monitors. Aggregates the worst-case status of all descendants, and renders them one of two ways: as **collapsible cards**, one per child, or — when the group declares a `layout:` — as a **composite layout** built out of individual widgets pulled from its children.
 
@@ -1830,3 +1861,38 @@ polling, benefit from raising `MaxSessions` in that host's own `sshd_config`
 [agent](agent.md) on that host, where commands are frames multiplexed on one
 socket and no session ceiling applies.
 
+---
+
+### Out-of-tree plugins
+
+A monitor type Vigil does not ship can live in a directory of your own, named under `plugin_paths:` in `config.yaml`. A relative path is taken from the directory `config.yaml` is in.
+
+```yaml
+plugin_paths:
+  - /etc/vigil/plugins            # searched in order; the first directory holding the type wins
+  - path: ./my-plugins
+    override: true                # its plugins replace Vigil's own of the same name
+
+plugins:
+  - name: "Weather"
+    id: "weather"
+    type: "weather"               # /etc/vigil/plugins/weather.py, or a weather/ package
+```
+
+A plugin type `<type>` is either `<type>.py` or a package directory `<type>/` with an `__init__.py`. The module must define exactly one concrete `Plugin` subclass (classes it imports, such as `Plugin` or `SignalPlugin`, do not count), written the same way as Vigil's own plugins: pure `commands()`/`parse()` or `requests()`/`parse_results()` returning a `CollectResult`, with the page described by a `UI_SPEC`.
+
+```python
+from vigil.plugins.base.plugin_base import Plugin
+from vigil.core.connectors.types import Command, CollectResult
+
+
+class Weather(Plugin):
+    def commands(self):
+        return [Command('curl -s wttr.in/?format=%t')]
+
+    def parse(self, results):
+        ok = results[0].exit_code == 0
+        return CollectResult(status='online' if ok else 'failed', logs=[(results[0].stdout, 'INFO')])
+```
+
+A name Vigil already uses stays Vigil's: the file is ignored with a warning in the log, unless its `plugin_paths` entry says `override: true`, which is logged too. A missing type, or a module that defines no `Plugin` class or more than one, stops only that monitor from loading, with the reason in the log. An edited plugin file is read again on the next config reload, and takes effect for the monitors that reload adds or changes; the rest keep running the code they started with until a restart.

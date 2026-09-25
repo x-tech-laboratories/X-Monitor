@@ -34,6 +34,22 @@ curl "http://localhost:8080/api/events?level=ERROR&limit=50"
 curl -X POST -H "Authorization: Bearer $VIGIL_TOKEN" http://localhost:8080/api/monitors/web/poll
 ```
 
+### Runtime control
+
+These change Vigil itself rather than read its state. They sit behind the same sign-in as every other route.
+
+| Endpoint | Does |
+|----------|------|
+| `POST /api/config/reload` | Re-reads `config.yaml` and applies it in place; answers with what was added, removed and changed and which settings need a restart, or `422` with the reason the file was refused |
+| `GET /api/log-levels` | The root log level, every logger given its own level, and the names of Vigil's loggers |
+| `POST /api/log-levels` | Sets one logger's level from a JSON body `{"logger": "...", "level": "DEBUG"}`; no `logger` means the root, and `"level": null` makes a named logger inherit again |
+
+```bash
+curl -X POST http://localhost:8080/api/log-levels \
+  -H 'Content-Type: application/json' \
+  -d '{"logger": "vigil.core.connectors.ssh_connector", "level": "DEBUG"}'
+```
+
 ## Prometheus
 
 A Prometheus exposition endpoint is always available at `GET /metrics` (pull) — no configuration required. It exports `vigil_up` (per-monitor status: `1` online, `0.5` warning, `0` failed, `-1` unavailable) and `vigil_metric` (every collected metric, labeled by monitor/target/metric). Point a Prometheus scrape config at it:

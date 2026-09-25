@@ -18,50 +18,47 @@ role in the architecture.
 """
 
 import asyncio
+import hashlib
 import logging
-import importlib
 import inspect
+import os
 import random
+import signal
 import sys
 import time
-from dataclasses import replace
+import weakref
+from dataclasses import dataclass, replace
 from typing import Any, List, Optional, Dict, Set
 
 from peewee import OperationalError
 
 from vigil.plugins.base.plugin_base import Plugin
 from vigil.core.connectors.types import CmdResult, CollectResult, DispatchResult, Status, unreachable
+from vigil.core.coordination.cycle_stats import CycleStats, CycleTiming
 from vigil.core.coordination.data_view import PluginDataView
+from vigil.core.coordination.plugin_loader import PluginLoader, parse_plugin_paths
+from vigil.core.coordination.reload import (
+    ReloadResult, restart_required, same_monitor, section_changed,
+)
 from vigil.core.coordination.jobs import JobsGateway
 from vigil.core.settings.config_file import ConfigFileManager as VigilConfig
+from vigil.core.state import changes
+from vigil.core.state.changes import CHANGES
+from vigil.core.settings.log_levels import LogLevels
 from vigil.core.database.database import DatabaseManager as VigilDatabase
 from vigil.core.exporters import ExporterEngine
 from vigil.core.notifications import NotificationEngine
 from vigil.core.connectors import ConnectorEngine, ExecContext
+from vigil.core.connectors.ssh_connector import measure_channel_wait
+
+log = logging.getLogger(__name__)
 
 STARTUP_JITTER_SECONDS = 3.0
 
+# How often the config file is checked for changes.
+CONFIG_POLL_SECONDS = 3.0
+
 _PRUNE_CHECK_SECONDS = 60
-
-
-def _defined_in(cls: type, module_path: str) -> bool:
-    """True for a class defined in the plugin module itself or, for a plugin package, in one of its own submodules."""
-    return cls.__module__ == module_path or cls.__module__.startswith(module_path + '.')
-
-
-def _plugin_class(module, module_path: str) -> type:
-    """The Plugin subclass a plugin module defines, ignoring the bases it imports."""
-    candidates = [obj for _, obj in inspect.getmembers(module, inspect.isclass)
-                  if issubclass(obj, Plugin) and _defined_in(obj, module_path)
-                  and not inspect.isabstract(obj)]
-    if not candidates:
-        raise ValueError(f"{module_path} defines no concrete Plugin subclass")
-    if len(candidates) > 1:
-        raise ValueError(
-            f"{module_path} defines more than one Plugin subclass "
-            f"({[c.__name__ for c in candidates]}) — a plugin module must define exactly one")
-    return candidates[0]
-
 
 
 def _settle(plugin: Plugin, results: List[Any], result: CollectResult) -> CollectResult:
@@ -72,10 +69,45 @@ def _settle(plugin: Plugin, results: List[Any], result: CollectResult) -> Collec
         return result
     return replace(result, status=str(Status.UNAVAILABLE))
 
+
+@dataclass
+class _Node:
+    """One monitor in a tree being built, with its children kept apart until the tree is put in place."""
+    plugin: Plugin
+    children: List["_Node"]
+
+
+def _walk(nodes: List[_Node]):
+    for node in nodes:
+        yield node
+        yield from _walk(node.children)
+
+
+def _shape(plugins: List[Plugin]) -> tuple:
+    """The tree's structure as nested ids, to tell whether a reload moved anything."""
+    return tuple((p.id, _shape(p.children)) for p in plugins)
+
+
+@dataclass
+class _ReloadPlan:
+    """A new config that parsed and validated, ready to put in place."""
+    config: VigilConfig
+    loader: PluginLoader
+    nodes: List[_Node]
+
+
 class VigilEngine:
-    def __init__(self, config_path: str, db_path_override: Optional[str] = None):
+    def __init__(self, config_path: str, db_path_override: Optional[str] = None,
+                 handle_signals: bool = False):
         self.config_loader = VigilConfig(config_path)
         self.config = self.config_loader.data
+        self._plugin_loader = PluginLoader(
+            parse_plugin_paths(self.config_loader.plugin_paths, self.config_loader.path.parent))
+        self._log_levels = LogLevels()
+        self._log_levels.configure(self.config_loader.log_level, self.config_loader.log_levels)
+        # Only the real process takes over signals; an engine built in a test leaves them alone.
+        self._handle_signals = handle_signals
+        self._signals_installed: List[int] = []
         self.plugins: List[Plugin] = []
         self.log_retention_days = self.config_loader.log_retention_days
         self.metric_retention_days = self.config_loader.metric_retention_days
@@ -83,7 +115,17 @@ class VigilEngine:
         self._cycle_timings = self.config_loader.cycle_timings
         self._last_prune = 0.0
         self._collecting: Dict[str, bool] = {}
+        # Each polled monitor's loop task, so a reload can stop one monitor without touching the rest.
+        self._monitor_tasks: Dict[str, "asyncio.Task"] = {}
+        # Instances a reload replaced or removed; a cycle still in flight for one writes nothing.
+        self._retired: "weakref.WeakSet[Plugin]" = weakref.WeakSet()
+        self._reload_lock = asyncio.Lock()
+        # Goes up whenever a reload changes the monitor tree, so a page can tell it is showing an old one.
+        self.monitors_version = 0
+        self._config_digest = self.config_loader.digest
+        self._db_path_overridden = bool(db_path_override)
         self._last_collected: Dict[str, float] = {}
+        self._cycle_stats = CycleStats()
         # The loop holds only weak references to tasks, so every background
         # task is anchored here until it finishes.
         self._tasks: set = set()
@@ -113,7 +155,7 @@ class VigilEngine:
                 hydrate=False,
             )
         except OperationalError as e:
-            logging.critical(f"Failed to initialize database: {e}. Exiting.")
+            log.critical(f"Failed to initialize database: {e}. Exiting.")
             sys.exit(1)
 
         self.exporters = ExporterEngine(self.db, self.config_loader.exporters)
@@ -156,7 +198,7 @@ class VigilEngine:
         try:
             return bool(plugin.event_driven())
         except Exception as e:
-            logging.error(f"{plugin.name}: event_driven() failed: {e}")
+            log.error(f"{plugin.name}: event_driven() failed: {e}")
             return False
 
     def _wire_subscriptions(self, plugin: Plugin, net: "ExecContext") -> None:
@@ -167,7 +209,7 @@ class VigilEngine:
         try:
             specs = plugin.subscriptions()
         except Exception as e:
-            logging.error(f"{plugin.name}: subscriptions() failed: {e}")
+            log.error(f"{plugin.name}: subscriptions() failed: {e}")
             return
         if not specs:
             return
@@ -176,7 +218,7 @@ class VigilEngine:
             self._event_targets[spec.id] = plugin
             if spec.kind == 'sample':
                 self._collection_streams.add(spec.id)
-        logging.info(
+        log.info(
             f"{plugin.name}: subscribed to {len(specs)} agent event stream(s) "
             f"on {net.conn.agent_id!r}"
         )
@@ -195,7 +237,7 @@ class VigilEngine:
             return
         plugin = self._event_targets.get(stream_id)
         if plugin is None:
-            logging.debug(f"agent {agent_id!r}: event for unknown stream {stream_id!r}")
+            log.debug(f"agent {agent_id!r}: event for unknown stream {stream_id!r}")
             return
         # A sample stream is this monitor's whole collection path, so its event
         # is what records the cycle the suppressed polling loop never runs.
@@ -207,7 +249,7 @@ class VigilEngine:
         try:
             result = plugin.parse_event(stream_id, payload, timestamp)
         except Exception as e:
-            logging.error(f"{plugin.name}: parse_event failed for {stream_id!r}: {e}")
+            log.error(f"{plugin.name}: parse_event failed for {stream_id!r}: {e}")
             return
         if result is not None:
             self._apply(plugin, result)
@@ -233,7 +275,7 @@ class VigilEngine:
                     and getattr(self._exec_context_for(p).conn, 'agent_id', None) == agent_id]
         if not monitors:
             return
-        logging.info(
+        log.info(
             f"agent {agent_id!r} connected: collecting its {len(monitors)} monitor(s) now"
         )
         for plugin in monitors:
@@ -244,7 +286,7 @@ class VigilEngine:
         try:
             await self.run_cycle_now(plugin)
         except Exception as e:
-            logging.error(f"{plugin.name}: collection on agent connect failed: {e}")
+            log.error(f"{plugin.name}: collection on agent connect failed: {e}")
 
     def _apply(self, plugin: Plugin, result) -> None:
         """Persist a plugin's CollectResult. The engine owns the write path and
@@ -262,8 +304,8 @@ class VigilEngine:
             return await fn()
         return await asyncio.to_thread(fn)
 
-    def _apply_ssh_defaults(self, plugin_cfg: Dict) -> Dict:
-        defaults = self.config_loader.ssh_defaults
+    def _apply_ssh_defaults(self, plugin_cfg: Dict, defaults: Optional[Dict] = None) -> Dict:
+        defaults = self.config_loader.ssh_defaults if defaults is None else defaults
         if not defaults or 'ssh_config' not in plugin_cfg:
             return plugin_cfg
 
@@ -271,44 +313,70 @@ class VigilEngine:
         merged['ssh_config'] = {**defaults, **plugin_cfg['ssh_config']}
         return merged
 
-    def setup_modules(self, plugins_cfg: Optional[List[Dict]] = None,
-                      inherited_agent: Optional[str] = None) -> List[Plugin]:
-        current_level_plugins = []
-        target_cfg = plugins_cfg if plugins_cfg is not None else self.config_loader.plugins
+    def _effective_config(self, plugin_cfg: Dict, ssh_defaults: Dict,
+                          inherited_agent: Optional[str]) -> Dict:
+        """A monitor's config as its plugin sees it: ssh_defaults merged in and its group's agent inherited."""
+        cfg = self._apply_ssh_defaults(plugin_cfg, ssh_defaults)
+        if inherited_agent and not cfg.get('agent'):
+            cfg = {**cfg, 'agent': inherited_agent}
+        return cfg
 
-        for plugin_cfg in target_cfg:
+    def _build_tree(self, plugins_cfg: List[Dict], loader: PluginLoader, ssh_defaults: Dict,
+                    keep: Dict[str, Plugin], errors: List[str], on_new=None,
+                    inherited_agent: Optional[str] = None) -> List[_Node]:
+        """Construct the monitors a config declares, reusing a running instance from `keep` wherever its config is unchanged.
+
+        Nothing here touches the running tree: a kept group's new children are
+        only recorded in its node, and put in place by _attach."""
+        nodes = []
+        for plugin_cfg in plugins_cfg:
             name = plugin_cfg.get('name')
             p_type = plugin_cfg.get('type')
-            plugin_cfg = self._apply_ssh_defaults(plugin_cfg)
-            if inherited_agent and not plugin_cfg.get('agent'):
-                plugin_cfg = {**plugin_cfg, 'agent': inherited_agent}
-            try:
-                module_path = f"vigil.plugins.{p_type}"
-                module = importlib.import_module(module_path)
-
-                plugin_instance = _plugin_class(module, module_path)(name, plugin_cfg)
-                plugin_instance.engine = self
-                self._wire_plugin(plugin_instance, plugin_cfg)
-
-                if 'children' in plugin_cfg:
-                    plugin_instance.children = self.setup_modules(
-                        plugin_cfg['children'],
-                        inherited_agent=plugin_cfg.get('agent'),
-                    )
-
-                current_level_plugins.append(plugin_instance)
-                logging.info(f"Loaded plugin '{name}' of type '{p_type}'")
+            cfg = self._effective_config(plugin_cfg, ssh_defaults, inherited_agent)
             # One bad plugin config or module must not stop the rest from loading.
+            try:
+                cls = loader.resolve(p_type)
+                existing = keep.get(cfg.get('id', name))
+                if existing is not None and same_monitor(existing, cfg, cls):
+                    plugin = existing
+                else:
+                    plugin = cls(name, cfg)
+                    if on_new is not None:
+                        on_new(plugin)
+                    log.info(f"Loaded plugin '{name}' of type '{p_type}'")
             except Exception as e:
-                logging.error(f"Failed to load plugin '{name}' ({p_type}) — this monitor will not run: {e}")
+                errors.append(f"'{name}' ({p_type}): {e}")
+                continue
+            children = []
+            if 'children' in cfg:
+                children = self._build_tree(cfg['children'], loader, ssh_defaults, keep, errors,
+                                            on_new=on_new, inherited_agent=cfg.get('agent'))
+            nodes.append(_Node(plugin, children))
+        return nodes
 
-        if plugins_cfg is None:
-            self.plugins = current_level_plugins
-            logging.info(f"Plugin registry built with {len(self.plugins)} root-level monitors.")
-            self._warn_on_duplicate_ids()
-            self._wire_self_monitor()
+    @staticmethod
+    def _attach(nodes: List[_Node]) -> List[Plugin]:
+        """Give every monitor in a built tree its children, returning the roots."""
+        for node in nodes:
+            node.plugin.children = VigilEngine._attach(node.children)
+        return [node.plugin for node in nodes]
 
-        return current_level_plugins
+    def _wire_new(self, plugin: Plugin) -> None:
+        plugin.engine = self
+        self._wire_plugin(plugin, plugin.config)
+
+    def setup_modules(self) -> List[Plugin]:
+        """Build and wire the monitor tree config.yaml declares, skipping any monitor that fails to load."""
+        errors: List[str] = []
+        nodes = self._build_tree(self.config_loader.plugins, self._plugin_loader,
+                                 self.config_loader.ssh_defaults, {}, errors, on_new=self._wire_new)
+        for error in errors:
+            log.error(f"Failed to load plugin {error} — this monitor will not run")
+        self.plugins = self._attach(nodes)
+        log.info(f"Plugin registry built with {len(self.plugins)} root-level monitors.")
+        self._warn_on_duplicate_ids()
+        self._wire_self_monitor()
+        return self.plugins
 
     def _warn_on_duplicate_ids(self):
         seen = {}
@@ -323,7 +391,7 @@ class VigilEngine:
                 seen[p.id] = p.name
 
         for dup_id, names in duplicates.items():
-            logging.error(
+            log.error(
                 f"Duplicate monitor id {dup_id!r} used by {len(names)} monitors "
                 f"({', '.join(sorted(set(names)))}). Their status, metrics and logs "
                 f"will overwrite each other — give each an explicit unique `id`."
@@ -339,7 +407,7 @@ class VigilEngine:
         try:
             from vigil.plugins.vigil_self import VigilSelfPlugin
         except ImportError as e:
-            logging.debug(f"Self-monitoring plugin unavailable: {e}")
+            log.debug(f"Self-monitoring plugin unavailable: {e}")
             return
         VigilSelfPlugin.engine = self
 
@@ -369,18 +437,25 @@ class VigilEngine:
             collected = time.perf_counter()
             result = plugin.parse_results([io_result])
             did_io = True
+            wait_seconds = 0.0
         else:
             requests = plugin.requests()
             net = self._exec_context_for(plugin)
-            results = await self.connectors.dispatch(net, requests) if requests else []
+            with measure_channel_wait() as wait:
+                results = await self.connectors.dispatch(net, requests) if requests else []
             collected = time.perf_counter()
+            wait_seconds = wait.seconds
             result = _settle(plugin, results, plugin.parse_results(results))
             did_io = bool(requests)
         parsed = time.perf_counter()
+        if plugin in self._retired:
+            return False
         self._apply(plugin, result)
         self._react(plugin, result)
-        if did_io and self._cycle_timings:
-            self._record_cycle_timing(plugin, started, collected, parsed)
+        if did_io:
+            self._cycle_stats.record(plugin.id, parsed - started, wait_seconds)
+            if self._cycle_timings:
+                self._record_cycle_timing(plugin, started, collected, parsed)
         return True
 
     def _record_cycle_timing(self, plugin: Plugin, started: float,
@@ -396,7 +471,7 @@ class VigilEngine:
         """Single-flight wrapper for out-of-band (dashboard-poll-triggered)
         collection, sharing the same reentrancy guard as the scheduler."""
         if self._collecting.get(plugin.id):
-            logging.debug(f"{plugin.name}: previous collection still running, skipping poll-triggered cycle")
+            log.debug(f"{plugin.name}: previous collection still running, skipping poll-triggered cycle")
             return False
         self._collecting[plugin.id] = True
         try:
@@ -408,6 +483,10 @@ class VigilEngine:
     def last_collected(self, plugin_id: str) -> float:
         """Monotonic time of a monitor's last finished cycle, 0.0 if none yet."""
         return self._last_collected.get(plugin_id, 0.0)
+
+    def cycle_timing(self, plugin_id: str) -> Optional[CycleTiming]:
+        """A monitor's recent cycle durations and SSH channel wait, None before its first cycle that did IO."""
+        return self._cycle_stats.get(plugin_id)
 
     async def dispatch_action(self, plugin: Plugin, action_id: str, **kwargs) -> DispatchResult:
         """Returns (success, metadata). metadata is the applied CollectResult's
@@ -497,7 +576,7 @@ class VigilEngine:
             try:
                 await self.run_cycle_now(plugin)
             except Exception as e:
-                logging.error(f"Plugin execution error ({plugin.name}): {e}")
+                log.error(f"Plugin execution error ({plugin.name}): {e}")
             # interval is the period, not the gap: sleep to the next due time
             # so a slow cycle does not stretch the schedule, and re-anchor
             # rather than burst when a cycle overruns the whole period.
@@ -519,9 +598,50 @@ class VigilEngine:
         task.add_done_callback(self._tasks.discard)
         return task
 
+    def log_levels(self) -> Dict[str, str]:
+        """The root log level plus every logger given a level of its own."""
+        return self._log_levels.levels()
+
+    def known_loggers(self) -> List[str]:
+        """The names of Vigil's loggers, for picking one to change."""
+        return self._log_levels.known_loggers()
+
+    def set_log_level(self, logger: Optional[str], level: Optional[str],
+                      source: str = 'runtime') -> Dict[str, str]:
+        """Change one logger's level now, or the root's when logger is empty; no level makes a named logger inherit again."""
+        return self._log_levels.set_level(logger, level, source=source)
+
+    def _install_signal_handlers(self) -> None:
+        """SIGHUP reloads config.yaml; SIGUSR1 and SIGUSR2 step logging more verbose or quieter, for when the dashboard is unreachable."""
+        loop = asyncio.get_running_loop()
+        handlers = {
+            signal.SIGUSR1: lambda: self._log_levels.step(more_verbose=True, source='SIGUSR1'),
+            signal.SIGUSR2: lambda: self._log_levels.step(more_verbose=False, source='SIGUSR2'),
+            signal.SIGHUP: lambda: self._spawn(self.reload_config('SIGHUP')),
+        }
+        for signum, handler in handlers.items():
+            # A loop that cannot take signal handlers (not the main thread, not Unix) just goes without.
+            try:
+                loop.add_signal_handler(signum, handler)
+                self._signals_installed.append(signum)
+            except (NotImplementedError, RuntimeError, ValueError) as e:
+                log.warning(f"Cannot handle {signal.Signals(signum).name}: {e}")
+
+    def _remove_signal_handlers(self) -> None:
+        # The loop may already be closed at shutdown, in which case it dropped the handlers itself.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        for signum in self._signals_installed:
+            if loop is not None:
+                loop.remove_signal_handler(signum)
+        self._signals_installed = []
+
     def shutdown(self) -> None:
         """Stop background tasks, close every transport, and flush pending
         writes to SQLite; registered as the UI server's shutdown hook."""
+        self._remove_signal_handlers()
         for task in list(self._tasks):
             task.cancel()
         self.exporters.stop()
@@ -529,7 +649,7 @@ class VigilEngine:
         self.connectors.close()
         self.db.stop_downsampling()
         self.db.flush()
-        logging.info("Vigil Engine shut down cleanly.")
+        log.info("Vigil Engine shut down cleanly.")
 
     def load_state(self) -> None:
         """Restores the store from the database and records the restart; blocking, so run() calls it off the event loop."""
@@ -538,8 +658,8 @@ class VigilEngine:
         self.db.insert_event("INFO", "Vigil Engine initialized.", "vigil_core")
         orphaned = self.db.reconcile_orphaned_jobs()
         if orphaned:
-            logging.warning(f"Marked {orphaned} orphaned job(s) as failed after restart")
-        logging.info(f"Saved state loaded in {time.monotonic() - started:.1f}s")
+            log.warning(f"Marked {orphaned} orphaned job(s) as failed after restart")
+        log.info(f"Saved state loaded in {time.monotonic() - started:.1f}s")
 
     async def run(self):
         if not self.ready:
@@ -548,7 +668,7 @@ class VigilEngine:
             for agent_id in sorted(self._early_agents):
                 self._on_agent_connected(agent_id)
             self._early_agents.clear()
-        logging.info("Vigil Engine started...")
+        log.info("Vigil Engine started...")
 
         self.db.insert_event("INFO", "Vigil Engine started polling loop.", "vigil_core")
 
@@ -557,19 +677,22 @@ class VigilEngine:
         try:
             self.notifications.start(self.plugins)
         except Exception as e:
-            logging.error(f"Failed to start notifications — none will be sent: {e}")
+            log.error(f"Failed to start notifications — none will be sent: {e}")
 
         monitors = list(self._flatten(self.plugins))
         polled = [p for p in monitors if not self._is_event_driven(p)]
         pushed = len(monitors) - len(polled)
-        logging.info(
+        log.info(
             f"Starting {len(polled)} independent monitor schedule(s); "
             f"{pushed} collect on their agent."
         )
         for plugin in polled:
-            self._spawn(self._monitor_loop(plugin))
+            self._monitor_tasks[plugin.id] = self._spawn(self._monitor_loop(plugin))
 
         self._spawn(self._prune_loop())
+        self._spawn(self._watch_config())
+        if self._handle_signals:
+            self._install_signal_handlers()
 
     def _maybe_prune_logs(self, interval: float = 3600.0):
         # Nothing to prune if both retention windows are disabled (0/negative).
@@ -592,4 +715,185 @@ class VigilEngine:
             self.db.prune_status(self.metric_retention_days)
             self.db.downsample_metrics(self.metric_downsample_days)
         except Exception as e:
-            logging.error(f"Retention prune failed: {e}")
+            log.error(f"Retention prune failed: {e}")
+
+    # --- Config reload ---
+
+    async def reload_config(self, source: str = 'api') -> ReloadResult:
+        """Re-read config.yaml and apply it in place, or keep the running config and report why not.
+
+        Monitors whose effective config is unchanged keep running untouched;
+        removed ones stop, added ones start, and changed ones are replaced.
+        Reloads run one at a time, and each records a summary event."""
+        async with self._reload_lock:
+            result = ReloadResult(source)
+            if not self.ready:
+                result.ok, result.error = False, 'Vigil is still starting'
+                return result
+            # Anything wrong with the new file must leave the running config exactly as it was.
+            try:
+                plan = await asyncio.to_thread(self._plan_reload)
+            except Exception as e:
+                result.ok, result.error = False, str(e)
+                self._record_reload(result)
+                return result
+            await self._apply_reload(plan, result)
+            self._record_reload(result)
+            return result
+
+    def _plan_reload(self) -> _ReloadPlan:
+        """Parse the config file and construct every monitor it declares, raising on the first sign it cannot apply whole."""
+        config = VigilConfig(str(self.config_loader.path), strict=True)
+        loader = PluginLoader(parse_plugin_paths(config.plugin_paths, config.path.parent))
+        keep = {p.id: p for p in self._flatten(self.plugins)}
+        errors: List[str] = []
+        nodes = self._build_tree(config.plugins, loader, config.ssh_defaults, keep, errors)
+        if errors:
+            raise ValueError(f"monitor {'; '.join(errors)}")
+        ids = [node.plugin.id for node in _walk(nodes)]
+        duplicates = sorted({i for i in ids if ids.count(i) > 1})
+        if duplicates:
+            raise ValueError(f"duplicate monitor id(s) {', '.join(duplicates)} — give each an explicit unique `id`")
+        return _ReloadPlan(config, loader, nodes)
+
+    async def _apply_reload(self, plan: _ReloadPlan, result: ReloadResult) -> None:
+        old = {p.id: p for p in self._flatten(self.plugins)}
+        new = {node.plugin.id: node.plugin for node in _walk(plan.nodes)}
+        result.added = sorted(i for i in new if i not in old)
+        result.removed = sorted(i for i in old if i not in new)
+        result.changed = sorted(i for i in new if i in old and new[i] is not old[i])
+        old_config, old_shape = self.config, _shape(self.plugins)
+
+        agents = await self._retire([old[i] for i in result.removed + result.changed])
+
+        self.config_loader, self.config = plan.config, plan.config.data
+        self._plugin_loader, self._config_digest = plan.loader, plan.config.digest
+        self._apply_settings(old_config)
+
+        fresh = [new[i] for i in result.added + result.changed]
+        for plugin in fresh:
+            # Wiring builds no IO, so it does not fail in practice; if it does, only that monitor stays down.
+            try:
+                self._wire_new(plugin)
+            except Exception as e:
+                log.error(f"{plugin.name}: could not be wired after reload — it will not run: {e}")
+                continue
+            net = self._exec_context_for(plugin)
+            if net is not None and net.is_agent:
+                agents.add(net.conn)
+        self.plugins = self._attach(plan.nodes)
+
+        closed = self.connectors.close_unused(ctx.conn for ctx in self._exec_contexts.values())
+        if closed:
+            log.info(f"Closed {closed} SSH connection(s) no monitor uses any more")
+        await asyncio.gather(*(conn.push_subscriptions() for conn in agents))
+        for plugin in fresh:
+            if plugin.id in self._exec_contexts and not self._is_event_driven(plugin):
+                self._monitor_tasks[plugin.id] = self._spawn(self._monitor_loop(plugin))
+
+        tree_changed = bool(result.added or result.removed or result.changed) or _shape(self.plugins) != old_shape
+        if tree_changed or section_changed(old_config, self.config, 'notifications'):
+            self._restart_notifications()
+        if section_changed(old_config, self.config, 'exporters'):
+            self.exporters.stop()
+            self.exporters = ExporterEngine(self.db, self.config_loader.exporters)
+            self._start_exporters()
+        result.restart_required = restart_required(old_config, self.config, self._db_path_overridden)
+        if tree_changed:
+            self.monitors_version += 1
+            CHANGES.publish(changes.MONITORS)
+
+    async def _retire(self, plugins: List[Plugin]) -> Set[Any]:
+        """Stop monitors a reload removes or replaces, returning the agents whose stream sets changed."""
+        tasks, agents = [], set()
+        for plugin in plugins:
+            self._retired.add(plugin)
+            task = self._monitor_tasks.pop(plugin.id, None)
+            if task is not None:
+                task.cancel()
+                tasks.append(task)
+            net = self._exec_contexts.pop(plugin.id, None)
+            for stream_id in [s for s, target in self._event_targets.items() if target is plugin]:
+                del self._event_targets[stream_id]
+                self._collection_streams.discard(stream_id)
+                if net is not None and net.is_agent:
+                    net.conn.unregister_stream(stream_id)
+                    agents.add(net.conn)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for plugin in plugins:
+            self._collecting.pop(plugin.id, None)
+            self._last_collected.pop(plugin.id, None)
+            self._cycle_stats.forget(plugin.id)
+        # The agent keeps a stream whose id it already runs, so retired streams leave first and a changed one restarts.
+        await asyncio.gather(*(conn.push_subscriptions() for conn in agents))
+        return agents
+
+    def _apply_settings(self, old_config: Dict) -> None:
+        """Apply the global settings a reload can change in place."""
+        self.log_retention_days = self.config_loader.log_retention_days
+        self.metric_retention_days = self.config_loader.metric_retention_days
+        self.metric_downsample_days = self.config_loader.metric_downsample_days
+        self._cycle_timings = self.config_loader.cycle_timings
+        old_logging, new_logging = old_config.get('logging') or {}, self.config.get('logging') or {}
+        if (old_logging.get('level'), old_logging.get('levels')) != (new_logging.get('level'), new_logging.get('levels')):
+            self._log_levels.configure(self.config_loader.log_level, self.config_loader.log_levels)
+        if section_changed(old_config, self.config, 'agents'):
+            self.connectors.agents.configure(self.config_loader.agents)
+
+    def _restart_notifications(self) -> None:
+        # Deliveries already under way finish; only the watching moves to the new rules.
+        self.notifications.stop(cancel_deliveries=False)
+        self.notifications = NotificationEngine(
+            self.db, self.config_loader.notifications, self.connectors.agents
+        )
+        # Broken notification settings must not stop monitoring.
+        try:
+            self.notifications.start(self.plugins)
+        except Exception as e:
+            log.error(f"Failed to start notifications after reload — none will be sent: {e}")
+
+    def _record_reload(self, result: ReloadResult) -> None:
+        if not result.ok:
+            level = "ERROR"
+        elif result.restart_required:
+            level = "WARNING"
+        else:
+            level = "INFO"
+        log.log(logging.getLevelName(level), result.summary())
+        self.db.insert_event(level, f"[vigil_core] {result.summary()}", "vigil_core")
+
+    def _config_fingerprint(self) -> Optional[tuple]:
+        """What the config path points at and when it last changed; a re-pointed symlink or a replaced file changes it."""
+        try:
+            real = os.path.realpath(self.config_loader.path)
+            stat = os.stat(real)
+        except OSError:
+            return None
+        return real, stat.st_ino, stat.st_mtime_ns, stat.st_size
+
+    def _config_file_digest(self) -> Optional[str]:
+        try:
+            return hashlib.sha256(self.config_loader.path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    async def _watch_config(self) -> None:
+        """Reload when config.yaml changes: checked every few seconds, and applied once it has held still for one check."""
+        seen = pending = None
+        while True:
+            await asyncio.sleep(CONFIG_POLL_SECONDS)
+            current = self._config_fingerprint()
+            if current is None or current == seen:
+                pending = None
+                continue
+            if current != pending:
+                pending = current
+                continue
+            seen, pending = current, None
+            if self._config_file_digest() == self._config_digest:
+                continue
+            # A failed reload is already reported; the watcher keeps watching.
+            try:
+                await self.reload_config('file change')
+            except Exception as e:
+                log.error(f"Config reload after a file change failed: {e}")

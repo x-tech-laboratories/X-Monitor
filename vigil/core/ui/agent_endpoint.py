@@ -17,6 +17,8 @@ from typing import Any
 from vigil.core.connectors import agent_protocol as proto
 from vigil.core.connectors.agent_connector import AgentRegistry
 
+log = logging.getLogger(__name__)
+
 
 def _tokens_match(given: str, expected: str) -> bool:
     import hmac
@@ -41,7 +43,7 @@ def register_agent_endpoint(app: Any, registry: AgentRegistry) -> None:
             expected = registry.token_for(agent_id)
             given = str(hello.get('token') or '')
             if not agent_id or not expected or not _tokens_match(given, expected):
-                logging.warning(
+                log.warning(
                     f"agent endpoint: rejected connection claiming id {agent_id!r} "
                     f"from {websocket.client.host if websocket.client else 'unknown'}"
                 )
@@ -62,7 +64,7 @@ def register_agent_endpoint(app: Any, registry: AgentRegistry) -> None:
             pass
         # One misbehaving connection (bad frame, mid-handshake drop) must not take the endpoint down.
         except Exception as e:
-            logging.warning(f"agent endpoint: connection ended with an error: {e}")
+            log.warning(f"agent endpoint: connection ended with an error: {e}")
         finally:
             if conn is not None:
                 conn.detach(websocket)

@@ -29,6 +29,8 @@ from datetime import datetime, timedelta
 from typing import Optional, Any, Dict, List, Callable, TYPE_CHECKING
 from peewee import *
 
+log = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from vigil.core.connectors.types import CollectResult
 
@@ -152,9 +154,9 @@ class _AsyncWriter:
                             try:
                                 item_fn()
                             except Exception as e:
-                                logging.error(f"DB write failed: {e}")
+                                log.error(f"DB write failed: {e}")
             except Exception as e:
-                logging.error(f"DB batch commit failed, dropping {len(batch)} write(s): {e}")
+                log.error(f"DB batch commit failed, dropping {len(batch)} write(s): {e}")
             finally:
                 for _ in batch:
                     self._q.task_done()
@@ -235,9 +237,9 @@ class DatabaseManager:
             db.create_tables(ALL_MODELS)
             self._migrate()
             db.close()
-            logging.info(f"Database initialized and connected at {self.db_path}")
+            log.info(f"Database initialized and connected at {self.db_path}")
         except OperationalError as e:
-            logging.error(
+            log.error(
                 f"Failed to connect or initialize database at {self.db_path}: {e}"
             )
             raise
@@ -257,14 +259,14 @@ class DatabaseManager:
             table_columns = {c.name for c in db.get_columns(table)}
             if old in table_columns and "plugin_id" not in table_columns:
                 db.execute_sql(f"ALTER TABLE {table} RENAME COLUMN {old} TO plugin_id")
-                logging.info(f"Migrated: renamed {table}.{old} -> plugin_id")
+                log.info(f"Migrated: renamed {table}.{old} -> plugin_id")
 
     @staticmethod
     def _migrate():
         columns = {c.name for c in db.get_columns("event")}
         if "plugin_id" not in columns:
             db.execute_sql("ALTER TABLE event ADD COLUMN plugin_id VARCHAR(255)")
-            logging.info("Migrated: added event.plugin_id")
+            log.info("Migrated: added event.plugin_id")
 
         # Detached-on-target job execution (pid/workdir/output_seq).
         job_columns = {c.name for c in db.get_columns("job")}
@@ -275,7 +277,7 @@ class DatabaseManager:
         ):
             if col not in job_columns:
                 db.execute_sql(ddl)
-                logging.info(f"Migrated: added job.{col}")
+                log.info(f"Migrated: added job.{col}")
 
         # Composite index on metric (plugin_id, metric_name, timestamp). The
         # live read path no longer queries SQLite, but startup hydration loads
@@ -309,14 +311,14 @@ class DatabaseManager:
             ).fetchone()
             if exists:
                 return
-            logging.info("Building the metric series index; this runs once and can take minutes")
+            log.info("Building the metric series index; this runs once and can take minutes")
             started = time.monotonic()
             db.execute_sql(
                 f"CREATE INDEX IF NOT EXISTS {_SERIES_INDEX} "
                 "ON metric (plugin_id, metric_name, timestamp, value, target)"
             )
             db.execute_sql("DROP INDEX IF EXISTS metric_plugin_id_metric_name_timestamp")
-            logging.info(f"Built the metric series index in {time.monotonic() - started:.1f}s")
+            log.info(f"Built the metric series index in {time.monotonic() - started:.1f}s")
 
     # ------------------------------------------------------------------
     # Startup hydration — the only read path from SQLite
@@ -338,11 +340,11 @@ class DatabaseManager:
                 self._hydrate_snapshots()
                 self._hydrate_settings()
                 self._hydrate_jobs()
-            logging.info("State store hydrated from database")
+            log.info("State store hydrated from database")
         except OperationalError as e:
             # An unreadable database on a fresh install is not fatal — the
             # store simply starts empty and collectors repopulate it.
-            logging.error(f"Failed to hydrate state from {self.db_path}: {e}")
+            log.error(f"Failed to hydrate state from {self.db_path}: {e}")
 
     def _hydrate_statuses(self) -> None:
         for (plugin_id,) in _distinct_keys(StatusHistory, "plugin_id"):
@@ -428,7 +430,7 @@ class DatabaseManager:
             try:
                 self.store.snapshots[row.plugin_id] = json.loads(row.data)
             except (ValueError, TypeError):
-                logging.warning(f"Discarding unreadable snapshot for {row.plugin_id}")
+                log.warning(f"Discarding unreadable snapshot for {row.plugin_id}")
 
     def _hydrate_settings(self) -> None:
         self.store.settings.update({row.key: row.value for row in Setting.select()})
@@ -678,7 +680,7 @@ class DatabaseManager:
         def _do_prune():
             deleted = LogLine.delete().where(LogLine.timestamp < cutoff).execute()
             if deleted:
-                logging.info(
+                log.info(
                     f"Pruned {deleted} log line(s) older than {retention_days}d"
                 )
 
@@ -693,7 +695,7 @@ class DatabaseManager:
         def _do_prune():
             deleted = Metric.delete().where(Metric.timestamp < cutoff).execute()
             if deleted:
-                logging.info(f"Pruned {deleted} metric(s) older than {retention_days}d")
+                log.info(f"Pruned {deleted} metric(s) older than {retention_days}d")
 
         _writer.submit(_do_prune)
         return 0
@@ -720,7 +722,7 @@ class DatabaseManager:
         def _finish():
             self._thinning = False
             if deleted[0]:
-                logging.info(f"Downsampled {deleted[0]} metric row(s) older than {older_than_days}d to one per hour")
+                log.info(f"Downsampled {deleted[0]} metric row(s) older than {older_than_days}d to one per hour")
 
         def _thin_from(start: Optional[datetime]):
             try:
@@ -773,7 +775,7 @@ class DatabaseManager:
                 .execute()
             )
             if deleted:
-                logging.info(
+                log.info(
                     f"Pruned {deleted} status row(s) older than {retention_days}d"
                 )
 
@@ -792,7 +794,7 @@ class DatabaseManager:
                 .execute()
             )
             if deleted:
-                logging.info(f"Pruned {deleted} job(s) older than {retention_days}d")
+                log.info(f"Pruned {deleted} job(s) older than {retention_days}d")
 
         _writer.submit(_do_prune)
         return 0

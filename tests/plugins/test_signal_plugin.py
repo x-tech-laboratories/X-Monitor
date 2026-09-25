@@ -13,7 +13,7 @@ SIGNALS = [
 
 
 def _plugin_class(signal: str) -> type:
-    from vigil.core.coordination.engine import _plugin_class as resolve
+    from vigil.core.coordination.plugin_loader import _plugin_class as resolve
     path = f'vigil.plugins.{signal}'
     return resolve(importlib.import_module(path), path)
 

@@ -3,6 +3,11 @@
 # This is a minimal example. A full deployment (the TechNet homelab) is defined
 # declaratively in NixOS via services.vigil — see that module for a complete,
 # real-world plugin tree.
+#
+# Vigil applies an edit to this file while it runs: it notices the change within
+# a few seconds (or on SIGHUP, POST /api/config/reload, or the dashboard's System
+# menu), keeps unchanged monitors running, and refuses a file that does not load
+# whole. database, memory, auth and theme still take a restart; a reload says so.
 
 # Database settings
 database:
@@ -21,7 +26,14 @@ logging:
                               # disk footprint. 0 (default) disables.
   # cycle_timings: true       # Record cycle_collect/parse_seconds metrics per
                               # monitor; they double the metric row count, so
-                              # set false to shed them.
+                              # set false to shed them. vigil_self's cycle-time
+                              # table is kept in memory and works either way.
+  # level: INFO               # Root log level at startup: DEBUG, INFO, WARNING,
+                              # ERROR or CRITICAL. Change it while running from
+                              # the dashboard's System menu, POST /api/log-levels,
+                              # or SIGUSR1 (more verbose) / SIGUSR2 (quieter).
+  # levels:                   # Per-logger levels; a logger is its module path.
+  #   vigil.core.connectors.ssh_connector: DEBUG
 
 # In-memory state (optional).
 # Live state is held in Python objects and served to the UI from there; the
@@ -138,6 +150,14 @@ theme:
 #     after: 1                      # problem cycles in a row before notifying
 #     repeat: 0                     # remind this often while it lasts, e.g. 1h; 0 is off
 #     recovery: true
+
+# Out-of-tree plugins (optional) — see docs/plugins.md#out-of-tree-plugins.
+# Directories searched, in order, for a plugin `type` Vigil does not ship, as
+# <type>.py or a <type>/ package. Relative paths start at this file's directory.
+# plugin_paths:
+#   - /etc/vigil/plugins
+#   - path: ./my-plugins
+#     override: true            # let its plugins replace built-ins of the same name
 
 # Domain-based Plugins
 plugins:

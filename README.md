@@ -159,7 +159,7 @@ plugins:
 
 Every monitor type, its config keys, and its `ssh_config` / layout options are
 documented in the [plugin reference](docs/plugins.md). Agent declaration and
-installation are covered in the [agent guide](docs/agent.md).
+installation are covered in the [agent guide](docs/agent.md). A plugin type of your own can live in a directory outside Vigil, named under `plugin_paths:` (see [out-of-tree plugins](docs/plugins.md#out-of-tree-plugins)).
 
 ### Authentication
 
@@ -230,6 +230,10 @@ The primary entry point starts both the background engine and the web dashboard:
 ```bash
 vigil --config config.yaml
 ```
+
+Editing `config.yaml` takes effect while Vigil runs: the change is picked up within a few seconds, or at once with `kill -HUP`, `POST /api/config/reload`, or **Reload config** in the dashboard's **System** menu. Unchanged monitors keep running and keep their connections; added, removed and changed ones start, stop or restart; and a file that does not load whole is refused, leaving the running config in place. The events feed records what each reload did, including any setting (`database`, `memory`, `auth`, `theme`) that only takes effect on restart.
+
+Logging verbosity can change while Vigil runs, for the whole process or one module: from the dashboard's **System** menu (**Log levels**), through `POST /api/log-levels` (see [integrations](docs/integrations.md#runtime-control)), or, when the dashboard is unreachable, with `kill -USR1` (one step more verbose) and `kill -USR2` (one step quieter). `logging.level` and `logging.levels` in `config.yaml` set the starting values.
 
 To run just the dashboard against an existing database:
 

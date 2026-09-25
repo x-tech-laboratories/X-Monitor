@@ -9,6 +9,7 @@ from vigil.plugins.vigil_self import (
     _read_rss_mb,
     _read_cpu_seconds,
 )
+from vigil.core.coordination.cycle_stats import CycleTiming
 from vigil.core.database.database import db, StatusHistory, Metric
 
 
@@ -22,10 +23,18 @@ BASE_CFG = {
 }
 
 
-def _make_engine(plugins, last_collected=None):
+def _make_engine(plugins, last_collected=None, timings=None):
     collected = last_collected or {}
+    timed = timings or {}
     return MagicMock(plugins=plugins,
-                     last_collected=lambda pid: collected.get(pid, 0.0))
+                     last_collected=lambda pid: collected.get(pid, 0.0),
+                     cycle_timing=lambda pid: timed.get(pid))
+
+
+def _timing(avg, last=None, peak=None, wait=0.0):
+    return CycleTiming(last_seconds=avg if last is None else last, avg_seconds=avg,
+                       max_seconds=avg if peak is None else peak,
+                       last_wait_seconds=wait, avg_wait_seconds=wait, cycles=3)
 
 
 @pytest.fixture
@@ -221,6 +230,97 @@ class TestCollectionHealth:
         plugin.engine = _make_engine([plugin])
         _run(plugin, run_io_cycle)
         assert _latest_metric("monitors_total") == 0.0
+
+
+class TestCycleTimings:
+    async def test_rows_are_sorted_slowest_first(self, plugin, run_io_cycle):
+        fast, slow = _fake_monitor("fast", 60), _fake_monitor("slow", 60)
+        plugin.engine = _make_engine([fast, slow], timings={"fast": _timing(0.2), "slow": _timing(4.0)})
+        _run(plugin, run_io_cycle)
+        rows = plugin.data.latest_snapshot()
+        assert [r["id"] for r in rows] == ["slow", "fast"]
+
+    async def test_row_carries_last_avg_max_wait_and_share(self, plugin, run_io_cycle):
+        m = _fake_monitor("host-cpu", 20)
+        plugin.engine = _make_engine([m], timings={"host-cpu": _timing(2.0, last=1.0, peak=5.0, wait=0.5)})
+        _run(plugin, run_io_cycle)
+        row = plugin.data.latest_snapshot()[0]
+        assert (row["last"], row["avg"], row["max"], row["wait"]) == (1.0, 2.0, 5.0, 0.5)
+        assert row["share"] == 10.0
+        assert row["slow"] is False
+
+    async def test_monitor_without_a_timed_cycle_is_left_out(self, plugin, run_io_cycle):
+        m = _fake_monitor("pushed", 60)
+        plugin.engine = _make_engine([m])
+        _run(plugin, run_io_cycle)
+        assert plugin.data.latest_snapshot() == []
+        assert _latest_metric("slowest_cycle_seconds") is None
+
+    async def test_groups_are_left_out(self, plugin, run_io_cycle):
+        leaf = _fake_monitor("leaf", 60)
+        group = _fake_monitor("group", 60, children=[leaf])
+        plugin.engine = _make_engine([group], timings={"leaf": _timing(1.0), "group": _timing(1.0)})
+        _run(plugin, run_io_cycle)
+        assert [r["id"] for r in plugin.data.latest_snapshot()] == ["leaf"]
+
+    async def test_cycle_past_half_the_interval_is_slow(self, plugin, run_io_cycle):
+        m = _fake_monitor("crawl", 10)
+        plugin.engine = _make_engine([m], timings={"crawl": _timing(6.0)})
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_slow") == 1.0
+        assert _latest_metric("slowest_cycle_seconds") == 6.0
+        assert _latest_status() == "warning"
+
+    async def test_slow_fraction_is_configurable(self, make_plugin, run_io_cycle):
+        p = make_plugin(VigilSelfPlugin, {**BASE_CFG, "slow_cycle_fraction": 0.9})
+        m = _fake_monitor("crawl", 10)
+        p.engine = _make_engine([m], timings={"crawl": _timing(6.0)})
+        try:
+            _run(p, run_io_cycle)
+            assert _latest_metric("monitors_slow") == 0.0
+            assert _latest_status() == "online"
+        finally:
+            VigilSelfPlugin.engine = None
+
+    async def test_slow_seconds_flags_a_long_cycle_on_a_long_interval(self, make_plugin, run_io_cycle):
+        p = make_plugin(VigilSelfPlugin, {**BASE_CFG, "slow_cycle_seconds": 5})
+        m = _fake_monitor("hourly", 3600)
+        p.engine = _make_engine([m], timings={"hourly": _timing(8.0)})
+        try:
+            _run(p, run_io_cycle)
+            assert _latest_metric("monitors_slow") == 1.0
+            assert p.data.latest_snapshot()[0]["slow"] is True
+        finally:
+            VigilSelfPlugin.engine = None
+
+    async def test_slow_seconds_is_off_by_default(self, plugin, run_io_cycle):
+        m = _fake_monitor("hourly", 3600)
+        plugin.engine = _make_engine([m], timings={"hourly": _timing(60.0)})
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_slow") == 0.0
+
+    async def test_slow_monitor_is_named_in_the_log(self, plugin, run_io_cycle):
+        m = _fake_monitor("crawl", 10)
+        plugin.engine = _make_engine([m], timings={"crawl": _timing(6.0)})
+        result = _run(plugin, run_io_cycle)
+        assert "slow: crawl (6.0s of 10s)" in result.logs[0][0]
+
+    async def test_stalled_outranks_slow(self, plugin, run_io_cycle):
+        stale = time.monotonic() - (60 * 12)
+        m = _fake_monitor("both", 60)
+        plugin.engine = _make_engine([m], {"both": stale}, timings={"both": _timing(50.0)})
+        _run(plugin, run_io_cycle)
+        assert _latest_status() == "failed"
+
+    def test_slow_row_is_colored_warning(self, plugin):
+        assert plugin._slow_row_color({"slow": True}) == "warning"
+        assert plugin._slow_row_color({"slow": False}) is None
+
+    def test_spec_lays_out_the_timings_table(self, plugin):
+        spec = plugin.UI_SPEC
+        assert ["timings"] in spec["layout"]
+        assert [c["field"] for c in spec["tables"]["timings"]["columns"]] == [
+            "name", "interval", "last", "avg", "max", "wait", "share"]
 
 
 class TestSelfActions:

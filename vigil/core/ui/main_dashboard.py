@@ -8,9 +8,13 @@ from nicegui import app, ui
 from vigil.core.contracts import EngineLike
 from . import theme
 from .auth import LOGOUT_PATH, AuthConfig
+from .components import on_data_event
 from .sidebar import render_sidebar
 from .views import render_overview, render_events, render_plugin_detail
 from .views.notifications import open_notifications_dialog
+from .views.system import render_system_menu
+
+log = logging.getLogger(__name__)
 
 _ICON = Path(__file__).parent / 'static' / 'icon.svg'
 
@@ -57,6 +61,18 @@ class DashboardState:
     selected_plugin: Any = None
     render_main: Optional[Callable[[], None]] = None
     sync_nav: Optional[Callable[[], None]] = None
+    monitors_version: int = 0
+
+
+def after_reload(engine: EngineLike, state: DashboardState) -> Optional[str]:
+    """How a view catches up with a config reload: 'overview' when its monitor is gone, 'redraw' when it lists or shows monitors."""
+    if state.current_view == 'plugin' and state.selected_plugin is not None:
+        current = _find_monitor(engine.plugins, state.selected_plugin.id)
+        if current is None:
+            return 'overview'
+        state.selected_plugin = current
+        return 'redraw'
+    return 'redraw' if state.current_view == 'overview' else None
 
 
 def _register_endpoints(engine: EngineLike) -> Optional[AuthConfig]:
@@ -72,14 +88,14 @@ def _register_endpoints(engine: EngineLike) -> Optional[AuthConfig]:
         from vigil.core.ui.api import register_api
         register_api(app, engine, tokens)
     except Exception as e:
-        logging.error(f"Failed to register REST API — /api endpoints will be unavailable: {e}")
+        log.error(f"Failed to register REST API — /api endpoints will be unavailable: {e}")
 
     # A broken agent endpoint must not stop the dashboard from starting.
     try:
         from vigil.core.ui.agent_endpoint import register_agent_endpoint
         register_agent_endpoint(app, engine.connectors.agents)
     except Exception as e:
-        logging.error(f"Failed to register the agent endpoint — agents will be unable to connect: {e}")
+        log.error(f"Failed to register the agent endpoint — agents will be unable to connect: {e}")
 
     return auth_config
 
@@ -108,6 +124,7 @@ def _render_header(engine: EngineLike, left_drawer_toggle: Callable,
             with ui.button(on_click=lambda: open_notifications_dialog(engine), icon='notifications',
                            color=None).props('flat dense round'):
                 ui.tooltip('Notifications')
+        render_system_menu(engine)
         if auth_config is not None:
             _render_account_menu(auth_config)
 
@@ -154,6 +171,20 @@ def _render_index(engine: EngineLike, auth_config: Optional[AuthConfig] = None,
 
     state.render_main = render_main
     render_main()
+
+    state.monitors_version = engine.monitors_version
+
+    def follow_reload():
+        if engine.monitors_version == state.monitors_version:
+            return
+        state.monitors_version = engine.monitors_version
+        action = after_reload(engine, state)
+        if action == 'overview':
+            switch_view('overview')
+        elif action == 'redraw':
+            render_main()
+
+    on_data_event(follow_reload, run_now=False)
 
 
 def init_gui(engine: EngineLike, port: int = 8080):

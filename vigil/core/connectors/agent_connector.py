@@ -30,6 +30,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from vigil.core.connectors import agent_protocol as proto
 from vigil.core.connectors.agent_protocol import StreamSpec
 
+log = logging.getLogger(__name__)
+
 EXEC_TIMEOUT = 30.0
 CONTROL_TIMEOUT = 60.0
 
@@ -69,7 +71,7 @@ class AgentConnection:
         same id replaces the first — a reconnect after a network drop often
         arrives before the old socket has been noticed as dead."""
         if self._socket is not None:
-            logging.warning(
+            log.warning(
                 f"agent {self.agent_id!r}: replacing an existing connection "
                 f"(the previous socket is assumed dead)"
             )
@@ -80,7 +82,7 @@ class AgentConnection:
         caps = hello.get('caps')
         self.capabilities = [str(c) for c in caps] if isinstance(caps, list) else []
         self.connected_at = time.time()
-        logging.info(
+        log.info(
             f"agent {self.agent_id!r} connected from {self.hostname or self.host} "
             f"(version {self.version or 'unknown'})"
         )
@@ -94,7 +96,7 @@ class AgentConnection:
         self._socket = None
         self.connected_at = None
         self._fail_pending("Agent disconnected")
-        logging.info(f"agent {self.agent_id!r} disconnected")
+        log.info(f"agent {self.agent_id!r} disconnected")
 
     def _fail_pending(self, reason: str) -> None:
         for future in self._pending.values():
@@ -174,6 +176,9 @@ class AgentConnection:
     def register_stream(self, spec: StreamSpec) -> None:
         self._streams[spec.id] = spec
 
+    def unregister_stream(self, stream_id: str) -> None:
+        self._streams.pop(stream_id, None)
+
     @property
     def streams(self) -> List[StreamSpec]:
         return list(self._streams.values())
@@ -188,7 +193,7 @@ class AgentConnection:
         try:
             await self._send(proto.subscribe([s.to_wire() for s in self._streams.values()]))
         except Exception as e:
-            logging.warning(f"agent {self.agent_id!r}: could not send subscriptions: {e}")
+            log.warning(f"agent {self.agent_id!r}: could not send subscriptions: {e}")
 
     def close(self) -> None:
         """Match SSHConnection.close() so the Connector Engine can tear down
@@ -213,25 +218,37 @@ class AgentRegistry:
     def configure(self, agents_cfg: List[Dict[str, Any]]) -> None:
         """Build the connection objects from config.yaml's ``agents:`` list.
         An entry with no id is skipped with a log rather than raising, matching
-        how a malformed plugin entry degrades."""
+        how a malformed plugin entry degrades. Called again on a config reload,
+        it keeps each existing agent's connection, so monitors wired to it stay
+        wired, and an agent dropped from the list loses its token and can no
+        longer connect."""
+        declared = set()
         for entry in agents_cfg or []:
             agent_id = entry.get('id') or entry.get('name')
             if not agent_id:
-                logging.error(f"agents: entry with no `id` ignored: {entry!r}")
+                log.error(f"agents: entry with no `id` ignored: {entry!r}")
                 continue
             agent_id = str(agent_id)
+            declared.add(agent_id)
             token = self._resolve_token(agent_id, entry)
             if not token:
-                logging.error(
+                self._tokens.pop(agent_id, None)
+                log.error(
                     f"agent {agent_id!r} has no usable token and will refuse "
                     f"every connection — set `token` or `token_file`"
                 )
             else:
                 self._tokens[agent_id] = token
-            self._agents[agent_id] = AgentConnection(
-                agent_id, host=str(entry.get('host') or agent_id)
-            )
-            logging.info(f"Registered agent {agent_id!r}")
+            host = str(entry.get('host') or agent_id)
+            existing = self._agents.get(agent_id)
+            if existing is not None:
+                existing.host = host
+                continue
+            self._agents[agent_id] = AgentConnection(agent_id, host=host)
+            log.info(f"Registered agent {agent_id!r}")
+        for agent_id in sorted(set(self._tokens) - declared):
+            del self._tokens[agent_id]
+            log.warning(f"agent {agent_id!r} is no longer configured and can no longer connect")
 
     @staticmethod
     def _resolve_token(agent_id: str, entry: Dict[str, Any]) -> Optional[str]:
@@ -246,7 +263,7 @@ class AgentRegistry:
             try:
                 return Path(str(token_file)).read_text(encoding='utf-8').strip() or None
             except OSError as e:
-                logging.error(
+                log.error(
                     f"agent {agent_id!r}: could not read token_file {token_file}: {e}"
                 )
                 return None
@@ -263,7 +280,7 @@ class AgentRegistry:
         monitor with an explicit message, not a crash at startup."""
         conn = self._agents.get(agent_id)
         if conn is None:
-            logging.error(
+            log.error(
                 f"Monitor references agent {agent_id!r}, which is not declared "
                 f"in the top-level `agents:` config — it can never connect"
             )
@@ -303,7 +320,7 @@ class AgentRegistry:
         try:
             self._connect_sink(agent_id)
         except Exception as e:
-            logging.error(f"agent {agent_id!r}: connect handler failed: {e}")
+            log.error(f"agent {agent_id!r}: connect handler failed: {e}")
 
     def dispatch_event(self, agent_id: str, stream_id: str,
                        timestamp: float, payload: Dict[str, Any]) -> None:
@@ -313,7 +330,7 @@ class AgentRegistry:
         try:
             self._event_sink(agent_id, stream_id, timestamp, payload)
         except Exception as e:
-            logging.error(f"agent {agent_id!r}: event handler failed for stream {stream_id!r}: {e}")
+            log.error(f"agent {agent_id!r}: event handler failed for stream {stream_id!r}: {e}")
 
     def close(self) -> None:
         for conn in self._agents.values():

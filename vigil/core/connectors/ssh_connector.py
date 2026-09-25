@@ -4,13 +4,18 @@ import logging
 import os
 import shlex
 import tempfile
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Iterator, List, Tuple, Optional
 
 import asyncssh
 
 from vigil.core.settings.config_schema import PluginConfig
+
+log = logging.getLogger(__name__)
 
 _STATE_DIR = Path(os.environ.get("VIGIL_SSH_CONTROL_DIR",
                                  Path(tempfile.gettempdir()) / "vigil-ssh"))
@@ -26,6 +31,31 @@ CONTROL_TIMEOUT = 60.0
 CONNECT_FAILED = "Connect failed"
 
 asyncssh.set_log_level(logging.WARNING)
+
+
+class ChannelWait:
+    """The longest any one command queued for a free SSH channel while a caller was measuring."""
+
+    def __init__(self):
+        self.seconds = 0.0
+
+    def add(self, seconds: float) -> None:
+        self.seconds = max(self.seconds, seconds)
+
+
+# The tally the current task's commands report their channel wait to, if anyone is measuring.
+_CHANNEL_WAIT: ContextVar[Optional[ChannelWait]] = ContextVar('vigil_ssh_channel_wait', default=None)
+
+
+@contextmanager
+def measure_channel_wait() -> Iterator[ChannelWait]:
+    """Measure how long the commands started inside this block queue for a channel, including those in child tasks."""
+    tally = ChannelWait()
+    token = _CHANNEL_WAIT.set(tally)
+    try:
+        yield tally
+    finally:
+        _CHANNEL_WAIT.reset(token)
 
 
 def _known_hosts_path() -> Path:
@@ -50,7 +80,7 @@ class _TofuClient(asyncssh.SSHClient):
             exact = asyncssh.read_known_hosts(str(path)).match(self._alias, '', 0)[0]
             return {k.get_fingerprint() for k in exact}
         except Exception as e:
-            logging.warning(f"ssh: could not read known_hosts for {self._alias}: {e}")
+            log.warning(f"ssh: could not read known_hosts for {self._alias}: {e}")
             return set()
 
     def validate_host_public_key(self, host: str, addr: str, port: int,
@@ -59,7 +89,7 @@ class _TofuClient(asyncssh.SSHClient):
         if known:
             if key.get_fingerprint() in known:
                 return True
-            logging.error(
+            log.error(
                 f"ssh: host key for {self._alias} does NOT match the stored "
                 f"key — refusing to connect (possible MITM or reinstalled host)"
             )
@@ -69,10 +99,10 @@ class _TofuClient(asyncssh.SSHClient):
             line = f"{self._alias} {key.export_public_key().decode().strip()}\n"
             with open(_known_hosts_path(), 'a') as f:
                 f.write(line)
-            logging.info(f"ssh: trusting and storing new host key for {self._alias}")
+            log.info(f"ssh: trusting and storing new host key for {self._alias}")
             return True
         except OSError as e:
-            logging.error(f"ssh: could not persist host key for {self._alias}: {e}")
+            log.error(f"ssh: could not persist host key for {self._alias}: {e}")
             return False
 
 
@@ -143,10 +173,14 @@ class SSHConnection:
             conn = await self._get_connection()
         except (asyncssh.Error, OSError) as e:
             reason = str(e) or type(e).__name__
-            logging.error(f"SSH connect failed on {self.host}: {reason}")
+            log.error(f"SSH connect failed on {self.host}: {reason}")
             return -1, "", f"{CONNECT_FAILED}: {reason}"
         try:
+            queued = time.perf_counter()
             async with self._channel_semaphore:
+                tally = _CHANNEL_WAIT.get()
+                if tally is not None:
+                    tally.add(time.perf_counter() - queued)
                 proc = await conn.create_process(command)
                 try:
                     result = await proc.wait(timeout=timeout)
@@ -159,7 +193,7 @@ class SSHConnection:
                     result.stderr.strip(),
                 )
         except (asyncssh.Error, OSError) as e:
-            logging.error(f"SSH execution failed on {self.host}: {e}")
+            log.error(f"SSH execution failed on {self.host}: {e}")
             if proc is not None:
                 await self._kill_process(proc)
             # A host that rebooted or went down leaves a dead connection; forget it so the next command dials afresh.

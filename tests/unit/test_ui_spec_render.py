@@ -177,3 +177,36 @@ class TestHostControlPage:
         table = next(e for e in elements if isinstance(e, Table)
                      and any(c['name'] == 'next' for c in e.columns))
         assert [r['id'] for r in table.rows] == ['0001', '0003']
+
+
+@pytest.fixture
+def self_page(make_plugin):
+    """The self-monitor's page, whose timings table colors cells with a callable rule."""
+    from vigil.plugins.vigil_self import VigilSelfPlugin
+    plugin = make_plugin(VigilSelfPlugin, {"name": "vigil", "id": "vigil"})
+    built = {'plugin': plugin}
+
+    @ui.page('/self')
+    def _page():
+        from nicegui import context
+        built['page'] = spec.generic_render(plugin, start=False)
+        built['client'] = context.client
+
+    yield built
+    VigilSelfPlugin.engine = None
+
+
+class TestCallableCellColors:
+    async def test_the_table_sent_to_the_browser_carries_no_function(self, user: User, self_page):
+        from nicegui import json
+        self_page['plugin'].storage.snapshot([
+            {'id': 'crawl', 'name': 'crawl', 'interval': 10, 'last': 6.0, 'avg': 6.0, 'max': 6.0,
+             'wait': 0.0, 'share': 60.0, 'slow': True}])
+        built = await _ticked(user, self_page, '/self')
+        tables = [e for e in built['client'].elements.values() if isinstance(e, ui.table)
+                  and any(col['name'] == 'avg' for col in e._props['columns'])]
+        assert tables, "the timings table was not rendered"
+        table = tables[0]
+        assert all('cell_color_by' not in col for col in table._props['columns'])
+        json.dumps(table._props)
+        assert table.rows[0]['_color_name'] == STATUS_COLORS['warning']

@@ -124,6 +124,36 @@ def _register_push_routes(app: Any, engine: EngineLike, tokens: TokenRegistry) -
         return _record(plugin, status, msg, value, source=f"token '{token.name}'")
 
 
+def _register_log_level_routes(app: Any, engine: EngineLike) -> None:
+    """Mount the endpoints that read and change logging verbosity at runtime."""
+    @app.get('/api/log-levels')
+    def log_levels():
+        return JSONResponse({'levels': engine.log_levels(), 'loggers': engine.known_loggers()})
+
+    @app.post('/api/log-levels')
+    async def set_log_level(request: Request):
+        # A body that is not a JSON object is the caller's mistake, answered like any other bad value.
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return JSONResponse({'error': 'expected a JSON object with logger and level'}, status_code=400)
+        try:
+            levels = engine.set_log_level(body.get('logger'), body.get('level'), source='REST API')
+        except ValueError as e:
+            return JSONResponse({'error': str(e)}, status_code=400)
+        return JSONResponse({'levels': levels})
+
+
+def _register_reload_route(app: Any, engine: EngineLike) -> None:
+    """Mount the endpoint that re-reads config.yaml and applies it in place."""
+    @app.post('/api/config/reload')
+    async def reload_config():
+        result = await engine.reload_config('REST API')
+        return JSONResponse(result.as_dict(), status_code=200 if result.ok else 422)
+
+
 def register_api(app: Any, engine: EngineLike, tokens: Optional[TokenRegistry] = None) -> None:
     """Mount the JSON status, control, push and Prometheus/health endpoints on the FastAPI app."""
     db = engine.db
@@ -207,6 +237,8 @@ def register_api(app: Any, engine: EngineLike, tokens: Optional[TokenRegistry] =
 
     _register_notification_routes(app, engine)
     _register_control_routes(app, engine)
+    _register_log_level_routes(app, engine)
+    _register_reload_route(app, engine)
 
     @app.get('/metrics')
     def prometheus_metrics():

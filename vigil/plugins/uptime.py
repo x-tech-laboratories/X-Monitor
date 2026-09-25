@@ -24,6 +24,8 @@ from vigil.core.connectors.wol import (
     DEFAULT_BROADCAST, DEFAULT_PORT, magic_packet, remote_send_command, send_magic_packet,
 )
 
+log = logging.getLogger(__name__)
+
 _DEFAULT_LAYOUT = [
     ['host_card', 'status_card', 'latency_card'],
     ['chart'],
@@ -65,7 +67,7 @@ class Uptime(Plugin):
         result: PingResult = results[0]
 
         if result.exception is not None:
-            logging.error(f"Uptime plugin error for {host}: {result.exception}")
+            log.error(f"Uptime plugin error for {host}: {result.exception}")
             return CollectResult(
                 metrics={'up': 0.0},
                 logs=[(f"Ping execution failed: {result.exception}", "ERROR")],

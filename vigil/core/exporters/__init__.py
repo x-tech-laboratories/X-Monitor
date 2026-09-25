@@ -56,7 +56,7 @@ class ExporterEngine:
                 logging.error(f"Failed to start MQTT exporter — nothing will be published: {e}")
 
     def stop(self) -> None:
-        """Stop every push exporter that start() began."""
+        """Stop every push exporter that start() began, so a config reload can start the new set."""
         for exporter in self._exporters:
             exporter.stop()
         self._exporters.clear()
