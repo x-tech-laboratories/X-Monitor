@@ -63,12 +63,14 @@ def _register_endpoints(engine: EngineLike) -> Optional[AuthConfig]:
     """Registers auth, the REST API and the agent push endpoint on the app,
     returning the auth config so the header can offer a sign-out."""
     from vigil.core.ui.auth import register_auth
-    auth_config = register_auth(app, engine.config_loader.auth_settings)
+    from vigil.core.ui.tokens import build_tokens
+    tokens = build_tokens(engine.config_loader.auth_settings)
+    auth_config = register_auth(app, engine.config_loader.auth_settings, tokens)
 
     # A broken API module must not stop the dashboard from starting.
     try:
         from vigil.core.ui.api import register_api
-        register_api(app, engine)
+        register_api(app, engine, tokens)
     except Exception as e:
         logging.error(f"Failed to register REST API — /api endpoints will be unavailable: {e}")
 

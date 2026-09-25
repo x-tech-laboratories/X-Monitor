@@ -92,3 +92,12 @@ class TestPushActions:
     async def test_on_action_always_returns_false(self, make_plugin):
         p = make_plugin(Push, _cfg())
         assert p.plan_action("anything") is None
+
+    async def test_record_push_names_the_token_that_sent_it(self, make_plugin, db_manager):
+        from vigil.core.database.database import Event
+        p = make_plugin(Push, _cfg())
+        p.record_push(status="up", msg="nightly ok", source="token 'ci'")
+        db_manager.flush()
+        with db.connection_context():
+            messages = [e.message for e in Event.select()]
+        assert any("Heartbeat received (status=up) via token 'ci': nightly ok" in m for m in messages)
