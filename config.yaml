@@ -340,6 +340,14 @@ plugins:
         quality_threshold: 20    # link quality floor (fail below)
         ssh_config:
           host: "server.example.com"
+      - name: "Interfaces"
+        id: "server-interfaces"
+        type: "interfaces"       # every NIC with state, carrier, MAC, MTU, speed and addresses
+        interval: 1m
+        exclude: ["veth*", "docker*", "br-*"]
+        expect_up: ["eth0"]      # down or no carrier -> failed; address change -> warning
+        ssh_config:
+          host: "server.example.com"
 
   - name: "Reachability"
     type: "group"
@@ -416,11 +424,30 @@ plugins:
           host: "server.example.com"
       - name: "Reboot Required"
         id: "server-reboot-required"
-        type: "command"
+        type: "reboot_required"   # Debian flag, needs-restarting, NixOS boot links or kernel modules
         interval: 1h
-        # No pattern -> status is driven by exit code (0 = online, non-zero = below).
-        command: "test ! -f /var/run/reboot-required"
-        nonzero_is_warning: true   # reboot pending -> warning, not failed
+        # reboot_status: "failed" # default warning
+        ssh_config:
+          host: "server.example.com"
+      - name: "Package Updates"
+        id: "server-package-updates"
+        type: "package_updates"   # apt, dnf or pacman, read from the cache (no refresh, no root)
+        interval: 1h
+        # manager: "apt"          # optional; auto-detected
+        # warning: 50             # pending updates (warn / fail); off by default
+        # threshold: 200
+        security_warning: 1       # any pending security update -> warning
+        # security_threshold: 5
+        ssh_config:
+          host: "server.example.com"
+      - name: "Sessions"
+        id: "server-sessions"
+        type: "sessions"          # logged-in users (loginctl, or who) plus recent logins (last)
+        interval: 1m
+        # allowed_users: ["admin"]                    # anyone else logged in -> warning
+        # allowed_sources: ["192.0.2.0/24", "*.example.com"]
+        # violation_status: "failed"                  # default warning
+        # recent_logins: 10
         ssh_config:
           host: "server.example.com"
 

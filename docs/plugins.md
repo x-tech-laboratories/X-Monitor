@@ -36,6 +36,10 @@ config examples. For what Vigil is and how to run it, see the
   [`connections`](#connections) ·
   [`wifi`](#wifi) ·
   [`power`](#power) ·
+  [`reboot_required`](#reboot_required) ·
+  [`package_updates`](#package_updates) ·
+  [`interfaces`](#interfaces) ·
+  [`sessions`](#sessions) ·
   [`borg`](#borg) ·
   [`containers`](#containers) ·
   [`command`](#command) ·
@@ -83,6 +87,10 @@ config examples. For what Vigil is and how to run it, see the
 | [`connections`](#connections)           | TCP connection counts by state         | SSH (`/proc/net/tcp`)                           | `conn_total`, `conn_established`, `conn_listen` | — |
 | [`wifi`](#wifi)                         | WiFi link quality and signal strength  | SSH (`/proc/net/wireless`)                      | `link_quality`, `signal_dbm`                    | — |
 | [`power`](#power)                       | Battery charge, external power, wear   | SSH (`/sys/class/power_supply`)                 | `charge_pct`, `plugged_in`, `capacity_health_pct`, `battery_<name>_charge_pct` | — |
+| [`reboot_required`](#reboot_required)   | Whether the host needs a reboot        | SSH (`/var/run/reboot-required`, `needs-restarting`, `/run/booted-system`, `/usr/lib/modules`) | `reboot_required` | — |
+| [`package_updates`](#package_updates)   | Pending package and security updates   | SSH (`apt list`, `dnf --cacheonly check-update`, `checkupdates`/`pacman -Qu`) | `updates_pending`, `security_updates_pending` | — |
+| [`interfaces`](#interfaces)             | Network interface inventory and addressing | SSH (`ip -j addr`, `/sys/class/net`)        | `interfaces_up`, `interfaces_total`, `interface_<name>_up` | — |
+| [`sessions`](#sessions)                 | Logged-in users and recent logins      | SSH (`loginctl` or `who`, `last`)               | `sessions_total`, `sessions_remote`, `sessions_unexpected` | — |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
 | [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
 | [`containers`](#containers)             | Docker / Podman containers, image updates | SSH (`docker`/`podman ps`, `inspect`) + registry API | `containers_total`, `containers_running`, `containers_stopped`, `images_update_available` | Restart (per expected container), Prune |
@@ -99,7 +107,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 
 ---
@@ -1102,6 +1110,136 @@ Battery charge, whether the device is on external power, and how worn the batter
 ```
 ---
 
+### `reboot_required`
+Whether the host must reboot to run the kernel and core libraries it has installed. It runs every check that applies to the host, in one cheap script, and reports a reboot when any of them asks for one:
+
+- **Debian / Ubuntu** — `/var/run/reboot-required` exists; the packages that asked for it are read from `/var/run/reboot-required.pkgs`. Debian writes this flag only when `unattended-upgrades` or `update-notifier-common` is installed.
+- **RHEL / Fedora** — `needs-restarting -r` (or `dnf needs-restarting -r`) exits `1`; the core packages it lists are shown.
+- **NixOS** — the booted system's `initrd`, `kernel`, `kernel-modules` or `systemd` differ from the current system's, the same comparison [`nixos_upgrade`](#nixos_upgrade) makes; the parts that differ are shown.
+- **Any other host (Arch and friends)** — the running kernel (`uname -r`) has no directory under `/usr/lib/modules`, because a kernel upgrade removed it.
+
+A host where none of these applies (a container with no module tree, say) is `unavailable`. Nothing here needs root.
+
+| Option          | Description                                                                  |
+|-----------------|------------------------------------------------------------------------------|
+| `reboot_status` | Status when a reboot is required: `warning` (default), `failed`, or `online` to only record it |
+| `interval`      | Polling frequency (default: `60`; `1h` is plenty)                             |
+| `ssh_config`    | SSH connection details — see [SSH Config](#ssh-config) below                 |
+
+**Metrics**: `reboot_required` (1/0)
+
+```yaml
+- name: "Reboot Required"
+  id: "server-reboot"
+  type: "reboot_required"
+  interval: 1h
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `package_updates`
+Pending package updates and how many of them are security fixes, normalised across apt, dnf and pacman. It only reads what the package manager already has cached — it never refreshes metadata and needs no root — so the counts are as fresh as the host's own `apt update` / `dnf makecache` timer:
+
+- **apt** — `apt list --upgradable` (or `apt-get -s dist-upgrade` without `apt`); an update is a security update when it comes from a `-security` suite.
+- **dnf** — `dnf --cacheonly check-update`, with `dnf --cacheonly updateinfo list --security` for the security flag and `rpm -q` for installed versions. A non-root `--cacheonly` reads the system cache.
+- **pacman** — `checkupdates` from `pacman-contrib` when installed (it syncs a temporary copy of the databases, so it needs network access but no root), otherwise `pacman -Qu` against the last `pacman -Sy`. Arch has no security metadata of its own; when `arch-audit` is installed, the packages it lists are flagged as security updates.
+
+The manager is detected in that order unless `manager` names one. The dashboard lists every pending package with its installed and available version and its security flag, security updates first.
+
+A host with none of the three managers is `unavailable`. That includes NixOS, whose updates are tracked by [`nixos_upgrade`](#nixos_upgrade) instead; the message says so. A cache the manager cannot read (dnf with no system cache yet, say) is `unavailable` too.
+
+| Option               | Description                                                                 |
+|----------------------|-----------------------------------------------------------------------------|
+| `manager`            | `apt`, `dnf` or `pacman` (default: auto-detect)                             |
+| `warning`            | Pending updates that trigger `warning` (default: none)                      |
+| `threshold`          | Pending updates that trigger `failed` (default: none)                       |
+| `security_warning`   | Pending security updates that trigger `warning` (default: `1`, so any; `null` to disable) |
+| `security_threshold` | Pending security updates that trigger `failed` (default: none)              |
+| `interval`           | Polling frequency (default: `1h`)                                           |
+| `ssh_config`         | SSH connection details — see [SSH Config](#ssh-config) below                |
+
+**Metrics**: `updates_pending`, `security_updates_pending`
+
+```yaml
+- name: "Package Updates"
+  id: "server-updates"
+  type: "package_updates"
+  interval: 1h
+  warning: 50              # a long-neglected host
+  security_threshold: 5    # any security update warns; five fail
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `interfaces`
+Every network interface on the host with its state, carrier, MAC, MTU, link speed and IPv4/IPv6 addresses, from `ip -j addr` and `/sys/class/net` (plain `ip addr` stands in when `ip` has no JSON output). Where [`throughput`](#throughput) measures one busy interface, this lists them all — for catching a dropped link or a changed DHCP lease.
+
+An interface counts as up when its operstate is `up`, or `unknown` with a carrier (loopback, WireGuard and other tunnels report `unknown`). Interfaces you name in `expect_up` are checked:
+
+- **missing, down or without carrier** → `failed`;
+- **addresses changed since the previous cycle** (a new DHCP lease, a new IPv6 prefix) → `warning` for that cycle, with an event naming the old and new addresses. Temporary IPv6 privacy addresses rotate by design, so they are listed but never compared; a link that drops and comes back with the same address is not a change.
+
+Other interfaces are listed and counted, but never change the status. An `expect_up` interface is always listed, even when `include`/`exclude` would hide it.
+
+| Option             | Description                                                              |
+|--------------------|--------------------------------------------------------------------------|
+| `include`          | Glob patterns of interfaces to list, e.g. `["eth*", "wlan*"]` (default: all) |
+| `exclude`          | Glob patterns of interfaces to leave out, e.g. `["veth*", "docker*"]`     |
+| `include_loopback` | List the loopback interface too (default: `false`)                       |
+| `expect_up`        | Interfaces that must be up with carrier; also watched for address changes |
+| `interval`         | Polling frequency (default: `60`)                                         |
+| `ssh_config`       | SSH connection details — see [SSH Config](#ssh-config) below             |
+
+**Metrics**: `interfaces_up`, `interfaces_total` (both over the listed interfaces); `interface_<name>_up` (1/0) per `expect_up` interface
+
+```yaml
+- name: "Interfaces"
+  id: "server-interfaces"
+  type: "interfaces"
+  interval: 1m
+  exclude: ["veth*", "docker*", "br-*"]
+  expect_up: ["eth0", "wg0"]
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `sessions`
+Who is logged in, from where and since when: every active session with its user, tty or seat, remote host, type (`tty`, `x11`, `wayland`, with the PAM service such as `sshd`), login time and idle time, read from `loginctl`. Where logind is not running (a container, a non-systemd host) it falls back to `who -u --ips`. The per-user service manager and the display manager's login screen are sessions to logind but not people logging in, so they are left out (`manager`, `greeter` and `lock-screen` classes).
+
+With `allowed_users` and/or `allowed_sources` set, a session outside them sets `violation_status` (`warning` by default) for as long as it lasts, and logs one event the first time it is seen. `allowed_sources` takes CIDRs (`192.0.2.0/24`, `2001:db8::/32`), hostnames and globs (`*.example.com`); a local session (console, desktop) has no source and always passes that check. Once the first cycle has recorded who is already on, each later new session logs an event too.
+
+A **Recent logins** table shows the last `recent_logins` logins from `last --time-format iso` (util-linux or wtmpdb), with reboot records left out; it stays empty where `last` is missing.
+
+| Option             | Description                                                                  |
+|--------------------|------------------------------------------------------------------------------|
+| `allowed_users`    | User names (globs allowed) that may log in (default: anyone)                |
+| `allowed_sources`  | CIDRs, hostnames or globs remote sessions may come from (default: anywhere) |
+| `violation_status` | Status while a session is outside the allowlists: `warning` (default) or `failed` |
+| `recent_logins`    | Rows in the recent logins table (default: `10`; `0` hides it)               |
+| `interval`         | Polling frequency (default: `60`)                                            |
+| `ssh_config`       | SSH connection details — see [SSH Config](#ssh-config) below                |
+
+**Metrics**: `sessions_total`, `sessions_remote`, `sessions_unexpected`, `users_total`
+
+```yaml
+- name: "Sessions"
+  id: "server-sessions"
+  type: "sessions"
+  interval: 1m
+  allowed_users: ["admin", "deploy"]
+  allowed_sources: ["192.0.2.0/24", "*.example.com"]
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
 ### `borg`
 Whether a Borg repository is being backed up, can be restored from, and is being checked, plus a file browser and the maintenance jobs that go with it. Everything runs as `borg` on the target over SSH, so the repository can be a local path there or a remote `ssh://` one.
 
@@ -1262,16 +1400,18 @@ Every run is wrapped in `timeout` so a hung target can't stall the polling loop.
   ssh_config:
     host: "server.example.com"
 
-# Exit-code mode: pending reboot -> warning
-- name: "Reboot Required"
-  id: "server-reboot"
+# Exit-code mode: a failing backup script -> warning
+- name: "Nightly Export"
+  id: "server-export"
   type: "command"
   interval: 1h
-  command: "test ! -f /var/run/reboot-required"
+  command: "/usr/local/bin/check-export"
   nonzero_is_warning: true
   ssh_config:
     host: "server.example.com"
 ```
+
+A pending reboot has its own monitor type, [`reboot_required`](#reboot_required), which knows each distro's check.
 
 ---
 

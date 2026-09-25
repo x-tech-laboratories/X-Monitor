@@ -843,10 +843,11 @@ local override.
 
 `plugins/base/signal_plugin.py` holds what the single-signal monitors (`cpu`,
 `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`,
-`connections`, `wifi`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`) share: the severity
+`connections`, `wifi`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `reboot_required`,
+`package_updates`, `interfaces`, `sessions`) share: the severity
 ordering, `worst_status` for the ones that fold several disks or pools into one
-verdict, and a `SignalPlugin` base that turns the `cards()`/`charts()`/`rows()`
-a monitor declares into the usual host-card / charts / events page. Each one
+verdict, and a `SignalPlugin` base that turns the `cards()`/`tables()`/`charts()`/`rows()`
+a monitor declares into the usual host-card / tables / charts / events page. Each one
 collects exactly one signal, so it carries its own status, interval and history,
 and a monitor that needs hardware the host lacks is simply not configured rather
 than reporting unavailable for something nobody asked about.

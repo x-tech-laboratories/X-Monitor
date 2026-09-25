@@ -7,7 +7,7 @@ from vigil.plugins.base.signal_plugin import SignalPlugin, worst_status
 # Every single-signal monitor, as the config's `type` names it.
 SIGNALS = [
     'cpu', 'memory', 'load', 'temperature', 'interrupts', 'gpu', 'oom',
-    'throughput', 'connections', 'wifi', 'power',
+    'throughput', 'connections', 'wifi', 'power', 'reboot_required', 'package_updates', 'interfaces', 'sessions',
     'smart', 'zfs', 'btrfs', 'md', 'disk_io',
 ]
 
