@@ -726,6 +726,20 @@ since it lists every mount; `disk_space` keeps its `| tail -1` and parses
 headerless. `path_key` turns a path into the metric-name fragment both
 `filesystems` and `folders` store series under.
 
+`plugins/base/dns_lookup.py` is the one record lookup `dns_record` and
+`ddns_updater` share, so the two can never disagree about what a record
+currently resolves to. Their transports stay different: `dns_record` declares a
+`DnsQuery` the `DnsConnector` resolves, while `ddns_updater` resolves inside its
+`io_call` with `resolve_now(query)`. Both paths build their resolver with the
+connector's `build_resolver` (the named nameserver alone, or the system's when
+none is named) and map errors with its `failure_result` (`nxdomain` /
+`no_answer` / `timeout` / `dns_error`), and both read answers through
+`answer_values` (MX as `preference host`, TXT unquoted and joined, names without
+the trailing dot). `record_type` reads the config value and `failure_message`
+words a failed lookup. Each plugin keeps its own defaults — `ddns_updater`
+asks `8.8.8.8` with a 10s budget because it must see the public record, not a
+local override.
+
 `plugins/base/signal_plugin.py` holds what the single-signal monitors (`cpu`,
 `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`,
 `connections`, `wifi`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`) share: the severity

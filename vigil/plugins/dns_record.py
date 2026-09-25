@@ -12,6 +12,7 @@ from vigil.plugins.base.plugin_base import Plugin
 from vigil.core.connectors.types import (
     CollectResult, DnsQuery, DnsResult, Request, Result,
 )
+from vigil.plugins.base.dns_lookup import answer_values, failure_message, record_type
 
 _DEFAULT_LAYOUT = [
     ['status_card', 'type_card', 'ttl_card'],
@@ -20,41 +21,13 @@ _DEFAULT_LAYOUT = [
 ]
 
 
-def _answer_to_str(record_type: str, rdata) -> str:
-    if record_type == 'MX':
-        return f"{rdata.preference} {str(rdata.exchange).rstrip('.')}".strip()
-    if record_type == 'TXT':
-        return ''.join(part.decode('utf-8', 'replace') if isinstance(part, bytes) else part
-                       for part in rdata.strings)
-    return str(rdata).rstrip('.')
-
-
-def _failed_lookup(kind: str, error: Optional[str], domain: str, record_type: str,
-                   dns_timeout: float) -> Optional[CollectResult]:
-    """The failed CollectResult for a non-answer query kind, or None when the query succeeded."""
-    messages = {
-        'nxdomain': f"{domain} does not exist (NXDOMAIN)",
-        'no_answer': f"{domain} has no {record_type} record",
-        'timeout': f"Query for {domain} ({record_type}) timed out after {dns_timeout}s",
-        'dns_error': f"DNS query failed: {error}",
-    }
-    message = messages.get(kind)
-    if message is None:
-        return None
-    return CollectResult(
-        metrics={'resolved': 0.0},
-        logs=[(message, "ERROR")],
-        status='failed',
-    )
-
-
 class DnsRecord(Plugin):
     AVAILABILITY = True
 
     def __init__(self, name: str, config: Dict[str, Any]):
         super().__init__(name, config)
         self.domain = config.get('domain')
-        self.record_type = str(config.get('record_type', 'A')).upper()
+        self.record_type = record_type(config.get('record_type'))
         self.resolver_addr = config.get('resolver')
         self.port = int(config.get('port', 53))
         self.dns_timeout = float(config.get('timeout', 5))
@@ -64,16 +37,19 @@ class DnsRecord(Plugin):
         )
         self.target = self.domain or self.name
 
-    def requests(self) -> List[Request]:
-        if not self.domain:
-            return []
-        return [DnsQuery(
+    def _query(self) -> DnsQuery:
+        return DnsQuery(
             domain=self.domain,
             record_type=self.record_type,
             resolver=self.resolver_addr,
             port=self.port,
             timeout=self.dns_timeout,
-        )]
+        )
+
+    def requests(self) -> List[Request]:
+        if not self.domain:
+            return []
+        return [self._query()]
 
     def parse_results(self, results: List[Result]) -> CollectResult:
         """Turns the single DnsResult into a CollectResult with resolved/ttl/match
@@ -84,13 +60,16 @@ class DnsRecord(Plugin):
             return CollectResult.failed("No 'domain' configured")
 
         result: DnsResult = results[0]
-        failure = _failed_lookup(result.kind, result.error, self.domain,
-                                 self.record_type, self.dns_timeout)
+        failure = failure_message(result, self._query())
         if failure is not None:
-            return failure
+            return CollectResult(
+                metrics={'resolved': 0.0},
+                logs=[(failure, "ERROR")],
+                status='failed',
+            )
 
         answers = result.answer
-        values = [_answer_to_str(self.record_type, rdata) for rdata in answers]
+        values = answer_values(self.record_type, answers)
         ttl = answers.rrset.ttl if answers.rrset is not None else None
 
         metrics = {'resolved': 1.0}
