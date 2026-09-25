@@ -71,7 +71,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`md`](#md)                             | mdadm array health                     | SSH (`/proc/mdstat`)                            | `arrays_total`, `arrays_ok`, `arrays_degraded`  | — |
 | [`disk_io`](#disk_io)                   | Disk read/write throughput             | SSH (`/proc/diskstats`)                         | `read_kbps`, `write_kbps`                       | — |
 | [`disk_space`](#disk_space)             | Filesystem usage for a path           | SSH (`df`)                                       | `used_pct`, `size_gb`, `used_gb`, `avail_gb`    | — |
-| [`cpu`](#cpu)                           | CPU utilization                        | SSH (`/proc/stat`)                              | `cpu_pct`                                       | — |
+| [`cpu`](#cpu)                           | CPU utilization, overall and per core  | SSH (`/proc/stat`)                              | `cpu_pct`, `cpu_core_max_pct`                   | — |
 | [`memory`](#memory)                     | Memory and swap use                    | SSH (`/proc/meminfo`)                           | `memory_pct`, `memory_used_gb`                  | — |
 | [`load`](#load)                         | Load average, scaled by core count     | SSH (`/proc/loadavg`)                           | `load_pct_1m`, `load_pct_5m`, `load_pct_15m`    | — |
 | [`temperature`](#temperature)           | Thermal zone temperatures              | SSH (`/sys/class/thermal`)                      | `temp_c`, `temp_zone_<zone>`                    | — |
@@ -765,16 +765,23 @@ Monitors disk space usage for a path or mountpoint over SSH via `df`. Works on a
 ---
 
 ### `cpu`
-CPU utilization from two `/proc/stat` samples a second apart, taken on the target so the sleep costs one round trip rather than two.
+CPU utilization from two `/proc/stat` samples a second apart, taken on the target so the sleep costs one round trip rather than two. The same two samples give every core's utilization, drawn as a bar per core on the monitor's page, and the busiest core is kept as `cpu_core_max_pct`.
 
-| Option       | Description                                                  |
-|--------------|--------------------------------------------------------------|
-| `warning`    | CPU % that triggers `warning` (default: `70`)                |
-| `threshold`  | CPU % that triggers `failed` (default: `85`)                 |
-| `interval`   | Polling frequency (default: `60`)                            |
-| `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
+The per-core bars come from a snapshot that is replaced every cycle, so they cost no history however many cores the host has. Per-core *history* is opt-in with `per_core_metrics`, because it writes one metric row per core per cycle — a 64-thread host at a one-minute interval adds about 92,000 rows a day.
 
-**Metrics**: `cpu_pct`
+A single pinned core is usually a stuck or single-threaded process that the overall figure hides on a many-core host. Set both `core_warning` and `core_threshold` to let the busiest core change the status too; without both, it is only shown. The bars are colored by these bounds when they are set, else by `warning`/`threshold`.
+
+| Option             | Description                                                              |
+|--------------------|--------------------------------------------------------------------------|
+| `warning`          | CPU % that triggers `warning` (default: `70`)                            |
+| `threshold`        | CPU % that triggers `failed` (default: `85`)                             |
+| `per_core_metrics` | Record `cpu<n>_pct` for every core (default: `false`)                    |
+| `core_warning`     | Busiest-core % that triggers `warning` (optional, off by default)         |
+| `core_threshold`   | Busiest-core % that triggers `failed` (optional, off by default)          |
+| `interval`         | Polling frequency (default: `60`)                                        |
+| `ssh_config`       | SSH connection details — see [SSH Config](#ssh-config) below             |
+
+**Metrics**: `cpu_pct`, `cpu_core_max_pct`, and `cpu<n>_pct` per core with `per_core_metrics: true`
 
 ```yaml
 - name: "CPU"
@@ -783,6 +790,8 @@ CPU utilization from two `/proc/stat` samples a second apart, taken on the targe
   interval: 1m
   warning: 70
   threshold: 85
+  core_warning: 95       # optional: flag a single pinned core
+  core_threshold: 100
   ssh_config:
     host: "ragnarok.example.com"
 ```
@@ -1438,7 +1447,7 @@ The same keys can instead be given as a **mapping of widget name → properties*
 |--------------------|------------------------------------------------------------------------------|
 | `uptime`           | `host_card`, `status_card`, `latency_card`, `chart`, `events`               |
 | `systemd_service`  | hand-written UI — not individually addressable                              |
-| `cpu`              | `host_card`, `cpu_card`, `cpu_chart`, `events`                              |
+| `cpu`              | `host_card`, `cpu_card`, `cores`, `cpu_chart`, `events`                     |
 | `memory`           | `host_card`, `mem_pct_card`, `mem_used_card`, `memory_chart`, `events`      |
 | `load`             | `host_card`, `load_1m_card`, `load_5m_card`, `load_15m_card`, `load_chart`, `events` |
 | `temperature`      | `host_card`, `temp_card`, `sensors`, `temp_chart`, `events`                 |

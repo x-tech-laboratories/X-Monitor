@@ -182,6 +182,17 @@ def chip_label(label: str, value: str, color: Optional[str] = None):
     return ui.label(f'{label}: {value}' if label else value).classes('halon-tint').style(style)
 
 
+def percent_bar(label: str, value: str, pct: Optional[float], color: Optional[str] = None):
+    """A labelled horizontal bar filled to `pct` percent, filled with a status token when one is given."""
+    fill = max(0.0, min(100.0, float(pct or 0.0)))
+    fill_style = f'width: {fill:.1f}%' + (f'; background-color: {color}' if color else '')
+    with ui.element('div').classes('halon-bar'):
+        ui.label(label).classes('halon-bar-label')
+        with ui.element('div').classes('halon-bar-track'):
+            ui.element('div').classes('halon-bar-fill').style(fill_style)
+        ui.label(value).classes('halon-bar-value')
+
+
 def _resolve_repeat_items(plugin, repeat_spec: dict) -> list:
     source = repeat_spec.get('source', 'snapshot')
 
@@ -289,12 +300,17 @@ def render_repeat_card(plugin, page, repeat_spec: dict):
     color_rule = resolve(ITEM_COLOR_RULES, color_rule_name)
     empty_text = repeat_spec.get('empty_text', 'No data')
 
-    wrap_style = (
-        'display: flex; flex-wrap: wrap; gap: 0.5rem; width: 100%'
-        if container_kind == 'chips' else
-        'display: flex; flex-wrap: wrap; gap: 0.75rem; width: 100%'
-    )
-    container = ui.element('div').style(wrap_style)
+    wrap_style = {
+        'chips': 'display: flex; flex-wrap: wrap; gap: 0.5rem; width: 100%',
+        'bars': ('display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); '
+                 'gap: 0.5rem 1.5rem; width: 100%'),
+    }.get(container_kind, 'display: flex; flex-wrap: wrap; gap: 0.75rem; width: 100%')
+    if container_kind == 'bars':
+        with card('w-full'):
+            ui.label(repeat_spec.get('title', '')).classes(f'{LABEL_CLASS} mb-2')
+            container = ui.element('div').style(wrap_style)
+    else:
+        container = ui.element('div').style(wrap_style)
 
     def render():
         items = _resolve_repeat_items(plugin, repeat_spec)
@@ -318,6 +334,8 @@ def render_repeat_card(plugin, page, repeat_spec: dict):
                 color = STATUS_COLORS.get(state) if state else None
                 if container_kind == 'chips':
                     chip_label(label, value, color)
+                elif container_kind == 'bars':
+                    percent_bar(label, value, item.get(item_value), color)
                 else:
                     info_card(label or '--', value)
 

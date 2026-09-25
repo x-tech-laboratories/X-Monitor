@@ -108,8 +108,9 @@ source            ``'snapshot'`` (default): the plugin's latest snapshot list;
                   ``'setting'``: a JSON list from the settings store under ``setting_key``
                   (``'{plugin_id}'`` is substituted), plain strings becoming label/value
                   items; ``'metrics_prefix'``: items discovered from metric names.
-container         ``'chips'`` (default) for label: value chips, anything else for a grid
-                  of small info cards.
+container         ``'chips'`` (default) for label: value chips, ``'bars'`` for a titled
+                  card of percentage bars (the item value sets the fill, ``title`` the
+                  heading), anything else for a grid of small info cards.
 item_label        Item key holding the label (``'key'`` for metrics_prefix, else
                   ``'label'``).
 item_value        Item key holding the value (default ``'value'``).

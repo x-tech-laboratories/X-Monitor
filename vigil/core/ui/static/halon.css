@@ -535,6 +535,25 @@ a, .q-link { color: var(--accent); }
     font-size: var(--text-control);
 }
 
+/* A percentage bar: a pale track in the tint recipe, filled by a status token set inline. */
+.halon-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-family: var(--font-family-monospace);
+    font-size: var(--text-control);
+}
+.halon-bar-label { min-width: 3ch; color: var(--text-secondary); }
+.halon-bar-track {
+    flex: 1;
+    height: 8px;
+    overflow: hidden;
+    border-radius: var(--radius-pill);
+    background-color: color-mix(in srgb, var(--text-secondary) 15%, transparent);
+}
+.halon-bar-fill { height: 100%; background-color: var(--text-secondary); }
+.halon-bar-value { min-width: 4ch; text-align: right; color: var(--text-body); }
+
 /* ── Scrollbars (§6.8) ──────────────────────────────────────────────────── */
 
 * { scrollbar-color: var(--border-hover) transparent; scrollbar-width: thin; }

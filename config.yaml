@@ -152,6 +152,11 @@ plugins:
         interval: 1m
         warning: 70              # CPU % (warn / fail)
         threshold: 85
+        # per_core_metrics: false  # Record cpu<n>_pct history per core (one row
+                                   # per core per cycle); the per-core bars
+                                   # need no history and are always shown.
+        # core_warning: 95         # Busiest-core % (warn / fail); off unless
+        # core_threshold: 100      # both are set.
         ssh_config:
           host: "server.example.com"
       - name: "Memory"

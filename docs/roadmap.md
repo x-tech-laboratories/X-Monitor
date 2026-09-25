@@ -35,4 +35,4 @@
 - [ ] Public IP / geolocation monitor
 - [ ] CSV / JSON file export (flat-file dump alongside the Prometheus/InfluxDB exporters)
 - [ ] Additional export backends (Graphite, MQTT, Elasticsearch, …)
-- [ ] Per-core CPU breakdown in the CPU monitor
+- [x] Per-core CPU breakdown in the CPU monitor
