@@ -39,6 +39,7 @@ config examples. For what Vigil is and how to run it, see the
   [`reboot_required`](#reboot_required) ·
   [`package_updates`](#package_updates) ·
   [`interfaces`](#interfaces) ·
+  [`sessions`](#sessions) ·
   [`borg`](#borg) ·
   [`containers`](#containers) ·
   [`command`](#command) ·
@@ -89,6 +90,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`reboot_required`](#reboot_required)   | Whether the host needs a reboot        | SSH (`/var/run/reboot-required`, `needs-restarting`, `/run/booted-system`, `/usr/lib/modules`) | `reboot_required` | — |
 | [`package_updates`](#package_updates)   | Pending package and security updates   | SSH (`apt list`, `dnf --cacheonly check-update`, `checkupdates`/`pacman -Qu`) | `updates_pending`, `security_updates_pending` | — |
 | [`interfaces`](#interfaces)             | Network interface inventory and addressing | SSH (`ip -j addr`, `/sys/class/net`)        | `interfaces_up`, `interfaces_total`, `interface_<name>_up` | — |
+| [`sessions`](#sessions)                 | Logged-in users and recent logins      | SSH (`loginctl` or `who`, `last`)               | `sessions_total`, `sessions_remote`, `sessions_unexpected` | — |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
 | [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
 | [`containers`](#containers)             | Docker / Podman container states      | SSH (`docker`/`podman ps`)                       | `containers_total`, `containers_running`, `containers_stopped` | Restart (per expected container) |
@@ -105,7 +107,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 
 ---
@@ -1165,6 +1167,37 @@ Other interfaces are listed and counted, but never change the status. An `expect
   interval: 1m
   exclude: ["veth*", "docker*", "br-*"]
   expect_up: ["eth0", "wg0"]
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `sessions`
+Who is logged in, from where and since when: every active session with its user, tty or seat, remote host, type (`tty`, `x11`, `wayland`, with the PAM service such as `sshd`), login time and idle time, read from `loginctl`. Where logind is not running (a container, a non-systemd host) it falls back to `who -u --ips`. The per-user service manager and the display manager's login screen are sessions to logind but not people logging in, so they are left out (`manager`, `greeter` and `lock-screen` classes).
+
+With `allowed_users` and/or `allowed_sources` set, a session outside them sets `violation_status` (`warning` by default) for as long as it lasts, and logs one event the first time it is seen. `allowed_sources` takes CIDRs (`192.0.2.0/24`, `2001:db8::/32`), hostnames and globs (`*.example.com`); a local session (console, desktop) has no source and always passes that check. Once the first cycle has recorded who is already on, each later new session logs an event too.
+
+A **Recent logins** table shows the last `recent_logins` logins from `last --time-format iso` (util-linux or wtmpdb), with reboot records left out; it stays empty where `last` is missing.
+
+| Option             | Description                                                                  |
+|--------------------|------------------------------------------------------------------------------|
+| `allowed_users`    | User names (globs allowed) that may log in (default: anyone)                |
+| `allowed_sources`  | CIDRs, hostnames or globs remote sessions may come from (default: anywhere) |
+| `violation_status` | Status while a session is outside the allowlists: `warning` (default) or `failed` |
+| `recent_logins`    | Rows in the recent logins table (default: `10`; `0` hides it)               |
+| `interval`         | Polling frequency (default: `60`)                                            |
+| `ssh_config`       | SSH connection details — see [SSH Config](#ssh-config) below                |
+
+**Metrics**: `sessions_total`, `sessions_remote`, `sessions_unexpected`, `users_total`
+
+```yaml
+- name: "Sessions"
+  id: "server-sessions"
+  type: "sessions"
+  interval: 1m
+  allowed_users: ["admin", "deploy"]
+  allowed_sources: ["192.0.2.0/24", "*.example.com"]
   ssh_config:
     host: "server.example.com"
 ```
