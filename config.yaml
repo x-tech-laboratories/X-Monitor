@@ -52,6 +52,20 @@ logging:
 #     token: "my-api-token"
 #     # InfluxDB 1.x (use instead of org/bucket/token):
 #     # database: "vigil"
+#   # MQTT publishes on every change and announces each monitor to Home Assistant.
+#   # Needs the mqtt extra (pip install 'vigil[mqtt]'); the Nix package includes it.
+#   mqtt:
+#     host: "mqtt.lan"
+#     port: 1883              # 8883 by default when tls is set
+#     username: "vigil"
+#     password: "secret"      # or password_file: "/run/secrets/mqtt_password"
+#     # tls: true             # or a mapping: {ca_certs: /path/ca.pem, certfile: ..., keyfile: ..., insecure: false}
+#     # client_id: "vigil-myhost"
+#     base_topic: "vigil"     # <base>/<monitor>/status, <base>/<monitor>/<metric>, <base>/status
+#     discovery_prefix: "homeassistant"
+#     discovery: true         # publish Home Assistant discovery configs
+#     retain: true
+#     # interval: 5m          # also republish everything on this period; off by default
 
 # Global SSH connection defaults.
 # Merged into every plugin's `ssh_config` unless the plugin overrides a given

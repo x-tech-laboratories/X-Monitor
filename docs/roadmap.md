@@ -34,5 +34,5 @@
 - [ ] Boot-uptime monitor (`uptime -p` — how long the host has been up, distinct from ping reachability)
 - [ ] Public IP / geolocation monitor
 - [ ] CSV / JSON file export (flat-file dump alongside the Prometheus/InfluxDB exporters)
-- [ ] Additional export backends (Graphite, MQTT, Elasticsearch, …)
+- [ ] Additional export backends — MQTT with Home Assistant discovery is done; Graphite, Elasticsearch, … remain
 - [ ] Per-core CPU breakdown in the CPU monitor

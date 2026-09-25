@@ -44,7 +44,7 @@ The engine executes the declared IO, persists the returned `CollectResult`, and 
 3b. **Events**: monitors on an agent-backed target also declare `subscriptions()`. The agent watches those sources locally and pushes a frame the instant one changes; the engine hands it to the plugin's pure `parse_event()` and persists the result immediately, outside the polling schedule.
 4. **Persistence**: the engine writes the resulting `CollectResult` via `db.apply_result(...)` into SQLite (Peewee ORM). A background writer thread batches commits off the event loop.
 5. **Visualization**: every write publishes a change, and the NiceGUI dashboard refreshes off that — one subscription per connected client — rendering the sidebar tree plus each plugin's detail page. It reads only through `plugin.data` / the database — never through a plugin's IO.
-6. **Export**: metrics are exposed to Prometheus (pull, `/metrics`) and optionally pushed to InfluxDB.
+6. **Export**: metrics are exposed to Prometheus (pull, `/metrics`) and optionally pushed to InfluxDB, or published over MQTT with Home Assistant discovery.
 
 ### Project Structure
 
@@ -56,7 +56,7 @@ vigil/
 │   ├── connectors/          # All IO: agent + SSH + HTTP/DNS/ICMP sub-connectors, request types
 │   ├── database/            # DatabaseManager (SQLite/Peewee), models, read-result types
 │   ├── settings/            # config.yaml loader + typed schema
-│   ├── exporters/           # Prometheus pull + InfluxDB push
+│   ├── exporters/           # Prometheus pull + InfluxDB and MQTT push
 │   └── ui/                  # NiceGUI dashboard, declarative UI_SPEC renderer
 └── plugins/
     ├── base/                # Plugin ABC + shared config/helper mixins
@@ -116,6 +116,8 @@ table lives in [docs/theme.md](docs/theme.md).
 
 ```bash
 pip install .
+# Optional extras: the Apprise notification channel and the MQTT exporter.
+pip install '.[apprise,mqtt]'
 ```
 
 ### Quick Start
@@ -214,7 +216,7 @@ nix run . -- --config config.yaml
 
 - [Plugin reference](docs/plugins.md) — every monitor type, its config keys, metrics, actions, and layout options
 - [Agent guide](docs/agent.md) — installing `vigil-agent`, server-side declaration, event streams, agent vs SSH
-- [Integrations](docs/integrations.md) — the events feed, REST API, Prometheus endpoint, and InfluxDB export
+- [Integrations](docs/integrations.md) — the events feed, REST API, Prometheus endpoint, InfluxDB export, and MQTT / Home Assistant export
 - [Theme tokens](docs/theme.md) — per-token color overrides for the Halon theme
 - [Roadmap](docs/roadmap.md) — what's done and what's planned
 - [docs/develop.md](docs/develop.md) — architectural rationale and development notes
