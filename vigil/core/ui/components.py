@@ -389,8 +389,8 @@ def _outcome_notice(label: str, success: bool, content: str) -> str:
 
 
 def _substitute(template: str, row: Optional[dict], plugin) -> str:
-    class _PluginProxy(dict):
-        def __missing__(self, key):
+    class _PluginProxy:
+        def __getattr__(self, key):
             return getattr(plugin, key, '')
     return template.format(row=row or {}, plugin=_PluginProxy())
 
