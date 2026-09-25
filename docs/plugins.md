@@ -37,6 +37,7 @@ config examples. For what Vigil is and how to run it, see the
   [`wifi`](#wifi) ·
   [`power`](#power) ·
   [`reboot_required`](#reboot_required) ·
+  [`package_updates`](#package_updates) ·
   [`borg`](#borg) ·
   [`containers`](#containers) ·
   [`command`](#command) ·
@@ -85,6 +86,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`wifi`](#wifi)                         | WiFi link quality and signal strength  | SSH (`/proc/net/wireless`)                      | `link_quality`, `signal_dbm`                    | — |
 | [`power`](#power)                       | Battery charge, external power, wear   | SSH (`/sys/class/power_supply`)                 | `charge_pct`, `plugged_in`, `capacity_health_pct`, `battery_<name>_charge_pct` | — |
 | [`reboot_required`](#reboot_required)   | Whether the host needs a reboot        | SSH (`/var/run/reboot-required`, `needs-restarting`, `/run/booted-system`, `/usr/lib/modules`) | `reboot_required` | — |
+| [`package_updates`](#package_updates)   | Pending package and security updates   | SSH (`apt list`, `dnf --cacheonly check-update`, `checkupdates`/`pacman -Qu`) | `updates_pending`, `security_updates_pending` | — |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
 | [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
 | [`containers`](#containers)             | Docker / Podman container states      | SSH (`docker`/`podman ps`)                       | `containers_total`, `containers_running`, `containers_stopped` | Restart (per expected container) |
@@ -101,7 +103,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 
 ---
@@ -1091,6 +1093,42 @@ A host where none of these applies (a container with no module tree, say) is `un
   id: "server-reboot"
   type: "reboot_required"
   interval: 1h
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `package_updates`
+Pending package updates and how many of them are security fixes, normalised across apt, dnf and pacman. It only reads what the package manager already has cached — it never refreshes metadata and needs no root — so the counts are as fresh as the host's own `apt update` / `dnf makecache` timer:
+
+- **apt** — `apt list --upgradable` (or `apt-get -s dist-upgrade` without `apt`); an update is a security update when it comes from a `-security` suite.
+- **dnf** — `dnf --cacheonly check-update`, with `dnf --cacheonly updateinfo list --security` for the security flag and `rpm -q` for installed versions. A non-root `--cacheonly` reads the system cache.
+- **pacman** — `checkupdates` from `pacman-contrib` when installed (it syncs a temporary copy of the databases, so it needs network access but no root), otherwise `pacman -Qu` against the last `pacman -Sy`. Arch has no security metadata of its own; when `arch-audit` is installed, the packages it lists are flagged as security updates.
+
+The manager is detected in that order unless `manager` names one. The dashboard lists every pending package with its installed and available version and its security flag, security updates first.
+
+A host with none of the three managers is `unavailable`. That includes NixOS, whose updates are tracked by [`nixos_upgrade`](#nixos_upgrade) instead; the message says so. A cache the manager cannot read (dnf with no system cache yet, say) is `unavailable` too.
+
+| Option               | Description                                                                 |
+|----------------------|-----------------------------------------------------------------------------|
+| `manager`            | `apt`, `dnf` or `pacman` (default: auto-detect)                             |
+| `warning`            | Pending updates that trigger `warning` (default: none)                      |
+| `threshold`          | Pending updates that trigger `failed` (default: none)                       |
+| `security_warning`   | Pending security updates that trigger `warning` (default: `1`, so any; `null` to disable) |
+| `security_threshold` | Pending security updates that trigger `failed` (default: none)              |
+| `interval`           | Polling frequency (default: `1h`)                                           |
+| `ssh_config`         | SSH connection details — see [SSH Config](#ssh-config) below                |
+
+**Metrics**: `updates_pending`, `security_updates_pending`
+
+```yaml
+- name: "Package Updates"
+  id: "server-updates"
+  type: "package_updates"
+  interval: 1h
+  warning: 50              # a long-neglected host
+  security_threshold: 5    # any security update warns; five fail
   ssh_config:
     host: "server.example.com"
 ```

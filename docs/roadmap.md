@@ -19,6 +19,7 @@
 - [x] VM monitor (libvirt/KVM via `virsh`, with start/shutdown)
 - [x] Cloud instance metadata monitor (AWS/GCP/Azure)
 - [x] Reboot-required monitor (Debian flag, `needs-restarting`, NixOS boot links, missing kernel modules)
+- [x] Pending package updates monitor (apt, dnf and pacman, with security updates counted separately)
 - [x] Push monitor (dead man's switch — external heartbeat via REST API, per-monitor token)
 - [x] DNS record monitor (A/AAAA/CNAME/MX/TXT/NS/SOA via dnspython, custom resolver, expected-value pinning)
 - [x] Dynamic DNS updater (public IP lookup + FreeDNS-style update URL, drift-triggered with rate limiting, Force Update action)

@@ -380,6 +380,17 @@ plugins:
         # reboot_status: "failed" # default warning
         ssh_config:
           host: "server.example.com"
+      - name: "Package Updates"
+        id: "server-package-updates"
+        type: "package_updates"   # apt, dnf or pacman, read from the cache (no refresh, no root)
+        interval: 1h
+        # manager: "apt"          # optional; auto-detected
+        # warning: 50             # pending updates (warn / fail); off by default
+        # threshold: 200
+        security_warning: 1       # any pending security update -> warning
+        # security_threshold: 5
+        ssh_config:
+          host: "server.example.com"
 
   - name: "Storage & VMs"
     type: "group"
