@@ -344,7 +344,7 @@ class VigilEngine:
         VigilSelfPlugin.engine = self
 
     def _start_exporters(self):
-        self.exporters.start()
+        self.exporters.start(lambda: self._flatten(self.plugins))
 
     @staticmethod
     def _flatten(plugins: List[Plugin]):
@@ -497,6 +497,7 @@ class VigilEngine:
         writes to SQLite; registered as the UI server's shutdown hook."""
         for task in list(self._tasks):
             task.cancel()
+        self.exporters.stop()
         self.notifications.stop()
         self.connectors.close()
         self.db.stop_downsampling()

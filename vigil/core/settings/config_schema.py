@@ -83,8 +83,24 @@ class InfluxDBExporterSettings(TypedDict, total=False):
     database: str
 
 
+class MQTTExporterSettings(TypedDict, total=False):
+    host: str
+    port: int                   # 1883, or 8883 with tls
+    username: str
+    password: str
+    password_file: str
+    tls: Any                    # true, or a mapping of ca_certs, certfile, keyfile, insecure
+    client_id: str
+    base_topic: str             # vigil
+    discovery_prefix: str       # homeassistant
+    discovery: bool             # publish Home Assistant discovery configs
+    retain: bool
+    interval: Any               # optional periodic republish of everything, in seconds or a duration
+
+
 class ExporterSettings(TypedDict, total=False):
     influxdb: InfluxDBExporterSettings
+    mqtt: MQTTExporterSettings
 
 
 class NotifySettings(TypedDict, total=False):

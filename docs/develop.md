@@ -45,8 +45,8 @@ owns and wires together:
   `icmp_connector`).
 - **UI Engine** (`core/ui/`) — the NiceGUI dashboard. Reads only through
   `plugin.data` or the Database Engine; it never reaches into a plugin's IO.
-- **Exporter Engine** (`core/exporters/`) — Prometheus pull render + InfluxDB
-  push task.
+- **Exporter Engine** (`core/exporters/`) — Prometheus pull render, InfluxDB
+  push task, and the MQTT / Home Assistant publisher.
 
 `EngineLike` (`core/contracts.py`) is the narrow slice of `VigilEngine` that the
 UI and plugins actually call, so those modules — and test doubles — depend on a
@@ -498,6 +498,57 @@ while the system had nothing to publish.
 registering, so a freshly loaded page shows real data rather than its
 constructed defaults (`--`, empty tables) until the first tick. `run_now=False`
 on a callback defers only its first tick.
+
+## Exporter Engine
+
+`ExporterEngine` (`core/exporters/__init__.py`) owns the push exporters; the
+Prometheus pull render needs no runtime object. The Coordination Engine calls
+`start(monitors)` from `run()` once the loop is live and `stop()` from
+`shutdown()`. `monitors` is a callable returning the live monitors, so an
+exporter that describes them (MQTT) always sees the current set.
+
+**InfluxDB** pushes the whole latest snapshot on a fixed interval, its blocking
+`requests` call on a worker thread.
+
+**MQTT** (`core/exporters/mqtt.py`) is change-driven instead. It subscribes to
+the change bus and reacts to `STATUS` and `METRIC` changes only: the subscriber
+runs on the writer's thread, so it just hands the monitor id to the loop, where
+it joins a dirty set and wakes a drain task. The drain waits `COALESCE_SECONDS`
+before publishing, so a cycle that writes ten metrics and a status goes out as
+one pass over that monitor. Everything — discovery configs and current state —
+is marked for publishing on every (re)connect, on Home Assistant's
+non-retained birth message, and on the optional `interval`.
+
+*Why aiomqtt.* It is an asyncio client over paho-mqtt, so publishing lives on
+the single event loop with no thread of its own; it is an optional extra
+(`vigil[mqtt]`), imported only when `exporters.mqtt` is configured, and a
+missing install is logged as an error naming the extra rather than stopping the
+engine.
+
+*Availability.* The connection carries a retained last will of `offline` on
+`<base>/status`, and `online` is published retained on connect. A clean
+DISCONNECT suppresses the will, so `stop()` cancels the task, whose cancellation
+handler publishes `offline` itself before leaving.
+
+*Discovery.* One Home Assistant device per target host, identified by
+`<base>_<target>`; per monitor an `enum` status sensor and a `problem` binary
+sensor sharing `<base>/<monitor>/status`; one sensor per metric whose
+device_class and unit come from the metric name's suffix (`metric_traits`).
+Every sensor is `state_class: measurement`, since Vigil's `_total` metrics are
+counts of things, not monotonic counters. A config is sent once per connection
+the first time its monitor or metric is published, so a new metric is
+announced before its first value. Ids pass through `slug()`, which lowercases
+and keeps `a-z 0-9 _ -`, making every id a single topic level and a valid Home
+Assistant object id; unique ids include the base topic so they stay stable
+across restarts and distinct between Vigil instances. Monitors removed from the
+config keep their retained discovery entries until deleted in Home Assistant.
+
+*Failure.* Any error inside a session — a refused connect, a failed publish, a
+dropped message stream — ends that session; `run()` logs it (a warning for the
+first failure, debug while the outage lasts) and reconnects with exponential
+backoff from `BACKOFF_MIN` to `BACKOFF_MAX`. Nothing is queued while
+disconnected: the reconnect republishes the current state, which is all a
+subscriber needs.
 
 ## Teardown
 

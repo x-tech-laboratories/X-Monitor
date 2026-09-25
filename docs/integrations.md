@@ -49,3 +49,35 @@ exporters:
     token: "my-api-token"
     # InfluxDB 1.x: use `database:` instead of org/bucket/token
 ```
+
+## MQTT and Home Assistant
+
+An optional **push** exporter publishes every monitor's status and metrics to an MQTT broker the moment they change, and announces each one to Home Assistant through [MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery), so no agent or custom integration is needed on the Home Assistant side. It needs the `mqtt` extra (`pip install 'vigil[mqtt]'`, which brings `aiomqtt`); the Nix package and dev shell already include it.
+
+```yaml
+exporters:
+  mqtt:
+    host: "mqtt.lan"
+    port: 1883                   # 8883 by default when tls is set
+    username: "vigil"
+    password_file: "/run/secrets/mqtt_password"   # or password:
+    tls: true                    # or {ca_certs, certfile, keyfile, insecure}
+    client_id: "vigil-myhost"    # default: vigil-<hostname>
+    base_topic: "vigil"
+    discovery_prefix: "homeassistant"
+    discovery: true
+    retain: true
+    interval: 5m                 # optional periodic republish of everything; off by default
+```
+
+Topics, with monitor ids and metric names lowercased and reduced to `a-z 0-9 _ -`:
+
+| Topic | Payload |
+|---|---|
+| `<base>/status` | `online` / `offline` — Vigil's availability, also the connection's last will |
+| `<base>/<monitor>/status` | `online`, `warning`, `failed` or `unavailable` |
+| `<base>/<monitor>/<metric>` | the metric's latest value |
+
+In Home Assistant each monitored host becomes one device (named after the target), and each monitor on it gets a status sensor (an `enum` with the four statuses), a `problem` binary sensor that is on whenever the status is not `online`, and one sensor per metric. A metric's unit and device class follow its name: `_pct` is `%`, `_seconds`/`_ms` a duration, `_bytes`/`_mb`/`_gb` a data size, `temp_c` a temperature in °C, `_dbm` a signal strength. Unique ids are `<base>_<monitor>_<metric>`, so entities survive restarts, and two Vigil instances on one broker stay apart by using different `base_topic`s.
+
+Everything is republished when the exporter (re)connects and when Home Assistant sends its birth message (`online` on `<discovery_prefix>/status`). While the broker is unreachable the exporter retries with backoff (up to a minute) and monitoring carries on unaffected.
