@@ -2,8 +2,9 @@ import pytest
 
 pytestmark = pytest.mark.asyncio
 from vigil.plugins.filesystems import (
-    Filesystems, _sanitize, _parse_inodes, _parse_readonly, _SNAP,
+    Filesystems, _parse_inodes, _parse_readonly, _SNAP,
 )
+from vigil.plugins.base.disk_usage import path_key as _sanitize
 from vigil.core.connectors.types import CmdResult
 from vigil.core.database.database import db, StatusHistory, Metric
 

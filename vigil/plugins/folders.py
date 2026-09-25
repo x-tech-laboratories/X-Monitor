@@ -11,17 +11,7 @@ from typing import Dict, Any, List
 from vigil.plugins.base.plugin_base import Plugin
 from vigil.core.connectors.types import CmdResult, CollectResult, Command, Status
 from vigil.plugins.base.plugin_helpers import format_bytes
-
-
-def _sanitize(path: str) -> str:
-    s = path.strip('/')
-    if not s:
-        return 'root'
-    return ''.join(c if c.isalnum() else '_' for c in s)
-
-
-def _shquote(s: str) -> str:
-    return "'" + s.replace("'", "'\\''") + "'"
+from vigil.plugins.base.disk_usage import du_command, parse_du, path_key
 
 
 _DEFAULT_LAYOUT = [
@@ -37,7 +27,7 @@ class Folders(Plugin):
         self.folders = config.get('folders', []) or []
         self.du_timeout = int(config.get('timeout', 60))
 
-        self._by_key = {_sanitize(f.get('path', '')): f for f in self.folders if f.get('path')}
+        self._by_key = {path_key(f.get('path', '')): f for f in self.folders if f.get('path')}
 
     def _level_for(self, gb: float, folder: Dict[str, Any]) -> str:
         threshold = folder.get('threshold')
@@ -55,7 +45,7 @@ class Folders(Plugin):
 
     def commands(self) -> List[Command]:
         return [
-            Command(f"timeout {self.du_timeout} du -sb {_shquote(folder['path'])}")
+            Command(du_command(folder['path'], self.du_timeout))
             for folder in self._valid_folders()
         ]
 
@@ -73,26 +63,14 @@ class Folders(Plugin):
 
         for folder, result in zip(folders, results):
             path = folder['path']
-            ret, stdout, stderr = result.exit_code, result.stdout, result.stderr
-
-            if ret == 124:
-                logs.append((f"{path}: du timed out after {self.du_timeout}s", "ERROR"))
-                any_error = True
-                continue
-            if ret != 0:
-                logs.append((f"{path}: du failed: {stderr.strip()}", "ERROR"))
-                any_error = True
-                continue
-
-            try:
-                size_bytes = int(stdout.split()[0])
-            except (ValueError, IndexError):
-                logs.append((f"{path}: could not parse du output {stdout.strip()!r}", "ERROR"))
+            size_bytes, error = parse_du(result, self.du_timeout)
+            if size_bytes is None:
+                logs.append((f"{path}: {error}", "ERROR"))
                 any_error = True
                 continue
 
             gb = size_bytes / (1024 ** 3)
-            metrics[f'folder_{_sanitize(path)}_gb'] = gb
+            metrics[f'folder_{path_key(path)}_gb'] = gb
             level = self._level_for(gb, folder)
             worst_gb = max(worst_gb, gb)
             if Status(level).severity > Status(worst_level).severity:

@@ -712,6 +712,20 @@ its value in GB by default and takes a unit for the rest — `format_bytes(n, 'B
 for a raw byte count — so a caller never divides before formatting, and it is the
 only byte formatter: the `bytes_gb` UI formatter is a thin wrapper on it.
 
+`plugins/base/disk_usage.py` holds the `df` and `du` handling the three
+filesystem monitors share, so they cannot read the same output differently.
+`filesystems`, `disk_space` and `folders` stay separate monitors — a fleet-wide
+sweep, one path against one threshold, and folder sizes are different questions
+— but each builds its command with `df_command(columns, path=, byte_blocks=,
+exclude_types=)` or `du_command(path, timeout)` and reads it back with
+`parse_df(block, columns, header=)` or `parse_du(result, timeout)`. `parse_df`
+reads every column but a leading `target` from the right, so a mount point with
+spaces survives, and drops any row that does not parse (an inode column of `-`
+on a filesystem without inodes). `filesystems` alone passes `PSEUDO_FS_TYPES`,
+since it lists every mount; `disk_space` keeps its `| tail -1` and parses
+headerless. `path_key` turns a path into the metric-name fragment both
+`filesystems` and `folders` store series under.
+
 `plugins/base/signal_plugin.py` holds what the single-signal monitors (`cpu`,
 `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`,
 `connections`, `wifi`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`) share: the severity

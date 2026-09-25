@@ -13,41 +13,22 @@ from typing import Dict, Any, List
 from vigil.plugins.base.plugin_base import Plugin
 from vigil.core.connectors.types import CmdResult, CollectResult, Command, Status
 from vigil.plugins.base.plugin_helpers import StatusAccumulator, format_bytes
-
-_EXCLUDE_TYPES = ['tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'proc', 'sysfs',
-                  'cgroup', 'cgroup2', 'devpts', 'mqueue', 'debugfs',
-                  'tracefs', 'ramfs', 'efivarfs', 'configfs', 'fusectl',
-                  'securityfs', 'pstore', 'autofs', 'binfmt_misc', 'nsfs']
+from vigil.plugins.base.disk_usage import PSEUDO_FS_TYPES, df_command, parse_df, path_key
 
 _SNAP = '---SNAP---'
 
+_SPACE_COLUMNS = ('target', 'size', 'used', 'pcent')
+_INODE_COLUMNS = ('target', 'ipcent')
+
 
 def _build_cmd() -> str:
-    excludes = ' '.join(f"-x {t}" for t in _EXCLUDE_TYPES)
-    space  = f"df -B1 {excludes} --output=target,size,used,pcent"
-    inodes = f"df {excludes} --output=target,ipcent"
+    space  = df_command(_SPACE_COLUMNS, byte_blocks=True, exclude_types=PSEUDO_FS_TYPES)
+    inodes = df_command(_INODE_COLUMNS, exclude_types=PSEUDO_FS_TYPES)
     return f"{space} && echo '{_SNAP}' && {inodes} && echo '{_SNAP}' && cat /proc/mounts"
 
 
-def _sanitize(mountpoint: str) -> str:
-    s = mountpoint.strip('/')
-    if not s:
-        return 'root'
-    return ''.join(c if c.isalnum() else '_' for c in s)
-
-
 def _parse_inodes(block: str) -> Dict[str, float]:
-    result: Dict[str, float] = {}
-    for line in block.splitlines()[1:]:
-        fields = line.split()
-        if len(fields) < 2:
-            continue
-        try:
-            used_pct = float(fields[-1].rstrip('%'))
-        except ValueError:
-            continue
-        result[' '.join(fields[:-1])] = used_pct
-    return result
+    return {row['target']: row['ipcent'] for row in parse_df(block, _INODE_COLUMNS)}
 
 
 def _parse_readonly(block: str) -> Dict[str, bool]:
@@ -64,20 +45,8 @@ def _parse_readonly(block: str) -> Dict[str, bool]:
 
 def _parse_space(block: str) -> List[tuple]:
     """Parse the df space section into (mountpoint, used_pct, size_bytes, used_bytes) tuples."""
-    filesystems: List[tuple] = []
-    for line in block.splitlines()[1:]:
-        fields = line.split()
-        if len(fields) < 4:
-            continue
-        try:
-            used_pct = float(fields[-1].rstrip('%'))
-            used_bytes = int(fields[-2])
-            size_bytes = int(fields[-3])
-        except (ValueError, IndexError):
-            continue
-        mountpoint = ' '.join(fields[:-3])
-        filesystems.append((mountpoint, used_pct, size_bytes, used_bytes))
-    return filesystems
+    return [(row['target'], row['pcent'], row['size'], row['used'])
+            for row in parse_df(block, _SPACE_COLUMNS)]
 
 
 def _assess_filesystems(filesystems: List[tuple], inode_pct: Dict[str, float],
@@ -92,7 +61,7 @@ def _assess_filesystems(filesystems: List[tuple], inode_pct: Dict[str, float],
     ro_mounts: List[str] = []
 
     for mountpoint, used_pct, size_bytes, _used in filesystems:
-        key = _sanitize(mountpoint)
+        key = path_key(mountpoint)
         metrics[f'fs_{key}_used_pct'] = used_pct
         metrics[f'fs_{key}_size_gb'] = size_bytes / (1024 ** 3)
         worst = max(worst, used_pct)
