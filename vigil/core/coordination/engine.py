@@ -19,7 +19,6 @@ role in the architecture.
 
 import asyncio
 import logging
-import importlib
 import inspect
 import random
 import signal
@@ -34,6 +33,7 @@ from vigil.plugins.base.plugin_base import Plugin
 from vigil.core.connectors.types import CollectResult, DispatchResult, Status, unreachable
 from vigil.core.coordination.cycle_stats import CycleStats, CycleTiming
 from vigil.core.coordination.data_view import PluginDataView
+from vigil.core.coordination.plugin_loader import PluginLoader, parse_plugin_paths
 from vigil.core.coordination.jobs import JobsGateway
 from vigil.core.settings.config_file import ConfigFileManager as VigilConfig
 from vigil.core.settings.log_levels import LogLevels
@@ -50,26 +50,6 @@ STARTUP_JITTER_SECONDS = 3.0
 _PRUNE_CHECK_SECONDS = 60
 
 
-def _defined_in(cls: type, module_path: str) -> bool:
-    """True for a class defined in the plugin module itself or, for a plugin package, in one of its own submodules."""
-    return cls.__module__ == module_path or cls.__module__.startswith(module_path + '.')
-
-
-def _plugin_class(module, module_path: str) -> type:
-    """The Plugin subclass a plugin module defines, ignoring the bases it imports."""
-    candidates = [obj for _, obj in inspect.getmembers(module, inspect.isclass)
-                  if issubclass(obj, Plugin) and _defined_in(obj, module_path)
-                  and not inspect.isabstract(obj)]
-    if not candidates:
-        raise ValueError(f"{module_path} defines no concrete Plugin subclass")
-    if len(candidates) > 1:
-        raise ValueError(
-            f"{module_path} defines more than one Plugin subclass "
-            f"({[c.__name__ for c in candidates]}) — a plugin module must define exactly one")
-    return candidates[0]
-
-
-
 def _settle(plugin: Plugin, results: List[Any], result: CollectResult) -> CollectResult:
     """A cycle that never reached its host is unavailable, whatever the plugin made of the empty results."""
     if plugin.AVAILABILITY or not results or not all(map(unreachable, results)):
@@ -83,6 +63,8 @@ class VigilEngine:
                  handle_signals: bool = False):
         self.config_loader = VigilConfig(config_path)
         self.config = self.config_loader.data
+        self._plugin_loader = PluginLoader(
+            parse_plugin_paths(self.config_loader.plugin_paths, self.config_loader.path.parent))
         self._log_levels = LogLevels()
         self._log_levels.configure(self.config_loader.log_level, self.config_loader.log_levels)
         # Only the real process takes over signals; an engine built in a test leaves them alone.
@@ -296,10 +278,7 @@ class VigilEngine:
             if inherited_agent and not plugin_cfg.get('agent'):
                 plugin_cfg = {**plugin_cfg, 'agent': inherited_agent}
             try:
-                module_path = f"vigil.plugins.{p_type}"
-                module = importlib.import_module(module_path)
-
-                plugin_instance = _plugin_class(module, module_path)(name, plugin_cfg)
+                plugin_instance = self._plugin_loader.resolve(p_type)(name, plugin_cfg)
                 plugin_instance.engine = self
                 self._wire_plugin(plugin_instance, plugin_cfg)
 

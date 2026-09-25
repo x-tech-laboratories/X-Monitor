@@ -47,6 +47,7 @@ config examples. For what Vigil is and how to run it, see the
   [`group`](#group)
 - [Plugin Layout](#plugin-layout) — arranging a plugin's widgets on its page
 - [SSH Config](#ssh-config) — the `ssh_config` block SSH-based plugins accept
+- [Out-of-tree plugins](#out-of-tree-plugins) — adding your own plugin types without changing Vigil
 
 ---
 
@@ -1553,3 +1554,38 @@ polling, benefit from raising `MaxSessions` in that host's own `sshd_config`
 [agent](agent.md) on that host, where commands are frames multiplexed on one
 socket and no session ceiling applies.
 
+---
+
+### Out-of-tree plugins
+
+A monitor type Vigil does not ship can live in a directory of your own, named under `plugin_paths:` in `config.yaml`. A relative path is taken from the directory `config.yaml` is in.
+
+```yaml
+plugin_paths:
+  - /etc/vigil/plugins            # searched in order; the first directory holding the type wins
+  - path: ./my-plugins
+    override: true                # its plugins replace Vigil's own of the same name
+
+plugins:
+  - name: "Weather"
+    id: "weather"
+    type: "weather"               # /etc/vigil/plugins/weather.py, or a weather/ package
+```
+
+A plugin type `<type>` is either `<type>.py` or a package directory `<type>/` with an `__init__.py`. The module must define exactly one concrete `Plugin` subclass (classes it imports, such as `Plugin` or `SignalPlugin`, do not count), written the same way as Vigil's own plugins: pure `commands()`/`parse()` or `requests()`/`parse_results()` returning a `CollectResult`, with the page described by a `UI_SPEC`.
+
+```python
+from vigil.plugins.base.plugin_base import Plugin
+from vigil.core.connectors.types import Command, CollectResult
+
+
+class Weather(Plugin):
+    def commands(self):
+        return [Command('curl -s wttr.in/?format=%t')]
+
+    def parse(self, results):
+        ok = results[0].exit_code == 0
+        return CollectResult(status='online' if ok else 'failed', logs=[(results[0].stdout, 'INFO')])
+```
+
+A name Vigil already uses stays Vigil's: the file is ignored with a warning in the log, unless its `plugin_paths` entry says `override: true`, which is logged too. A missing type, or a module that defines no `Plugin` class or more than one, stops only that monitor from loading, with the reason in the log. An edited plugin file takes effect on restart.

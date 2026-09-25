@@ -732,6 +732,22 @@ alphabetical luck: `SignalPlugin` sorts before `Throughput`.
 
 A plugin that outgrows one file becomes a package (`plugins/borg/`), and its class may then live in any of the package's own submodules.
 
+**Out-of-tree plugins.** `PluginLoader` (`core/coordination/plugin_loader.py`)
+owns the type-to-class step for `setup_modules()`. A type that is not a module
+under `vigil.plugins` is looked up in the `plugin_paths` directories, in order,
+as `<type>.py` or a `<type>/` package, and imported with
+`importlib.util.spec_from_file_location` under `vigil_external.<type>` — its
+own namespace, so an external module can never replace a `vigil.*` module in
+`sys.modules`, and a package's relative imports resolve inside it. The same
+one-concrete-subclass rule applies, since the loader and the built-in path
+share `_plugin_class`. A built-in name wins by default, because silently
+swapping a shipped plugin for a local file of the same name is the surprising
+outcome; an entry with `override: true` reverses that, and both cases log a
+warning naming the file. The type name must be a Python identifier, so a
+`type:` can never walk out of a plugin directory. Each loader imports a type at
+most once, and the engine builds a new loader from each config, so an edited
+external file is read afresh the next time a config is loaded.
+
 A plugin whose subject is not the host it collects on — `vuln_scan` runs nmap
 on one agent against another host — sets `display_target`, and `_wire_plugin`
 labels the monitor with that instead of the transport's target. `target` is

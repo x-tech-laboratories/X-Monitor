@@ -157,7 +157,7 @@ plugins:
 
 Every monitor type, its config keys, and its `ssh_config` / layout options are
 documented in the [plugin reference](docs/plugins.md). Agent declaration and
-installation are covered in the [agent guide](docs/agent.md).
+installation are covered in the [agent guide](docs/agent.md). A plugin type of your own can live in a directory outside Vigil, named under `plugin_paths:` (see [out-of-tree plugins](docs/plugins.md#out-of-tree-plugins)).
 
 ### Authentication
 

@@ -119,6 +119,14 @@ theme:
 #     repeat: 0                     # remind this often while it lasts, e.g. 1h; 0 is off
 #     recovery: true
 
+# Out-of-tree plugins (optional) — see docs/plugins.md#out-of-tree-plugins.
+# Directories searched, in order, for a plugin `type` Vigil does not ship, as
+# <type>.py or a <type>/ package. Relative paths start at this file's directory.
+# plugin_paths:
+#   - /etc/vigil/plugins
+#   - path: ./my-plugins
+#     override: true            # let its plugins replace built-ins of the same name
+
 # Domain-based Plugins
 plugins:
   - name: "Devices"

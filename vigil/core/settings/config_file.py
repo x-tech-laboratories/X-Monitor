@@ -27,6 +27,7 @@ _SECTION_SHAPES: Dict[str, type] = {
     'memory': dict,
     'ssh_defaults': dict,
     'auth': dict,
+    'plugin_paths': list,
 }
 
 
@@ -237,6 +238,12 @@ class ConfigFileManager:
     @property
     def ssh_defaults(self) -> SSHConfig:
         return self.data.get('ssh_defaults', {})
+
+    @property
+    def plugin_paths(self) -> List[Any]:
+        """Directories searched for plugin types Vigil does not ship, each a path or a mapping with `path` and `override`."""
+        value = self.data.get('plugin_paths') or []
+        return value if isinstance(value, list) else []
 
     @property
     def controllers(self) -> List[Dict[str, Any]]:

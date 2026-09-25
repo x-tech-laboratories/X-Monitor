@@ -159,3 +159,4 @@ class VigilConfig(TypedDict, total=False):
     ssh_defaults: SSHConfig
     control: List[Dict[str, Any]]
     auth: AuthSettings
+    plugin_paths: List[Any]     # directories of out-of-tree plugins: a path, or {path, override}
