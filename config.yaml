@@ -344,8 +344,13 @@ plugins:
         mem_threshold: 95
         temp_warning: 80       # °C (warn / fail)
         temp_threshold: 90
+        # vendor: auto           # Or nvidia / amd / intel (or a list) to probe
+                                 # only those; NVIDIA needs nvidia-smi, AMD and
+                                 # Intel are read from /sys/class/drm.
+        # intel_gpu_top: true    # Intel utilization needs intel_gpu_top with
+                                 # CAP_PERFMON; without it, it is left unknown.
         ssh_config:
-          host: "server.example.com"   # target needs nvidia-smi
+          host: "server.example.com"
       - name: "Docker"
         id: "server-docker"
         type: "containers"

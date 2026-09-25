@@ -76,7 +76,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`load`](#load)                         | Load average, scaled by core count     | SSH (`/proc/loadavg`)                           | `load_pct_1m`, `load_pct_5m`, `load_pct_15m`    | — |
 | [`temperature`](#temperature)           | Thermal zone temperatures              | SSH (`/sys/class/thermal`)                      | `temp_c`, `temp_zone_<zone>`                    | — |
 | [`interrupts`](#interrupts)             | Interrupt and context-switch rates     | SSH (`/proc/stat`)                              | `irq_per_sec`, `ctxt_per_sec`                   | — |
-| [`gpu`](#gpu)                           | NVIDIA GPU utilization, memory, temperature | SSH (`nvidia-smi`)                         | `gpu_util`, `gpu_mem_pct`, `gpu_temp`           | — |
+| [`gpu`](#gpu)                           | NVIDIA, AMD and Intel GPU utilization, memory, temperature | SSH (`nvidia-smi`, `/sys/class/drm`) | `gpu_util`, `gpu_mem_pct`, `gpu_temp`           | — |
 | [`oom`](#oom)                           | Kernel OOM kills                       | SSH (`/proc/vmstat`) + agent journal push       | `oom_kills_total`, `oom_kills_new`              | — |
 | [`processes`](#processes)               | Running processes by CPU              | SSH (`ps`)                                       | `process_count`, `top_cpu_pct` *(ephemeral)*    | SIGTERM, SIGKILL |
 | [`throughput`](#throughput)             | Network interface throughput           | SSH (`/proc/net/dev`)                           | `rx_kbps`, `tx_kbps`                            | — |
@@ -893,23 +893,44 @@ Interrupt and context-switch rates, from two `/proc/stat` snapshots a second apa
 ---
 
 ### `gpu`
-NVIDIA GPU utilization, memory and temperature via `nvidia-smi`. The peak across cards sets the status; every card is also kept individually.
+Every NVIDIA, AMD and Intel card on the host, in one command per cycle: NVIDIA cards through `nvidia-smi`, AMD (`amdgpu`) and Intel (`i915`/`xe`) cards through `/sys/class/drm`, which needs no extra tools and no root. The vendor is detected per card, so one monitor covers a desktop with an Intel iGPU and an NVIDIA dGPU. Each card gets its own metric family and chip, and the worst card sets the status.
 
-A GPU that sleeps with a laptop lid can wedge `nvidia-smi` uninterruptibly. After `timeout_trip` consecutive timeouts the monitor stops issuing the probe entirely for `suspend_seconds` and reports `unavailable` rather than stranding a process per cycle.
+**Numbering.** NVIDIA cards keep `nvidia-smi`'s indices, so existing `gpu<n>_*` series carry over. AMD and Intel cards are numbered after the host's NVIDIA cards, in DRM card order. The NVIDIA count comes from the PCI bus rather than from `nvidia-smi`, so an AMD card keeps its number when `nvidia-smi` is missing or suspended.
+
+**A sleeping card is not woken.** An AMD or Intel card whose runtime power state is `suspended` (a laptop's idle dGPU) is reported as idle — `gpu<n>_util` of `0`, shown as *asleep* — without reading any of its other files, since reading them would power it up every cycle.
+
+**Intel utilization** comes only from `intel_gpu_top`, sampled once for 0.5 s and bounded to 2 s, and is the busiest engine's share (render, video, and so on). It needs `intel_gpu_top` installed and perf access for the user Vigil runs as (`CAP_PERFMON`, or `kernel.perf_event_paranoid` of `0` or less). Without it, an Intel card reports its clock and any temperatures but no utilization, and the log says why; the load is never guessed from the clock.
+
+A GPU that sleeps with a laptop lid can wedge `nvidia-smi` uninterruptibly. After `timeout_trip` consecutive timeouts the monitor stops running `nvidia-smi` for `suspend_seconds` rather than stranding a process per cycle; other cards keep reporting, and a host with only NVIDIA cards reports `unavailable`.
 
 | Option            | Description                                                       |
 |-------------------|-------------------------------------------------------------------|
+| `vendor`          | `auto` (default), or `nvidia`, `amd`, `intel`, or a list of them, to probe only those cards |
+| `intel_gpu_top`   | Sample Intel utilization with `intel_gpu_top` when it is installed (default: `true`) |
 | `util_warning`    | GPU utilization % that triggers `warning` (default: `85`)         |
 | `util_threshold`  | GPU utilization % that triggers `failed` (default: `95`)          |
 | `mem_warning`     | GPU memory % that triggers `warning` (default: `85`)              |
 | `mem_threshold`   | GPU memory % that triggers `failed` (default: `95`)               |
 | `temp_warning`    | °C that triggers `warning` (default: `80`)                        |
 | `temp_threshold`  | °C that triggers `failed` (default: `90`)                         |
-| `timeout_trip`    | Consecutive timeouts before the probe is suspended (default: `2`) |
-| `suspend_seconds` | How long the probe stays suspended (default: `1800`)              |
+| `timeout_trip`    | Consecutive timeouts before `nvidia-smi` is suspended (default: `2`) |
+| `suspend_seconds` | How long `nvidia-smi` stays suspended (default: `1800`)           |
 | `ssh_config`      | SSH connection details — see [SSH Config](#ssh-config) below      |
 
-**Metrics**: `gpu_util`, `gpu_mem_pct`, `gpu_temp`, `gpu<n>_util`, `gpu<n>_mem_pct`, `gpu<n>_temp`
+**Metrics**: `gpu_util`, `gpu_mem_pct`, `gpu_temp` (the peak across cards that report each), and per card:
+
+| Metric                  | NVIDIA (`nvidia-smi`)  | AMD (sysfs)                          | Intel (sysfs, `intel_gpu_top`)          |
+|-------------------------|------------------------|--------------------------------------|-----------------------------------------|
+| `gpu<n>_util`           | `utilization.gpu`      | `gpu_busy_percent`                   | busiest engine, `intel_gpu_top` only    |
+| `gpu<n>_mem_pct`        | `memory.used / total`  | `mem_info_vram_used / total`         | —                                       |
+| `gpu<n>_temp`           | `temperature.gpu`      | hwmon `edge`                         | hwmon `pkg` (`xe` only)                 |
+| `gpu<n>_temp_junction`  | —                      | hwmon `junction`                     | —                                       |
+| `gpu<n>_temp_mem`       | —                      | hwmon `mem`                          | hwmon `vram` (`xe` discrete only)       |
+| `gpu<n>_power_w`        | `power.draw`           | hwmon `power1_average` or `power1_input` | `intel_gpu_top` GPU power           |
+| `gpu<n>_clock_mhz`      | `clocks.sm`            | current `pp_dpm_sclk` level          | `gt_act_freq_mhz`, or `xe`'s `act_freq` |
+| `gpu<n>_mem_busy_pct`   | —                      | `mem_busy_percent`                   | —                                       |
+
+Only the utilization, VRAM and temperature readings count against the thresholds. On an AMD APU the "VRAM" is the firmware's carve-out from system memory, and the edge temperature and power are the whole chip's, CPU included — raise `temp_warning` there if the CPU normally runs hot.
 
 ```yaml
 - name: "GPU"
@@ -918,7 +939,7 @@ A GPU that sleeps with a laptop lid can wedge `nvidia-smi` uninterruptibly. Afte
   interval: 1m
   temp_threshold: 88
   ssh_config:
-    host: "odin.example.com"   # target needs nvidia-smi
+    host: "odin.example.com"
 ```
 
 ---

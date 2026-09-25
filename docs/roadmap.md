@@ -36,3 +36,4 @@
 - [ ] CSV / JSON file export (flat-file dump alongside the Prometheus/InfluxDB exporters)
 - [ ] Additional export backends (Graphite, MQTT, Elasticsearch, …)
 - [x] Per-core CPU breakdown in the CPU monitor
+- [x] AMD and Intel GPUs in the GPU monitor, auto-detected alongside NVIDIA
