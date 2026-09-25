@@ -350,6 +350,8 @@ plugins:
           - "nginx"
           - "postgres"
         stopped_warning: true  # any other stopped container -> warning
+        update_check_interval: 6h  # ask registries for image updates; 0 turns it off
+        update_warning: false  # true -> warning while any image has an update
         ssh_config:
           host: "server.example.com"
 

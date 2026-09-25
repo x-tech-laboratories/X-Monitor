@@ -85,7 +85,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`power`](#power)                       | Battery charge, external power, wear   | SSH (`/sys/class/power_supply`)                 | `charge_pct`, `plugged_in`, `capacity_health_pct`, `battery_<name>_charge_pct` | — |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
 | [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
-| [`containers`](#containers)             | Docker / Podman container states      | SSH (`docker`/`podman ps`)                       | `containers_total`, `containers_running`, `containers_stopped` | Restart (per expected container) |
+| [`containers`](#containers)             | Docker / Podman containers, image updates | SSH (`docker`/`podman ps`, `inspect`) + registry API | `containers_total`, `containers_running`, `containers_stopped`, `images_update_available` | Restart (per expected container) |
 | [`command`](#command)                   | Arbitrary command (generic check)     | SSH (any command)                                | `exit_code` (+ `value` in pattern mode)         | — |
 | [`filesystems`](#filesystems)           | All mounted filesystems (auto-discovered) | SSH (`df`)                                    | `worst_used_pct`, `fs_<mount>_used_pct`         | — |
 | [`folders`](#folders)                   | Sizes of arbitrary directories        | SSH (`du`)                                        | `worst_folder_gb`, `folder_<path>_gb`           | — |
@@ -1135,18 +1135,34 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 ---
 
 ### `containers`
-Monitors Docker or Podman containers over SSH via `<runtime> ps -a`, counting running vs. stopped containers. Paused/created containers are treated as benign. Named containers listed in `expect_running` are required — any that are missing or not running drive the status to **failed** and expose a per-container **Restart** action in the UI. Other unexpectedly-stopped containers drive **warning** (unless `stopped_warning: false`).
+Monitors Docker or Podman containers over SSH via `<runtime> ps -a`, counting running vs. stopped containers and listing each one with its state and image in a table. Paused/created containers are treated as benign. Named containers listed in `expect_running` are required — any that are missing or not running drive the status to **failed** and expose a per-container **Restart** action in the UI. Other unexpectedly-stopped containers drive **warning** (unless `stopped_warning: false`).
 
 For safety, the restart action only ever targets containers explicitly listed in `expect_running`.
 
-| Option            | Description                                                            |
-|-------------------|------------------------------------------------------------------------|
-| `runtime`         | `docker` (default) or `podman`                                         |
-| `expect_running`  | *(Optional)* List of container names that must be running (→ Restart actions) |
-| `stopped_warning` | Treat any stopped container as a warning (default: `true`)             |
-| `ssh_config`      | SSH connection details — see [SSH Config](#ssh-config) below           |
+**Image updates.** Each cycle the target also reports every container's image reference and the RepoDigests of the image it runs (`<runtime> container inspect` / `image inspect`), so the target needs nothing beyond the runtime. Every `update_check_interval` Vigil itself asks each image's registry for the digest its tag points at now (a `HEAD` on `/v2/<repo>/manifests/<tag>`), and the **Update** column shows one of:
 
-**Metrics**: `containers_total`, `containers_running`, `containers_stopped`
+- **Update available** — the registry's digest is not among the image's RepoDigests, so a pull and a recreate of the container would change it. This also catches a container still running an older image after its tag was pulled anew.
+- **Up to date** — the registry's digest matches.
+- **Pinned by digest** / **Local image** — the reference names a digest, or the image has no RepoDigests (built locally), so there is nothing to compare; these are never checked.
+- **Not checked yet** / **Check failed** — no answer from the registry so far.
+
+The count of distinct images with an update is the `images_update_available` metric and the **IMAGE UPDATES** card. By default it does not change the status; `update_warning: true` makes it a **warning**. A registry that fails or refuses is only logged as a warning event — it never changes the status — and the last digest it did report keeps being used until a check succeeds again.
+
+Docker Hub (`registry-1.docker.io`, with `library/` for official images), ghcr.io, quay.io and any other v2 registry work anonymously through the bearer-token challenge the registry sends. A private registry or repository needs credentials under `registries`, keyed by the host as image references name it (`docker.io`, `ghcr.io`, `registry.example.com:5000`).
+
+**Rate limits.** Docker Hub limits anonymous pulls per IP, and other registries throttle too. A check sends one `HEAD` per distinct image (Docker Hub does not count a `HEAD` as a pull) plus one token request, and its answers are cached until the next check, but keep `update_check_interval` in hours rather than minutes, and give Docker Hub credentials when many hosts share one public IP. A `429` answer is logged as a rate-limit event. The check runs in place of one ordinary poll, so on an agent-backed host a monitor with update checks on is polled through the agent rather than sampled by it; `update_check_interval: 0` turns the checks off and restores sampling.
+
+| Option                  | Description                                                            |
+|-------------------------|------------------------------------------------------------------------|
+| `runtime`               | `docker` (default) or `podman`                                         |
+| `expect_running`        | *(Optional)* List of container names that must be running (→ Restart actions) |
+| `stopped_warning`       | Treat any stopped container as a warning (default: `true`)             |
+| `update_check_interval` | How often Vigil asks registries for image updates (default: `6h`; `0` turns update detection off) |
+| `update_warning`        | Make the status **warning** while any image has an update (default: `false`) |
+| `registries`            | *(Optional)* Per-registry credentials, `{host: {username, password or password_command, insecure}}`; `insecure: true` talks plain HTTP to that registry |
+| `ssh_config`            | SSH connection details — see [SSH Config](#ssh-config) below           |
+
+**Metrics**: `containers_total`, `containers_running`, `containers_stopped`, `images_update_available`
 
 ```yaml
 - name: "Docker"
@@ -1157,6 +1173,12 @@ For safety, the restart action only ever targets containers explicitly listed in
   expect_running:
     - "nginx"
     - "postgres"
+  update_check_interval: 6h
+  update_warning: false
+  registries:
+    registry.example.com:5000:
+      username: "robot"
+      password_command: "cat /run/secrets/registry-password"
   ssh_config:
     host: "server.example.com"
 ```
