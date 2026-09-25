@@ -31,6 +31,7 @@ from peewee import OperationalError
 
 from vigil.plugins.base.plugin_base import Plugin
 from vigil.core.connectors.types import CollectResult, DispatchResult, Status, unreachable
+from vigil.core.coordination.cycle_stats import CycleStats, CycleTiming
 from vigil.core.coordination.data_view import PluginDataView
 from vigil.core.coordination.jobs import JobsGateway
 from vigil.core.settings.config_file import ConfigFileManager as VigilConfig
@@ -38,6 +39,7 @@ from vigil.core.database.database import DatabaseManager as VigilDatabase
 from vigil.core.exporters import ExporterEngine
 from vigil.core.notifications import NotificationEngine
 from vigil.core.connectors import ConnectorEngine, ExecContext
+from vigil.core.connectors.ssh_connector import measure_channel_wait
 
 STARTUP_JITTER_SECONDS = 3.0
 
@@ -84,6 +86,7 @@ class VigilEngine:
         self._last_prune = 0.0
         self._collecting: Dict[str, bool] = {}
         self._last_collected: Dict[str, float] = {}
+        self._cycle_stats = CycleStats()
         # The loop holds only weak references to tasks, so every background
         # task is anchored here until it finishes.
         self._tasks: set = set()
@@ -369,17 +372,22 @@ class VigilEngine:
             collected = time.perf_counter()
             result = plugin.parse_results([io_result])
             did_io = True
+            wait_seconds = 0.0
         else:
             requests = plugin.requests()
             net = self._exec_context_for(plugin)
-            results = await self.connectors.dispatch(net, requests) if requests else []
+            with measure_channel_wait() as wait:
+                results = await self.connectors.dispatch(net, requests) if requests else []
             collected = time.perf_counter()
+            wait_seconds = wait.seconds
             result = _settle(plugin, results, plugin.parse_results(results))
             did_io = bool(requests)
         parsed = time.perf_counter()
         self._apply(plugin, result)
-        if did_io and self._cycle_timings:
-            self._record_cycle_timing(plugin, started, collected, parsed)
+        if did_io:
+            self._cycle_stats.record(plugin.id, parsed - started, wait_seconds)
+            if self._cycle_timings:
+                self._record_cycle_timing(plugin, started, collected, parsed)
         return True
 
     def _record_cycle_timing(self, plugin: Plugin, started: float,
@@ -407,6 +415,10 @@ class VigilEngine:
     def last_collected(self, plugin_id: str) -> float:
         """Monotonic time of a monitor's last finished cycle, 0.0 if none yet."""
         return self._last_collected.get(plugin_id, 0.0)
+
+    def cycle_timing(self, plugin_id: str) -> Optional[CycleTiming]:
+        """A monitor's recent cycle durations and SSH channel wait, None before its first cycle that did IO."""
+        return self._cycle_stats.get(plugin_id)
 
     async def dispatch_action(self, plugin: Plugin, action_id: str, **kwargs) -> DispatchResult:
         """Returns (success, metadata). metadata is the applied CollectResult's

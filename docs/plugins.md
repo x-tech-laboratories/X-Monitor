@@ -43,6 +43,7 @@ config examples. For what Vigil is and how to run it, see the
   [`folders`](#folders) ·
   [`vms`](#vms) ·
   [`cloud`](#cloud) ·
+  [`vigil_self`](#vigil_self) ·
   [`group`](#group)
 - [Plugin Layout](#plugin-layout) — arranging a plugin's widgets on its page
 - [SSH Config](#ssh-config) — the `ssh_config` block SSH-based plugins accept
@@ -91,6 +92,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`folders`](#folders)                   | Sizes of arbitrary directories        | SSH (`du`)                                        | `worst_folder_gb`, `folder_<path>_gb`           | — |
 | [`vms`](#vms)                           | libvirt/KVM virtual machines          | SSH (`virsh`)                                     | `vms_total`, `vms_running`, `vms_stopped`       | Start, Shutdown (per expected VM) |
 | [`cloud`](#cloud)                       | Cloud instance metadata (AWS/GCP/Azure) | SSH (metadata endpoint)                         | `on_cloud`                                      | — |
+| [`vigil_self`](#vigil_self)             | Vigil itself: memory, CPU, late and slow monitors | Local (`/proc/self`, engine state)     | `memory_mb`, `monitors_late`, `monitors_slow`, `slowest_cycle_seconds` | — |
 | [`group`](#group)                       | Container for nested monitors         | — (aggregates children)                          | —                                               | — |
 
 All plugin types share these common fields:
@@ -99,7 +101,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `vigil_self`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 
 ---
@@ -1308,6 +1310,34 @@ Detects the cloud provider of the target and surfaces its instance metadata (id,
   provider: "auto"
   ssh_config:
     host: "server.example.com"
+```
+
+---
+
+### `vigil_self`
+Vigil watching itself: its own memory, CPU and uptime, whether every other monitor is collecting on schedule, and how long each one's collection takes.
+
+A **late** monitor has gone `stale_warning` intervals without finishing a cycle, and a **stalled** one `stale_threshold` intervals. A **slow** monitor's recent cycles take, on average, more than `slow_cycle_fraction` of its interval, or more than `slow_cycle_seconds` when that is set.
+
+The page lists every monitor's last, average and longest cycle over its last 20 cycles, slowest first, with how long its SSH commands waited for a free channel. That wait is time spent queued behind other monitors on the same host at the `MaxSessions` ceiling (see [SSH Config](#ssh-config)), so a monitor that is slow because of the wait needs fewer neighbours or the agent, not a faster target.
+
+| Option                | Description                                                                     |
+|-----------------------|---------------------------------------------------------------------------------|
+| `memory_warning`      | RSS in MB that sets warning (default: `256`)                                   |
+| `memory_threshold`    | RSS in MB that sets failed (default: `512`)                                    |
+| `stale_warning`       | Intervals overdue before a monitor counts as late, a warning (default: `6`)    |
+| `stale_threshold`     | Intervals overdue before a monitor counts as stalled, a failure (default: `10`) |
+| `slow_cycle_fraction` | Share of its interval a monitor's average cycle may take before it counts as slow, a warning (default: `0.5`; `0` turns it off) |
+| `slow_cycle_seconds`  | Seconds a monitor's average cycle may take before it counts as slow (default: `0`, off) |
+
+**Metrics**: `memory_mb`, `cpu_pct`, `uptime_seconds`, `monitors_total`, `monitors_late`, `monitors_stalled`, `monitors_slow`, `slowest_cycle_seconds`
+
+```yaml
+- name: "Vigil"
+  id: "vigil"
+  type: "vigil_self"
+  interval: 60
+  slow_cycle_seconds: 20
 ```
 
 ---

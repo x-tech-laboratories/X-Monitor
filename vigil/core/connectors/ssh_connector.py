@@ -4,9 +4,12 @@ import logging
 import os
 import shlex
 import tempfile
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Iterator, List, Tuple, Optional
 
 import asyncssh
 
@@ -23,6 +26,31 @@ COLLECT_TIMEOUT = 30.0
 CONTROL_TIMEOUT = 60.0
 
 asyncssh.set_log_level(logging.WARNING)
+
+
+class ChannelWait:
+    """The longest any one command queued for a free SSH channel while a caller was measuring."""
+
+    def __init__(self):
+        self.seconds = 0.0
+
+    def add(self, seconds: float) -> None:
+        self.seconds = max(self.seconds, seconds)
+
+
+# The tally the current task's commands report their channel wait to, if anyone is measuring.
+_CHANNEL_WAIT: ContextVar[Optional[ChannelWait]] = ContextVar('vigil_ssh_channel_wait', default=None)
+
+
+@contextmanager
+def measure_channel_wait() -> Iterator[ChannelWait]:
+    """Measure how long the commands started inside this block queue for a channel, including those in child tasks."""
+    tally = ChannelWait()
+    token = _CHANNEL_WAIT.set(tally)
+    try:
+        yield tally
+    finally:
+        _CHANNEL_WAIT.reset(token)
 
 
 def _known_hosts_path() -> Path:
@@ -138,7 +166,11 @@ class SSHConnection:
         proc = None
         try:
             conn = await self._get_connection()
+            queued = time.perf_counter()
             async with self._channel_semaphore:
+                tally = _CHANNEL_WAIT.get()
+                if tally is not None:
+                    tally.add(time.perf_counter() - queued)
                 proc = await conn.create_process(command)
                 try:
                     result = await proc.wait(timeout=timeout)

@@ -173,6 +173,20 @@ of the two.
 scheduler and any out-of-band (dashboard-triggered) collection, so a slow cycle
 never overlaps itself.
 
+**Cycle timing.** Every cycle that did IO is timed into `CycleStats`
+(`core/coordination/cycle_stats.py`), a 20-cycle window per monitor that
+`engine.cycle_timing(id)` reads back as last/average/max seconds plus SSH
+channel wait. It is memory only and always on; `logging.cycle_timings` governs
+only the `cycle_collect_seconds` / `cycle_parse_seconds` metric rows, which
+cost disk. `vigil_self` turns it into its slowest-first table and its "slow"
+warning. The channel wait is measured without threading anything through the
+connector API: `_run_cycle` wraps its dispatch in `measure_channel_wait()`,
+which sets a `ContextVar`, and `SSHConnection.execute` reports how long it
+queued on the per-host semaphore to whatever tally that var holds. The tasks
+`asyncio.gather` spawns copy the context, so every command of the cycle
+reports to the same tally, which keeps the longest single wait — a sum over
+parallel commands could exceed the cycle itself.
+
 Two monitors resolving to the same effective `id` (falls back to display name
 when config omits it) would silently overwrite each other's status/metrics/logs
 every cycle, since everything is keyed by `id`. Startup detects and logs this

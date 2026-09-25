@@ -21,7 +21,8 @@ logging:
                               # disk footprint. 0 (default) disables.
   # cycle_timings: true       # Record cycle_collect/parse_seconds metrics per
                               # monitor; they double the metric row count, so
-                              # set false to shed them.
+                              # set false to shed them. vigil_self's cycle-time
+                              # table is kept in memory and works either way.
 
 # In-memory state (optional).
 # Live state is held in Python objects and served to the UI from there; the
