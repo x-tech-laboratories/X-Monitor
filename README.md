@@ -14,7 +14,7 @@ Unlike most network and system monitors, Vigil is designed to be highly extensib
 - **Event-Driven Collection**: Agent-backed monitors subscribe to live streams (journal follow, path watches, sub-second local sampling), so detection latency stops being a function of the poll interval.
 - **Web Dashboard**: Real-time interactive visualizations built with NiceGUI and ECharts, featuring latency history, status distribution, and log views.
 - **Notifications**: Notifies you when a monitor starts failing, keeps failing or recovers, with per-monitor rules. Sends to the desktop through the agent, to your phone through ntfy, by email, to any webhook, or to around a hundred services through Apprise, and each notification links straight to the monitor's page. See [docs/notifications.md](docs/notifications.md).
-- **Target Control**: Trigger actions on monitored targets (e.g. restarting systemd services) directly from the UI, including opt-in host power controls — reboot, shutdown, suspend, power profile and next boot entry — each confirmed and logged.
+- **Target Control**: Trigger actions on monitored targets (e.g. restarting systemd services) directly from the UI, including opt-in host power controls — reboot, shutdown, suspend, power profile and next boot entry — each confirmed and logged, and Wake-on-LAN for hosts an `uptime` monitor sees go down, by hand or automatically.
 - **Plugin Architecture**: Core features are implemented through plugins called "monitors" which handle specific domains (systemd services, host uptime, hardware parameters, etc.).
 - **Hierarchical Organization**: Organize monitors into nested groups by location, service, or environment.
 - **Lightweight**: Minimal dependencies and low resource footprint.

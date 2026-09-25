@@ -30,7 +30,7 @@ from typing import Any, List, Optional, Dict, Set
 from peewee import OperationalError
 
 from vigil.plugins.base.plugin_base import Plugin
-from vigil.core.connectors.types import CollectResult, DispatchResult, Status, unreachable
+from vigil.core.connectors.types import CmdResult, CollectResult, DispatchResult, Status, unreachable
 from vigil.core.coordination.data_view import PluginDataView
 from vigil.core.coordination.jobs import JobsGateway
 from vigil.core.settings.config_file import ConfigFileManager as VigilConfig
@@ -378,6 +378,7 @@ class VigilEngine:
             did_io = bool(requests)
         parsed = time.perf_counter()
         self._apply(plugin, result)
+        self._react(plugin, result)
         if did_io and self._cycle_timings:
             self._record_cycle_timing(plugin, started, collected, parsed)
         return True
@@ -437,9 +438,35 @@ class VigilEngine:
         if isinstance(plan, (HttpRequest, DnsQuery, PingRequest)):
             result = (await self.connectors.dispatch(net, [plan]))[0]
             return _finish(plugin.interpret_action(action_id, result, **kwargs))
-        # Default: an ActionPlan — a short SSH command.
+        # Default: an ActionPlan — a short SSH command, on another monitor's transport when it names one.
+        if plan.via:
+            net = self._exec_contexts.get(plan.via)
+            if net is None:
+                missing = CmdResult(-1, "", f"No monitor {plan.via!r} to run this through")
+                return _finish(plugin.interpret_action(action_id, missing, **kwargs))
         result = await self.connectors.execute(net, plan)
         return _finish(plugin.interpret_action(action_id, result, **kwargs))
+
+    def _react(self, plugin: Plugin, result: CollectResult) -> None:
+        """Run the action a plugin asks for in reaction to the status its cycle just recorded, as its own task."""
+        if result.status is None:
+            return
+        # A plugin's broken on_status() must not fail the cycle that already persisted.
+        try:
+            reaction = plugin.on_status(result.status, time.monotonic())
+        except Exception as e:
+            logging.error(f"{plugin.name}: on_status() failed: {e}")
+            return
+        if reaction:
+            action_id, kwargs = reaction
+            self._spawn(self._run_reaction(plugin, action_id, kwargs))
+
+    async def _run_reaction(self, plugin: Plugin, action_id: str, kwargs: Dict[str, Any]) -> None:
+        # The action logs its own outcome; a crash in it is only logged, so the next cycle can ask again.
+        try:
+            await self.dispatch_action(plugin, action_id, **kwargs)
+        except Exception as e:
+            logging.error(f"{plugin.name}: automatic {action_id!r} failed: {e}")
 
     def set_setting(self, key: str, value: str) -> None:
         """UI-triggered setting write (e.g. a group's expand/collapse state)

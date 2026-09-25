@@ -56,7 +56,7 @@ config examples. For what Vigil is and how to run it, see the
 
 | Type | Monitors | Collection | Key metrics | Actions |
 |------|----------|------------|-------------|---------|
-| [`uptime`](#uptime)                     | Host reachability                     | ICMP ping                                        | `up`, `latency_ms`                              | — |
+| [`uptime`](#uptime)                     | Host reachability                     | ICMP ping                                        | `up`, `latency_ms`                              | Wake (Wake-on-LAN, with `mac`) |
 | [`push`](#push)                         | External heartbeat (dead man's switch) | REST API (caller pushes in)                     | `last_push_epoch`, `reported_up`, `value`       | — |
 | [`http`](#http)                         | HTTP(S)/WebSocket endpoint health     | HTTP from the Vigil host, or `websocat` over SSH | `probe_ok`, `probe_status`, `probe_latency_ms`  | — |
 | [`dns_record`](#dns_record)             | DNS record resolution                 | DNS query (via dnspython, in-process)            | `resolved`, `ttl`, `matches_expected`            | — |
@@ -107,12 +107,21 @@ All plugin types share these common fields:
 ---
 
 ### `uptime`
-Checks host availability using ICMP ping.
+Checks host availability using ICMP ping. With `mac:` set it can also wake the host with a Wake-on-LAN magic packet.
 
-| Option        | Description                                        |
-|---------------|----------------------------------------------------|
-| `target_host` | IP address or hostname to ping                     |
-| `interval`    | Polling frequency in seconds (default: `60`)       |
+| Option              | Description                                        |
+|---------------------|----------------------------------------------------|
+| `target_host`       | IP address or hostname to ping                     |
+| `interval`          | Polling frequency in seconds (default: `60`)       |
+| `mac`               | *(Optional)* The host's MAC address; adds a **Wake** button (asks for confirmation) |
+| `wol_broadcast`     | Address the packet is sent to (default: `255.255.255.255`); a subnet's broadcast address such as `192.168.1.255` reaches it from a host with several networks |
+| `wol_port`          | UDP port (default: `9`)                            |
+| `wol_password`      | *(Optional)* SecureOn password, as six hex bytes (`01:02:03:04:05:06`) or a dotted quad |
+| `wake_via`          | *(Optional)* The `id` of another monitor whose host sends the packet instead of the Vigil server — for a host on a subnet only that one reaches. It uses that monitor's SSH connection or agent |
+| `wake_command`      | *(Optional, with `wake_via`)* The command that sends it there, overriding the default. `{mac}`, `{hex}` (the whole packet), `{broadcast}`, `{port}` and `{password}` are filled in, shell-quoted; write other braces doubled |
+| `wake_on_down`      | Send a wake automatically when the host goes **failed** (default: `false`) |
+| `wake_retry`        | Time between automatic wakes while it stays down (default: `10m`) |
+| `wake_max_attempts` | Automatic wakes before giving up until the host is seen up again (default: `3`) |
 
 **Metrics**: `up` (1/0), `latency_ms`
 
@@ -122,6 +131,19 @@ Checks host availability using ICMP ping.
   type: "uptime"
   target_host: "192.168.1.1"
   interval: 30
+```
+
+Without `wake_via`, the packet is one UDP broadcast from the Vigil server, so it reaches hosts on the server's own network. With it, Vigil builds the packet and the other host sends it with `python3` or, failing that, `socat`; a host with neither needs a `wake_command`, such as `wakeonlan -i {broadcast} -p {port} {mac}` or `etherwake -i eth0 {mac}` (which sends raw Ethernet frames and so usually needs root). Every wake, manual or automatic, is logged to the monitor's events with where it was sent and whether that worked; the last automatic one says it is giving up.
+
+```yaml
+- name: "NAS"
+  id: "nas-ping"
+  type: "uptime"
+  target_host: "192.168.20.5"
+  mac: "00:11:22:33:44:55"
+  wake_via: "host1-cpu"            # any monitor on a host in that subnet
+  wol_broadcast: "192.168.20.255"
+  wake_on_down: true               # wake it whenever it drops, every 10m, 3 times at most
 ```
 
 ---
@@ -1519,7 +1541,7 @@ The same keys can instead be given as a **mapping of widget name → properties*
 
 | Plugin             | Widget names                                                                 |
 |--------------------|------------------------------------------------------------------------------|
-| `uptime`           | `host_card`, `status_card`, `latency_card`, `chart`, `events`               |
+| `uptime`           | `host_card`, `status_card`, `latency_card`, `wake` (with `mac`), `chart`, `events` |
 | `systemd_service`  | hand-written UI — not individually addressable                              |
 | `cpu`              | `host_card`, `cpu_card`, `cpu_chart`, `events`                              |
 | `memory`           | `host_card`, `mem_pct_card`, `mem_used_card`, `memory_chart`, `events`      |

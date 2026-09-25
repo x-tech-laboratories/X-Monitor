@@ -90,6 +90,20 @@ job-row updates go through `plugin.jobs`, the `JobsGateway` the engine wires
 onto each plugin (`jobs.create`/`jobs.finish`/etc.; the job panel reads
 `jobs.is_running`/`jobs.recent` and cancels via `jobs.cancel`).
 
+**Side effects a plugin asks for.** A plugin can never cause IO from
+`parse_results()`, so a reaction to what it just measured — `uptime` waking a
+host that went down — is requested instead: after persisting each polled
+cycle the engine calls the plugin's pure `on_status(status, now)`, and when it
+returns `(action_id, kwargs)` the engine dispatches that action on its own
+task, exactly like a button click, so its outcome is logged the same way. The
+plugin keeps the bookkeeping (attempts, the last try) as derived state; the
+engine only runs what it is handed.
+
+**Running an action elsewhere.** An `ActionPlan` with `via=<monitor id>` runs
+on that monitor's `ExecContext` instead of the plugin's own, which is how
+`uptime` sends a wake packet from a host inside another subnet. The plugin
+names a monitor, never a connection, so it stays transport-blind.
+
 ## The write path: `db.apply_result`
 
 There is no per-plugin writer object. The engine holds each plugin's identity

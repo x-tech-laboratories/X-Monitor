@@ -122,6 +122,8 @@ plugins:
         type: "uptime"
         target_host: "server.example.com"
         interval: 30s
+        # mac: "00:11:22:33:44:55"   # adds a Wake-on-LAN button
+        # wake_on_down: true         # and wakes it automatically when it goes down
 
   # A group with a `layout:` stops wrapping its children in collapsible cards and
   # builds its own rows instead, one child widget per cell, addressed as

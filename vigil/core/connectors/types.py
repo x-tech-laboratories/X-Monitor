@@ -81,6 +81,8 @@ _LOG_LEVEL = {Status.ONLINE: 'INFO', Status.UNAVAILABLE: 'WARNING',
 class ActionPlan:
     command: str
     timeout: Optional[float] = None
+    # Run on this other monitor's transport instead of the plugin's own, e.g. a wake packet sent from inside another subnet.
+    via: Optional[str] = None
 
 
 # --- Declarative connector requests/results ---
