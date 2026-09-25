@@ -26,7 +26,7 @@ change and no plugin code is transport-aware.
 
 import asyncio
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from vigil.core.connectors.agent_connector import AgentConnection, AgentRegistry
 from vigil.core.connectors.ssh_connector import (
@@ -132,6 +132,14 @@ class ConnectorEngine:
         cancelling a detached job) that aren't modeled as a named action. Prefer
         plan_action()/execute() for anything reachable from action_id dispatch."""
         return await self.execute(ctx, ActionPlan(command, timeout=timeout))
+
+    def close_unused(self, live: Iterable[TransportConnection]) -> int:
+        """Close every pooled SSH connection no live handle uses any more; returns how many closed."""
+        keep = {id(conn) for conn in live}
+        unused = [key for key, conn in self._ssh_conns.items() if id(conn) not in keep]
+        for key in unused:
+            self._ssh_conns.pop(key).close()
+        return len(unused)
 
     def close_ssh(self) -> None:
         for conn in self._ssh_conns.values():

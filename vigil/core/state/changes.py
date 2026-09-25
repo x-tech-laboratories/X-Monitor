@@ -26,6 +26,8 @@ LOG = "log"
 JOB = "job"
 SNAPSHOT = "snapshot"
 SETTING = "setting"
+# The set of monitors itself changed, after a config reload.
+MONITORS = "monitors"
 
 # A subscriber takes (kind, plugin_id); plugin_id is None for changes that
 # belong to no single monitor, such as a global setting.

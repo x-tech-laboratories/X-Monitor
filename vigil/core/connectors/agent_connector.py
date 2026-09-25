@@ -176,6 +176,9 @@ class AgentConnection:
     def register_stream(self, spec: StreamSpec) -> None:
         self._streams[spec.id] = spec
 
+    def unregister_stream(self, stream_id: str) -> None:
+        self._streams.pop(stream_id, None)
+
     @property
     def streams(self) -> List[StreamSpec]:
         return list(self._streams.values())
@@ -215,25 +218,37 @@ class AgentRegistry:
     def configure(self, agents_cfg: List[Dict[str, Any]]) -> None:
         """Build the connection objects from config.yaml's ``agents:`` list.
         An entry with no id is skipped with a log rather than raising, matching
-        how a malformed plugin entry degrades."""
+        how a malformed plugin entry degrades. Called again on a config reload,
+        it keeps each existing agent's connection, so monitors wired to it stay
+        wired, and an agent dropped from the list loses its token and can no
+        longer connect."""
+        declared = set()
         for entry in agents_cfg or []:
             agent_id = entry.get('id') or entry.get('name')
             if not agent_id:
                 log.error(f"agents: entry with no `id` ignored: {entry!r}")
                 continue
             agent_id = str(agent_id)
+            declared.add(agent_id)
             token = self._resolve_token(agent_id, entry)
             if not token:
+                self._tokens.pop(agent_id, None)
                 log.error(
                     f"agent {agent_id!r} has no usable token and will refuse "
                     f"every connection — set `token` or `token_file`"
                 )
             else:
                 self._tokens[agent_id] = token
-            self._agents[agent_id] = AgentConnection(
-                agent_id, host=str(entry.get('host') or agent_id)
-            )
+            host = str(entry.get('host') or agent_id)
+            existing = self._agents.get(agent_id)
+            if existing is not None:
+                existing.host = host
+                continue
+            self._agents[agent_id] = AgentConnection(agent_id, host=host)
             log.info(f"Registered agent {agent_id!r}")
+        for agent_id in sorted(set(self._tokens) - declared):
+            del self._tokens[agent_id]
+            log.warning(f"agent {agent_id!r} is no longer configured and can no longer connect")
 
     @staticmethod
     def _resolve_token(agent_id: str, entry: Dict[str, Any]) -> Optional[str]:

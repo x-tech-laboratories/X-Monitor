@@ -29,6 +29,7 @@ These change Vigil itself rather than read its state. They sit behind the same s
 
 | Endpoint | Does |
 |----------|------|
+| `POST /api/config/reload` | Re-reads `config.yaml` and applies it in place; answers with what was added, removed and changed and which settings need a restart, or `422` with the reason the file was refused |
 | `GET /api/log-levels` | The root log level, every logger given its own level, and the names of Vigil's loggers |
 | `POST /api/log-levels` | Sets one logger's level from a JSON body `{"logger": "...", "level": "DEBUG"}`; no `logger` means the root, and `"level": null` makes a named logger inherit again |
 

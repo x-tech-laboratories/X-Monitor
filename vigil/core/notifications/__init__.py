@@ -111,10 +111,13 @@ class NotificationEngine:
             f"Notifications: {len(self.channels)} channel(s), {len(rules)} monitor(s) notify"
         )
 
-    def stop(self) -> None:
+    def stop(self, cancel_deliveries: bool = True) -> None:
+        """Stop watching status writes; a config reload keeps deliveries already under way."""
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
+        if not cancel_deliveries:
+            return
         for task in list(self._tasks):
             task.cancel()
 

@@ -1588,4 +1588,4 @@ class Weather(Plugin):
         return CollectResult(status='online' if ok else 'failed', logs=[(results[0].stdout, 'INFO')])
 ```
 
-A name Vigil already uses stays Vigil's: the file is ignored with a warning in the log, unless its `plugin_paths` entry says `override: true`, which is logged too. A missing type, or a module that defines no `Plugin` class or more than one, stops only that monitor from loading, with the reason in the log. An edited plugin file takes effect on restart.
+A name Vigil already uses stays Vigil's: the file is ignored with a warning in the log, unless its `plugin_paths` entry says `override: true`, which is logged too. A missing type, or a module that defines no `Plugin` class or more than one, stops only that monitor from loading, with the reason in the log. An edited plugin file is read again on the next config reload, and takes effect for the monitors that reload adds or changes; the rest keep running the code they started with until a restart.

@@ -1,5 +1,6 @@
 """Loads and validates config.yaml into the typed VigilConfig tree."""
 import difflib
+import hashlib
 import yaml
 import logging
 from pathlib import Path
@@ -66,26 +67,48 @@ def _warn_on_structure(data: Dict[str, Any], path: Path) -> None:
                 log.warning(f"{path}: {section} {label} has no '{required}' and cannot load")
 
 
+class ConfigError(Exception):
+    """config.yaml could not be read as a configuration."""
+
+
 class ConfigFileManager:
-    def __init__(self, config_path: str):
+    """One reading of config.yaml; strict raises ConfigError where the lenient startup read falls back to an empty config."""
+
+    def __init__(self, config_path: str, strict: bool = False):
         self.path = Path(config_path)
+        self.strict = strict
+        # A hash of the bytes read, so a watcher can tell a real edit from a touch.
+        self.digest: Optional[str] = None
         self.data: VigilConfig = self._load()
+
+    def _fail(self, message: str) -> VigilConfig:
+        if self.strict:
+            raise ConfigError(message)
+        log.error(message)
+        return {}
 
     def _load(self) -> VigilConfig:
         if not self.path.exists():
+            if self.strict:
+                raise ConfigError(f"Configuration file not found at {self.path}")
             log.warning(f"Configuration file not found at {self.path}. Using empty configuration defaults.")
             return {}
 
         try:
-            with open(self.path, 'r') as f:
-                data = yaml.safe_load(f)
-                if not isinstance(data, dict):
-                    return {}
-                _warn_on_structure(data, self.path)
-                return data
+            raw = self.path.read_bytes()
+        except OSError as e:
+            return self._fail(f"Failed to read configuration at {self.path}: {e}")
+        self.digest = hashlib.sha256(raw).hexdigest()
+        try:
+            data = yaml.safe_load(raw)
         except yaml.YAMLError as e:
-            log.error(f"Failed to parse YAML configuration at {self.path}: {e}")
+            return self._fail(f"Failed to parse YAML configuration at {self.path}: {e}")
+        if not isinstance(data, dict):
+            if self.strict:
+                raise ConfigError(f"{self.path} is empty or not a mapping of sections")
             return {}
+        _warn_on_structure(data, self.path)
+        return data
 
     @property
     def database_settings(self) -> DatabaseSettings:

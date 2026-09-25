@@ -1,4 +1,4 @@
-"""The header's system menu and the dialog that changes logging verbosity at runtime."""
+"""The header's system menu: reloading config.yaml, and the dialog that changes logging verbosity at runtime."""
 
 from nicegui import ui
 
@@ -49,9 +49,17 @@ def open_log_levels_dialog(engine: EngineLike) -> None:
     dialog.open()
 
 
+async def reload_config(engine: EngineLike) -> None:
+    """Re-read config.yaml now and say what changed, or why nothing did."""
+    result = await engine.reload_config('dashboard')
+    ui.notify(result.summary(), type='positive' if result.ok and not result.restart_required
+              else 'warning' if result.ok else 'negative', multi_line=True)
+
+
 def render_system_menu(engine: EngineLike) -> None:
     """The header button whose menu holds Vigil's own runtime controls."""
     with ui.button(icon='tune', color=None).props('flat dense round'):
         ui.tooltip('System')
         with ui.menu():
+            ui.menu_item('Reload config', on_click=lambda: reload_config(engine))
             ui.menu_item('Log levels', on_click=lambda: open_log_levels_dialog(engine))

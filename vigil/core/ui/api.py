@@ -55,6 +55,14 @@ def _register_log_level_routes(app: Any, engine: EngineLike) -> None:
         return JSONResponse({'levels': levels})
 
 
+def _register_reload_route(app: Any, engine: EngineLike) -> None:
+    """Mount the endpoint that re-reads config.yaml and applies it in place."""
+    @app.post('/api/config/reload')
+    async def reload_config():
+        result = await engine.reload_config('REST API')
+        return JSONResponse(result.as_dict(), status_code=200 if result.ok else 422)
+
+
 def register_api(app: Any, engine: EngineLike) -> None:
     """Mount the JSON status and Prometheus/health endpoints on the FastAPI app."""
     db = engine.db
@@ -137,6 +145,7 @@ def register_api(app: Any, engine: EngineLike) -> None:
 
     _register_notification_routes(app, engine)
     _register_log_level_routes(app, engine)
+    _register_reload_route(app, engine)
 
     @app.get('/metrics')
     def prometheus_metrics():

@@ -43,6 +43,12 @@ class ExporterEngine:
             except Exception as e:
                 logging.error(f"Failed to start InfluxDB exporter — metrics will not be pushed: {e}")
 
+    def stop(self) -> None:
+        """Cancel every running push exporter, so a config reload can start the new set."""
+        for task in self._tasks:
+            task.cancel()
+        self._tasks = []
+
     @staticmethod
     def render_prometheus(db: Any) -> str:
         """Pull-exporter entry point — pure render of the Prometheus text

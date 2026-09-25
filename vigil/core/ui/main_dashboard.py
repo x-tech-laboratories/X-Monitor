@@ -8,6 +8,7 @@ from nicegui import app, ui
 from vigil.core.contracts import EngineLike
 from . import theme
 from .auth import LOGOUT_PATH, AuthConfig
+from .components import on_data_event
 from .sidebar import render_sidebar
 from .views import render_overview, render_events, render_plugin_detail
 from .views.notifications import open_notifications_dialog
@@ -60,6 +61,18 @@ class DashboardState:
     selected_plugin: Any = None
     render_main: Optional[Callable[[], None]] = None
     sync_nav: Optional[Callable[[], None]] = None
+    monitors_version: int = 0
+
+
+def after_reload(engine: EngineLike, state: DashboardState) -> Optional[str]:
+    """How a view catches up with a config reload: 'overview' when its monitor is gone, 'redraw' when it lists or shows monitors."""
+    if state.current_view == 'plugin' and state.selected_plugin is not None:
+        current = _find_monitor(engine.plugins, state.selected_plugin.id)
+        if current is None:
+            return 'overview'
+        state.selected_plugin = current
+        return 'redraw'
+    return 'redraw' if state.current_view == 'overview' else None
 
 
 def _register_endpoints(engine: EngineLike) -> Optional[AuthConfig]:
@@ -156,6 +169,20 @@ def _render_index(engine: EngineLike, auth_config: Optional[AuthConfig] = None,
 
     state.render_main = render_main
     render_main()
+
+    state.monitors_version = engine.monitors_version
+
+    def follow_reload():
+        if engine.monitors_version == state.monitors_version:
+            return
+        state.monitors_version = engine.monitors_version
+        action = after_reload(engine, state)
+        if action == 'overview':
+            switch_view('overview')
+        elif action == 'redraw':
+            render_main()
+
+    on_data_event(follow_reload, run_now=False)
 
 
 def init_gui(engine: EngineLike, port: int = 8080):

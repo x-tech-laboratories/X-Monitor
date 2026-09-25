@@ -3,6 +3,11 @@
 # This is a minimal example. A full deployment (the TechNet homelab) is defined
 # declaratively in NixOS via services.vigil — see that module for a complete,
 # real-world plugin tree.
+#
+# Vigil applies an edit to this file while it runs: it notices the change within
+# a few seconds (or on SIGHUP, POST /api/config/reload, or the dashboard's System
+# menu), keeps unchanged monitors running, and refuses a file that does not load
+# whole. database, memory, auth and theme still take a restart; a reload says so.
 
 # Database settings
 database:

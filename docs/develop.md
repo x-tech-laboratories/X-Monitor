@@ -28,7 +28,8 @@ read path) and read exactly once, at startup, to restore the store.
 owns and wires together:
 
 - **Settings Engine** (`core/settings/`) — `ConfigFileManager` loads and types
-  `config.yaml` (`config_schema.py`).
+  `config.yaml` (`config_schema.py`), at startup and again on each
+  [config reload](#config-reload); `LogLevels` holds the runtime log levels.
 - **State Engine** (`core/state/`) — `StateStore` holds the live system of
   record in memory: current state (statuses, snapshots, settings, jobs) whole,
   and history (metrics, events, log lines, job output) in bounded per-stream
@@ -192,6 +193,81 @@ when config omits it) would silently overwrite each other's status/metrics/logs
 every cycle, since everything is keyed by `id`. Startup detects and logs this
 once, loudly.
 
+## Config reload
+
+`config.yaml` is re-read and applied in place, without a restart and without
+dropping the connections unchanged monitors use. `engine.reload_config(source)`
+is the one entry point; four triggers call it: the file watcher, SIGHUP,
+`POST /api/config/reload`, and the dashboard's System menu. Reloads hold an
+`asyncio.Lock`, so they run one at a time, and each returns a `ReloadResult`
+(`core/coordination/reload.py`) and records its summary as an event: how many
+monitors were added, removed and changed, and which settings need a restart.
+
+**Validate everything, then apply.** `_plan_reload` runs off the event loop.
+It reads the file strictly (`ConfigFileManager(strict=True)` raises
+`ConfigError` where the startup read would fall back to an empty config: a
+missing or empty file, bad YAML, a top level that is not a mapping), resolves
+every monitor's type through a fresh `PluginLoader`, and constructs every new
+or changed plugin. Any failure — an unknown type, a constructor that raises, two
+monitors with the same id — refuses the whole reload: the running tree is never
+touched, and the error goes to the log and the events feed. A reload never
+leaves half a config running. Building uses the same `_build_tree` as startup,
+which records each group's new children in a `_Node` rather than assigning
+them, so even a kept group's `children` stays as it was until the plan applies.
+
+**Monitors are diffed by id.** A monitor is unchanged when its plugin class
+and its effective config (after `ssh_defaults` are merged and a group's
+`agent` is inherited, not counting `children`) are equal to the running
+instance's (`reload.same_monitor`). An unchanged monitor keeps its instance, its
+polling task, its in-memory state and its connection, even when it moved to
+another group. Everything else is keyed by id, so a changed monitor is simply
+stopped and a new instance started, and its stored history carries over.
+Changing `ssh_defaults` therefore changes exactly the monitors it reaches.
+
+**Applying** (`_apply_reload`), in order:
+
+1. `_retire` stops removed and changed monitors: cancels and awaits their loop
+   task (tracked per id in `_monitor_tasks`), drops their exec context and
+   event streams, and clears their single-flight and timing state. Each
+   retired instance goes into `_retired`, so a cycle already in flight for it
+   (an out-of-band poll, an agent warm-up) finishes without writing.
+2. Agents whose stream set shrank are sent it straight away. The agent keeps
+   a stream whose id it already runs, so a changed monitor's stream has to
+   leave before it comes back with new parameters.
+3. The new config, plugin loader and global settings go in: retention windows,
+   cycle-timing metrics, log levels when `logging.level`/`levels` changed, and
+   agents when `agents:` changed (`AgentRegistry.configure` keeps each existing
+   connection object, because live exec contexts hold it).
+4. New instances are wired, the tree is swapped in one assignment
+   (`self.plugins = ...`), SSH connections no exec context refers to any more
+   are closed (`ConnectorEngine.close_unused`; the pool key is
+   `(host, port, user, key)`, so a changed monitor on the same host reuses its
+   connection), agents get their new stream sets, and new polling loops start
+   with the usual startup stagger.
+5. Notifications are rebuilt when the tree or the `notifications:` section
+   changed; the old engine stops watching but lets deliveries already under
+   way finish. Exporters restart when `exporters:` changed.
+6. Settings read only at startup — `database.path` (unless `--db` overrides
+   it), `database.write_batch_seconds`, `memory`, `auth`, `theme` — are
+   compared and reported as restart required rather than silently ignored.
+
+**The UI follows through the change bus.** A reload that changed the tree
+increments `engine.monitors_version` and publishes a `MONITORS` change. The
+sidebar tree already rebuilds from `engine.plugins` on every change, so it
+picks up added and removed monitors on its own. `_render_index` registers a
+callback that compares the version with the one it last saw and redraws the
+overview, or re-points a monitor page at the replacement instance with the same
+id — or goes to the overview when that monitor is gone (`after_reload`).
+
+**The file watcher** (`_watch_config`) polls every `CONFIG_POLL_SECONDS`
+rather than using inotify, which would be a new dependency and does not follow
+the ways a config gets replaced. It stats the resolved path — so an editor that
+writes a new file and renames it over the old one, and a NixOS switch that
+re-points the symlink into the store (where every file's mtime is the same),
+both change the fingerprint — waits for one further poll with the same
+fingerprint so a file mid-write is not read, and then reloads only when the
+content hash differs from the one last loaded, so a `touch` does nothing.
+
 ## Runtime log levels
 
 A module logs through its own `logging.getLogger(__name__)`, so a logger's
@@ -208,8 +284,8 @@ signal handlers all call.
 Every change is logged at WARNING on `vigil.log_levels`, a logger with its own
 explicit WARNING level, so the record of who made logging quieter survives the
 change it describes. SIGUSR1 and SIGUSR2 step only the root level, one notch at
-a time, because a signal carries no argument; they are installed with
-`loop.add_signal_handler` in `run()` and only when `main()` asks
+a time, because a signal carries no argument. They and SIGHUP (a config reload)
+are installed with `loop.add_signal_handler` in `run()` and only when `main()` asks
 (`handle_signals=True`), so an engine built in a test never takes over the
 process's signals.
 
