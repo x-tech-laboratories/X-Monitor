@@ -85,7 +85,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`power`](#power)                       | Battery charge, external power, wear   | SSH (`/sys/class/power_supply`)                 | `charge_pct`, `plugged_in`, `capacity_health_pct`, `battery_<name>_charge_pct` | — |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
 | [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
-| [`containers`](#containers)             | Docker / Podman containers, image updates | SSH (`docker`/`podman ps`, `inspect`) + registry API | `containers_total`, `containers_running`, `containers_stopped`, `images_update_available` | Restart (per expected container) |
+| [`containers`](#containers)             | Docker / Podman containers, image updates | SSH (`docker`/`podman ps`, `inspect`) + registry API | `containers_total`, `containers_running`, `containers_stopped`, `images_update_available` | Restart (per expected container), Prune |
 | [`command`](#command)                   | Arbitrary command (generic check)     | SSH (any command)                                | `exit_code` (+ `value` in pattern mode)         | — |
 | [`filesystems`](#filesystems)           | All mounted filesystems (auto-discovered) | SSH (`df`)                                    | `worst_used_pct`, `fs_<mount>_used_pct`         | — |
 | [`folders`](#folders)                   | Sizes of arbitrary directories        | SSH (`du`)                                        | `worst_folder_gb`, `folder_<path>_gb`           | — |
@@ -1139,6 +1139,8 @@ Monitors Docker or Podman containers over SSH via `<runtime> ps -a`, counting ru
 
 For safety, the restart action only ever targets containers explicitly listed in `expect_running`.
 
+**Prune.** The **Prune** button runs `<runtime> system prune -f` on the target after a confirmation that spells out what it deletes: every stopped container, unused networks, dangling images and the build cache. `prune_all_images: true` adds `-a` (every image no container uses) and `prune_volumes: true` adds `--volumes` (every unused volume, with its data). The space reclaimed and the number of objects deleted are shown when it finishes and logged as an event; a failed prune is logged as an error event without changing the status. There is no per-container "pull and recreate": a plain `docker run` container cannot be recreated with its original options from what the runtime reports, so pull and recreate through whatever started it (compose, systemd, `podman auto-update`).
+
 **Image updates.** Each cycle the target also reports every container's image reference and the RepoDigests of the image it runs (`<runtime> container inspect` / `image inspect`), so the target needs nothing beyond the runtime. Every `update_check_interval` Vigil itself asks each image's registry for the digest its tag points at now (a `HEAD` on `/v2/<repo>/manifests/<tag>`), and the **Update** column shows one of:
 
 - **Update available** — the registry's digest is not among the image's RepoDigests, so a pull and a recreate of the container would change it. This also catches a container still running an older image after its tag was pulled anew.
@@ -1160,6 +1162,8 @@ Docker Hub (`registry-1.docker.io`, with `library/` for official images), ghcr.i
 | `update_check_interval` | How often Vigil asks registries for image updates (default: `6h`; `0` turns update detection off) |
 | `update_warning`        | Make the status **warning** while any image has an update (default: `false`) |
 | `registries`            | *(Optional)* Per-registry credentials, `{host: {username, password or password_command, insecure}}`; `insecure: true` talks plain HTTP to that registry |
+| `prune_all_images`      | Prune also removes every image no container uses (`-a`), not only dangling ones (default: `false`) |
+| `prune_volumes`         | Prune also removes unused volumes and their data (`--volumes`) (default: `false`) |
 | `ssh_config`            | SSH connection details — see [SSH Config](#ssh-config) below           |
 
 **Metrics**: `containers_total`, `containers_running`, `containers_stopped`, `images_update_available`

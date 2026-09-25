@@ -340,3 +340,84 @@ class TestContainersUpdateCheck:
         rule = spec['tables']['containers']['columns'][-1]['cell_color_by']
         assert rule({'update_state': 'available'}) == 'warning'
         assert rule({'update_state': 'current'}) is None
+
+
+DOCKER_PRUNE_OUTPUT = """Deleted Containers:
+4a7f7eebae0f
+1f3b5c2d9e8a
+
+Deleted Networks:
+old_default
+
+Deleted Images:
+untagged: nginx@sha256:aaaa
+deleted: sha256:bbbb
+deleted: sha256:cccc
+
+Total reclaimed space: 1.2GB
+"""
+
+PODMAN_PRUNE_OUTPUT = """Deleted Containers
+4a7f7eebae0f
+Deleted Pods
+Deleted Images
+9f8e7d6c5b4a
+Total reclaimed space: 300MB
+"""
+
+
+class TestContainersPrune:
+    async def test_default_prune_command(self, make_plugin):
+        p = make_plugin(Containers, _cfg())
+        plan = p.plan_action("prune")
+        assert plan.command == "docker system prune -f 2>&1"
+        assert plan.timeout and plan.timeout >= 300
+
+    async def test_prune_flags_from_config(self, make_plugin):
+        p = make_plugin(Containers, _cfg(runtime="podman", prune_volumes=True, prune_all_images=True))
+        assert p.plan_action("prune").command == "podman system prune -f -a --volumes 2>&1"
+
+    async def test_docker_output_summarised(self, make_plugin):
+        p = make_plugin(Containers, _cfg())
+        outcome = p.interpret_action("prune", CmdResult(0, DOCKER_PRUNE_OUTPUT, ""))
+        assert outcome.success is True
+        summary = outcome.metadata['content']
+        assert summary == "Reclaimed 1.2GB (containers: 2, networks: 1, images: 2)"
+        assert outcome.status is None
+        assert outcome.logs == [(f"Ran `docker system prune -f`: {summary}", "INFO")]
+
+    async def test_podman_output_summarised(self, make_plugin):
+        p = make_plugin(Containers, _cfg(runtime="podman"))
+        outcome = p.interpret_action("prune", CmdResult(0, PODMAN_PRUNE_OUTPUT, ""))
+        assert outcome.metadata['content'] == "Reclaimed 300MB (containers: 1, images: 1)"
+
+    async def test_nothing_to_prune(self, make_plugin):
+        p = make_plugin(Containers, _cfg())
+        outcome = p.interpret_action("prune", CmdResult(0, "Total reclaimed space: 0B\n", ""))
+        assert outcome.metadata['content'] == "Reclaimed 0B"
+
+    async def test_failed_prune_logged_without_changing_status(self, make_plugin, run_cycle):
+        p = make_plugin(Containers, _cfg())
+        run_cycle(p, lambda c: CmdResult(0, _ps(("web", "running")), ""))
+        outcome = p.interpret_action("prune", CmdResult(1, "Error response from daemon: a prune operation is already running", ""))
+        assert outcome.success is False and outcome.status is None
+        assert "already running" in outcome.metadata['content']
+        assert outcome.logs[0][1] == "ERROR"
+        p.storage.apply(outcome)
+        assert _latest_status() == "online"
+
+    async def test_prune_button_confirms_what_it_deletes(self, make_plugin):
+        from vigil.core.ui.components import _substitute
+        p = make_plugin(Containers, _cfg(prune_volumes=True, prune_all_images=True))
+        button = p.UI_SPEC['buttons']['tools'][0]
+        assert button['id'] == 'prune' and button['color'] == 'negative'
+        text = _substitute(button['confirm'], None, p)
+        assert "docker system prune -f -a --volumes" in text
+        assert "every image no container uses" in text and "every volume" in text
+        assert ['tools'] in p.UI_SPEC['layout']
+
+    async def test_default_confirm_names_dangling_images_only(self, make_plugin):
+        from vigil.core.ui.components import _substitute
+        p = make_plugin(Containers, _cfg())
+        text = _substitute(p.UI_SPEC['buttons']['tools'][0]['confirm'], None, p)
+        assert "dangling images" in text and "volume" not in text

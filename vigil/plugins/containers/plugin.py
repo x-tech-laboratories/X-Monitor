@@ -334,13 +334,45 @@ class Containers(Plugin):
             if cname not in self.expect_running:
                 return CollectResult.failed(f"Refusing to restart unlisted container {cname!r}")
             return ActionPlan(f"{self.runtime} restart {_shquote(cname)}")
+        if action_id == 'prune':
+            return ActionPlan(f"{self.prune_command} 2>&1", timeout=_PRUNE_TIMEOUT)
         return None
 
+    @property
+    def prune_command(self) -> str:
+        flags = ['-f']
+        if self.prune_all_images:
+            flags.append('-a')
+        if self.prune_volumes:
+            flags.append('--volumes')
+        return f"{self.runtime} system prune {' '.join(flags)}"
+
+    @property
+    def _prune_confirm(self) -> str:
+        images = 'every image no container uses' if self.prune_all_images else 'dangling images'
+        volumes = ', every volume no container uses (with its data)' if self.prune_volumes else ''
+        text = (f"Run `{self.prune_command}` on {self.target}? It deletes every stopped container, "
+                f"unused networks, {images}{volumes} and the build cache. This cannot be undone.")
+        # The button's confirm text is a format template, so literal braces are doubled.
+        return text.replace('{', '{{').replace('}', '}}')
+
     def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
+        if action_id == 'prune':
+            return self._interpret_prune(result)
         if action_id.startswith('restart:') and result.exit_code != 0:
             cname = action_id.split(':', 1)[1]
             return CollectResult.failed(f"Restart of {cname} failed: {result.stderr}")
         return result.exit_code == 0
+
+    def _interpret_prune(self, result: CmdResult) -> CollectResult:
+        """Logs the prune's outcome as an event and hands its summary back to show the user; the status is left alone."""
+        output = f"{result.stdout}\n{result.stderr}".strip()
+        if result.exit_code != 0:
+            message = f"Prune failed (exit {result.exit_code}): {output[-300:] or 'no output'}"
+            return CollectResult(logs=[(message, "ERROR")], metadata={'content': message}, success=False)
+        summary = _prune_summary(output)
+        return CollectResult(logs=[(f"Ran `{self.prune_command}`: {summary}", "INFO")],
+                             metadata={'content': summary}, success=True)
 
     @property
     def UI_SPEC(self):
@@ -368,11 +400,40 @@ class Containers(Plugin):
             columns.append({'name': 'update', 'label': 'Update', 'field': 'update', 'sortable': True,
                             'align': 'left', 'cell_color_by': _update_color})
         return {
-            'layout': [top, ['containers'], ['events']],
+            'layout': [top, ['tools'], ['containers'], ['events']],
             'cards': cards,
+            'buttons': {
+                'tools': [
+                    {'id': 'prune', 'label': 'Prune', 'icon': 'delete_sweep', 'color': 'negative',
+                     'confirm': self._prune_confirm},
+                ],
+            },
             'tables': {'containers': {'row_key': 'name', 'columns': columns}},
             'events': True,
         }
+
+
+def _prune_summary(output: str) -> str:
+    """The space a prune reclaimed and how many objects of each kind it deleted, from docker's or podman's report."""
+    counts: Dict[str, int] = {}
+    section = None
+    reclaimed = None
+    for raw in output.splitlines():
+        line = raw.strip()
+        lower = line.lower()
+        if not line:
+            continue
+        if lower.startswith('total reclaimed space'):
+            reclaimed = line.split(':', 1)[1].strip() if ':' in line else None
+            section = None
+        elif lower.startswith('deleted ') and not lower.startswith('deleted: '):
+            section = lower[len('deleted '):].rstrip(':').strip()
+            counts.setdefault(section, 0)
+        elif section and not lower.startswith('untagged:'):
+            counts[section] += 1
+    text = f"Reclaimed {reclaimed or '0B'}"
+    deleted = [f"{kind}: {n}" for kind, n in counts.items() if n]
+    return f"{text} ({', '.join(deleted)})" if deleted else text
 
 
 def _update_color(row: Dict[str, Any]) -> Optional[str]:
