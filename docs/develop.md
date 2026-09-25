@@ -576,9 +576,59 @@ replaced would reappear. Since Prometheus and scripts cannot follow a form
 redirect, Basic credentials remain a valid alternative on any route.
 
 **What stays public.** `/login`, `/logout`, `/icon.svg`, and `/api/push/`,
-which authenticates with its own per-monitor token. As before, this is a
+which checks its own credential: the monitor's per-monitor token in the path,
+or a push-scoped API token in the header. As before, this is a
 `BaseHTTPMiddleware` and so runs for `http` scopes only — the agent WebSocket
 authenticates itself (see `core/ui/agent_endpoint.py`).
+
+**Named API tokens.** `core/ui/tokens.py` resolves `auth.tokens` into a
+`TokenRegistry`; `main_dashboard` builds it once and hands it to both the gate
+and the push routes, so the REST API and push share one credential story. A
+client sends `Authorization: Bearer <token>` and gets one scope: `read` (`GET`
+on `/api/` and `/metrics`), `control` (those plus the write routes), or `push`
+(`/api/push/{id}`, optionally limited to listed monitors). The gate tries the
+session cookie, then a bearer token, then Basic. A bearer header decides the
+request on its own: an unknown token is `401` and a known one outside its
+scope is `403`, rather than falling through to Basic or the login redirect.
+
+- **Why SHA-256 and not a password KDF.** Config holds only
+  `sha256:<hex>` of each token. `vigil token new` mints 256 bits from
+  `secrets`, so there is nothing to guess from a dictionary and a leaked digest
+  is as hard to reverse as the token is to guess; a slow KDF would add its cost
+  to every scrape and API call for no gain. That argument needs a random token,
+  so a plaintext `token`/`token_file` shorter than 16 characters is refused,
+  and a plaintext `token` in the YAML logs a warning. For the same reason there
+  is no throttle on wrong tokens, unlike the login form.
+- **Constant-time matching.** A presented token is hashed once and its digest
+  compared with `hmac.compare_digest` against every configured digest, without
+  stopping at the first match, so timing reveals neither which entry matched
+  nor how many there are. There is no dict lookup keyed on the digest.
+- **Never the dashboard.** `ApiToken.allows_request` only admits paths under
+  `/api/` and `/metrics`, so a token cannot load the dashboard page or open
+  NiceGUI's socket. A token is a long-lived credential sitting in a script or
+  scrape config; letting it open a browser session would turn a leaked read
+  token into full dashboard control.
+- **Named tokens stay out of URLs.** The push route only reads them from the
+  header, so they never land in a reverse proxy's access log the way the
+  per-monitor path token does.
+- **The audit trail.** The gate stores who authenticated on
+  `request.state.vigil_client` (the account name, or `token '<name>'`), read
+  through `auth.acting_client`. The control routes write it into the monitor's
+  events ("Poll requested through the API by token 'ops'"), push heartbeats
+  carry it through `record_push(source=...)`, and the gate logs every
+  token-authenticated write (reads only at debug, since a scraper polls every
+  few seconds).
+- **Control routes.** `POST /api/monitors/{id}/poll` and
+  `/actions/{action_id}` mirror the monitor page's header buttons. Only ids in
+  `get_actions()` are reachable, called with no parameters, so an action that
+  needs a dialog's input (borg restore, say) stays dashboard-only.
+- **Agents are not in this list.** Each `agents:` entry already has its own
+  token, checked by the agent endpoint against the id it claims, so an agent
+  scope here would be a second place to configure the same secret.
+- **Without an account.** Tokens only narrow what the gate lets through, so
+  without `username`/`password` there is no gate and read or control tokens do
+  nothing (a warning says so). Push tokens still work, since the push route
+  checks them itself.
 
 **Guessing and CSRF.** `LoginThrottle` counts failures per client address (the
 first `X-Forwarded-For` hop when there is one) and answers `429` with a

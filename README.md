@@ -176,9 +176,48 @@ auth:
 
 An unauthenticated browser is redirected to `/login`, where it exchanges the credentials for a signed, expiring session cookie (`HttpOnly`, `SameSite=Lax`, and `Secure` when Vigil is reached over HTTPS — including behind a reverse proxy that sets `X-Forwarded-Proto`). "Keep me signed in" is what makes the cookie outlive the browser session. The dashboard header gains an account menu with **Sign out**, which drops the session at `/logout`. Repeated failures from one address are throttled after five attempts in five minutes.
 
-Scripts and scrapers cannot follow a form redirect, so `/api/...` and `/metrics` also accept HTTP Basic credentials — the same username and password — and answer `401` rather than redirecting. No `WWW-Authenticate` header is sent, so a browser never sees the native credential dialog. `/api/push/...` stays public; it carries its own per-monitor token.
+Scripts and scrapers cannot follow a form redirect, so `/api/...` and `/metrics` also accept HTTP Basic credentials — the same username and password — and answer `401` rather than redirecting. No `WWW-Authenticate` header is sent, so a browser never sees the native credential dialog. `/api/push/...` stays public to the gate; it checks a per-monitor token or a push-scoped API token itself.
 
 Every `*_file` value is read once at startup. If only one of `username`/`password` is set, auth stays disabled and a warning is logged.
+
+#### API tokens
+
+Rather than hand the operator password to every scraper and script, give each client its own named token. Mint one with:
+
+```bash
+vigil token new prometheus --scope read
+```
+
+It prints the token once and the entry to add under `auth:`. Vigil keeps only the token's SHA-256 hash:
+
+```yaml
+auth:
+  username: "admin"
+  password_file: "/run/secrets/vigil_dashboard_password"
+  tokens:
+    - name: "prometheus"
+      scope: read
+      token_hash: "sha256:…"   # as printed by vigil token new
+    - name: "ops-laptop"
+      scope: control
+      token_file: "/run/secrets/vigil_ops_token"   # the token itself, hashed at startup
+    - name: "backup-jobs"
+      scope: push
+      token_hash: "sha256:…"
+      monitors: ["nightly-backup", "weekly-backup"]   # omit for every push monitor
+```
+
+A client sends `Authorization: Bearer <token>`. The scopes are:
+
+| Scope | Reaches |
+|-------|---------|
+| `read` | `GET` on `/api/...` and `/metrics` |
+| `control` | Everything `read` does, plus the API's write routes: poll now, run a monitor's action, send a test notification |
+| `push` | `/api/push/{id}` for the monitors in `monitors`, or every push monitor when it is absent |
+
+A token never opens the dashboard itself — that stays behind the sign-in page. A token with the wrong scope for a route gets `403`, and an unknown one `401`. Each action taken with a token is written to the monitor's events and the log under the token's name, so the audit trail shows which client acted; revoking a client means deleting its entry and restarting. `token: "..."` in plain text also works, but logs a warning. Read and control tokens need `username`/`password` to be set, since without them the API is open anyway; push tokens work either way.
+
+For Prometheus, set `authorization: {credentials_file: /run/secrets/vigil_scrape_token}` on the scrape job.
 
 ---
 

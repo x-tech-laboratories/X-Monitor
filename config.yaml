@@ -74,6 +74,19 @@ ssh_defaults:
 #   #                       so restarts do not sign everyone out; else generated
 #   # session_hours: 12     # How long a sign-in lasts
 #   # remember_days: 30     # How long "keep me signed in" lasts
+#   # One named token per client, sent as "Authorization: Bearer <token>".
+#   # Mint one with: vigil token new <name> --scope read|control|push
+#   # tokens:
+#   #   - name: "prometheus"
+#   #     scope: read                  # GET /api/... and /metrics
+#   #     token_hash: "sha256:..."     # as printed by vigil token new
+#   #   - name: "ops-laptop"
+#   #     scope: control               # read, plus poll now / actions / test notifications
+#   #     token_file: "/run/secrets/vigil_ops_token"
+#   #   - name: "backup-jobs"
+#   #     scope: push                  # /api/push/{id}
+#   #     token_hash: "sha256:..."
+#   #     monitors: ["nightly-backup"] # omit for every push monitor
 
 # Theme — the dashboard is themed with Halon, whose token set lives in
 # vigil/core/ui/static/halon-tokens.css. Every field here is optional; each one
