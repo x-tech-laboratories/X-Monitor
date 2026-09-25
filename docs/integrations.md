@@ -8,19 +8,30 @@ An **Events** view in the sidebar shows a unified, filterable feed of every even
 
 ## REST API
 
-Read-only JSON endpoints for consuming Vigil's state programmatically:
+JSON endpoints for consuming Vigil's state programmatically:
 
 | Endpoint | Returns |
 |----------|---------|
 | `GET /api/health` | `{"status": "ok"}` |
 | `GET /api/monitors` | All monitors with id, name, type, target, and current status |
-| `GET /api/monitors/{id}` | A single monitor plus its latest metrics |
+| `GET /api/monitors/{id}` | A single monitor plus its latest metrics and the ids of its actions |
 | `GET /api/metrics` | Latest value of every collected metric |
 | `GET /api/events` | Recent events — supports `?level=`, `?target=`, `?search=`, `?limit=` |
+
+And a few that act, the same things the dashboard's buttons do:
+
+| Endpoint | Does |
+|----------|------|
+| `POST /api/monitors/{id}/poll` | Runs one collection cycle now (the **Poll Now** button) |
+| `POST /api/monitors/{id}/actions/{action_id}` | Runs one of the monitor's header actions, e.g. `restart` |
+| `POST /api/notifications/{channel_id}/test` | Sends a test notification through one channel |
+
+Each action taken through the API is written to the monitor's events, naming the account or [API token](../README.md#api-tokens) that asked for it.
 
 ```bash
 curl http://localhost:8080/api/monitors
 curl "http://localhost:8080/api/events?level=ERROR&limit=50"
+curl -X POST -H "Authorization: Bearer $VIGIL_TOKEN" http://localhost:8080/api/monitors/web/poll
 ```
 
 ## Prometheus

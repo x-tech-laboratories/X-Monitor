@@ -53,7 +53,8 @@ class PushablePlugin(Protocol):
 
     token: Optional[str]
 
-    def record_push(self, status: str, msg: Optional[str] = None, value: Optional[float] = None) -> bool: ...
+    def record_push(self, status: str, msg: Optional[str] = None, value: Optional[float] = None,
+                    source: Optional[str] = None) -> bool: ...
 
 
 class ActionButtonSpec(TypedDict, total=False):

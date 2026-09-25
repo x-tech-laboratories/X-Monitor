@@ -132,12 +132,14 @@ The inverse of every other monitor: instead of Vigil reaching out to a target, a
 | Option      | Description                                                                 |
 |-------------|------------------------------------------------------------------------------|
 | `max_age`   | Seconds since the last heartbeat before reporting `failed` (default: `interval * 2`) |
-| `token`     | Shared secret the caller must present when pushing. **Required** — without one, anyone who can reach the API could mark this monitor healthy. Generate with `openssl rand -hex 20`. |
+| `token`     | Shared secret the caller must present when pushing through `/api/push/{id}/{token}`. Generate with `openssl rand -hex 20`. Optional when a push-scoped [API token](../README.md#api-tokens) covers the monitor; with neither, nothing can push to it. |
 | `interval`  | How often the staleness check itself runs (default: `60`)                    |
 
 **Metrics**: `last_push_epoch` (Unix timestamp of the last heartbeat), `reported_up` (1/0, the caller's own status), `value` (optional, if the caller supplies one)
 
-To push a heartbeat, hit `GET` or `POST /api/push/{id}/{token}`, optionally with `status` (`up` or `down`, default `up`), `msg`, and `value` query parameters. This endpoint is not covered by the dashboard's HTTP Basic Auth (see [Authentication](../README.md#authentication)) — the per-monitor token is its credential instead.
+To push a heartbeat, hit `GET` or `POST /api/push/{id}/{token}`, optionally with `status` (`up` or `down`, default `up`), `msg`, and `value` query parameters. This endpoint is not covered by the dashboard's sign-in (see [Authentication](../README.md#authentication)) — the per-monitor token is its credential instead.
+
+Alternatively, push to `/api/push/{id}` with a push-scoped [API token](../README.md#api-tokens) in an `Authorization: Bearer` header. One such token can cover several monitors (or all of them), it stays out of URLs and so out of proxy access logs, and each heartbeat's event names the token that sent it. Both routes work side by side.
 
 ```yaml
 - name: "Nightly Backup Job"
@@ -154,6 +156,10 @@ curl "https://vigil.example.com/api/push/nightly-backup/a1b2c3d4e5f6...?status=u
 
 # Or report a failure the job detected itself, while still checking in on time:
 curl "https://vigil.example.com/api/push/nightly-backup/a1b2c3d4e5f6...?status=down&msg=disk+full"
+
+# Or with a push-scoped API token (vigil token new backup-jobs --scope push):
+curl -X POST -H "Authorization: Bearer $VIGIL_PUSH_TOKEN" \
+  "https://vigil.example.com/api/push/nightly-backup?status=up"
 ```
 
 ---
