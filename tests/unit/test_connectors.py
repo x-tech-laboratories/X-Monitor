@@ -149,6 +149,27 @@ class TestHttpConnector:
             result = await conn.fetch(HttpRequest('https://x/'))
         assert result.elapsed_ms >= 0.0
 
+    async def test_response_headers_returned_lower_cased(self):
+        from vigil.core.connectors.http_connector import HttpConnector
+        import httpx as _httpx
+
+        conn = HttpConnector()
+        resp = MagicMock(status_code=200, text='',
+                         headers=_httpx.Headers({'Docker-Content-Digest': 'sha256:abc'}))
+        with patch.object(conn._client, 'request', AsyncMock(return_value=resp)):
+            result = await conn.fetch(HttpRequest('https://x/', method='HEAD'))
+        assert result.headers == {'docker-content-digest': 'sha256:abc'}
+
+    async def test_transport_error_has_no_headers(self):
+        import httpx as _httpx
+        from vigil.core.connectors.http_connector import HttpConnector
+
+        conn = HttpConnector()
+        with patch.object(conn._client, 'request',
+                          AsyncMock(side_effect=_httpx.ConnectError('no route'))):
+            result = await conn.fetch(HttpRequest('https://x/'))
+        assert result.headers == {}
+
 
 class TestIcmpConnector:
     async def test_successful_ping(self):

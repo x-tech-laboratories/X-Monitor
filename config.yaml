@@ -377,6 +377,10 @@ plugins:
           - "nginx"
           - "postgres"
         stopped_warning: true  # any other stopped container -> warning
+        update_check_interval: 6h  # ask registries for image updates; 0 turns it off
+        update_warning: false  # true -> warning while any image has an update
+        prune_all_images: false  # Prune button also removes unused images (-a)
+        prune_volumes: false   # Prune button also removes unused volumes (--volumes)
         ssh_config:
           host: "server.example.com"
 
