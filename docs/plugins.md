@@ -36,6 +36,7 @@ config examples. For what Vigil is and how to run it, see the
   [`connections`](#connections) ·
   [`wifi`](#wifi) ·
   [`power`](#power) ·
+  [`reboot_required`](#reboot_required) ·
   [`borg`](#borg) ·
   [`containers`](#containers) ·
   [`command`](#command) ·
@@ -83,6 +84,7 @@ config examples. For what Vigil is and how to run it, see the
 | [`connections`](#connections)           | TCP connection counts by state         | SSH (`/proc/net/tcp`)                           | `conn_total`, `conn_established`, `conn_listen` | — |
 | [`wifi`](#wifi)                         | WiFi link quality and signal strength  | SSH (`/proc/net/wireless`)                      | `link_quality`, `signal_dbm`                    | — |
 | [`power`](#power)                       | Battery charge, external power, wear   | SSH (`/sys/class/power_supply`)                 | `charge_pct`, `plugged_in`, `capacity_health_pct`, `battery_<name>_charge_pct` | — |
+| [`reboot_required`](#reboot_required)   | Whether the host needs a reboot        | SSH (`/var/run/reboot-required`, `needs-restarting`, `/run/booted-system`, `/usr/lib/modules`) | `reboot_required` | — |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
 | [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
 | [`containers`](#containers)             | Docker / Podman container states      | SSH (`docker`/`podman ps`)                       | `containers_total`, `containers_running`, `containers_stopped` | Restart (per expected container) |
@@ -99,7 +101,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 
 ---
@@ -1066,6 +1068,35 @@ Battery charge, whether the device is on external power, and how worn the batter
 ```
 ---
 
+### `reboot_required`
+Whether the host must reboot to run the kernel and core libraries it has installed. It runs every check that applies to the host, in one cheap script, and reports a reboot when any of them asks for one:
+
+- **Debian / Ubuntu** — `/var/run/reboot-required` exists; the packages that asked for it are read from `/var/run/reboot-required.pkgs`. Debian writes this flag only when `unattended-upgrades` or `update-notifier-common` is installed.
+- **RHEL / Fedora** — `needs-restarting -r` (or `dnf needs-restarting -r`) exits `1`; the core packages it lists are shown.
+- **NixOS** — the booted system's `initrd`, `kernel`, `kernel-modules` or `systemd` differ from the current system's, the same comparison [`nixos_upgrade`](#nixos_upgrade) makes; the parts that differ are shown.
+- **Any other host (Arch and friends)** — the running kernel (`uname -r`) has no directory under `/usr/lib/modules`, because a kernel upgrade removed it.
+
+A host where none of these applies (a container with no module tree, say) is `unavailable`. Nothing here needs root.
+
+| Option          | Description                                                                  |
+|-----------------|------------------------------------------------------------------------------|
+| `reboot_status` | Status when a reboot is required: `warning` (default), `failed`, or `online` to only record it |
+| `interval`      | Polling frequency (default: `60`; `1h` is plenty)                             |
+| `ssh_config`    | SSH connection details — see [SSH Config](#ssh-config) below                 |
+
+**Metrics**: `reboot_required` (1/0)
+
+```yaml
+- name: "Reboot Required"
+  id: "server-reboot"
+  type: "reboot_required"
+  interval: 1h
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
 ### `borg`
 Whether a Borg repository is being backed up, can be restored from, and is being checked, plus a file browser and the maintenance jobs that go with it. Everything runs as `borg` on the target over SSH, so the repository can be a local path there or a remote `ssh://` one.
 
@@ -1200,16 +1231,18 @@ Every run is wrapped in `timeout` so a hung target can't stall the polling loop.
   ssh_config:
     host: "server.example.com"
 
-# Exit-code mode: pending reboot -> warning
-- name: "Reboot Required"
-  id: "server-reboot"
+# Exit-code mode: a failing backup script -> warning
+- name: "Nightly Export"
+  id: "server-export"
   type: "command"
   interval: 1h
-  command: "test ! -f /var/run/reboot-required"
+  command: "/usr/local/bin/check-export"
   nonzero_is_warning: true
   ssh_config:
     host: "server.example.com"
 ```
+
+A pending reboot has its own monitor type, [`reboot_required`](#reboot_required), which knows each distro's check.
 
 ---
 

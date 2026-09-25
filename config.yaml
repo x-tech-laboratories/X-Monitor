@@ -375,11 +375,9 @@ plugins:
           host: "server.example.com"
       - name: "Reboot Required"
         id: "server-reboot-required"
-        type: "command"
+        type: "reboot_required"   # Debian flag, needs-restarting, NixOS boot links or kernel modules
         interval: 1h
-        # No pattern -> status is driven by exit code (0 = online, non-zero = below).
-        command: "test ! -f /var/run/reboot-required"
-        nonzero_is_warning: true   # reboot pending -> warning, not failed
+        # reboot_status: "failed" # default warning
         ssh_config:
           host: "server.example.com"
 
