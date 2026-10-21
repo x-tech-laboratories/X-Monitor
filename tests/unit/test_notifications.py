@@ -395,7 +395,7 @@ class FakeSocket:
 
 def _registry(caps=('notify',)):
     registry = AgentRegistry()
-    registry.configure([{'id': 'desktop', 'token': 't'}])
+    registry.configure([{'id': 'desktop'}])
     socket = FakeSocket()
     registry.get('desktop').attach(socket, {'caps': list(caps)})
     return registry, socket

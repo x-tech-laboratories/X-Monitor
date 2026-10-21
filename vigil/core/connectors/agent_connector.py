@@ -24,11 +24,13 @@ can usefully run at once.
 import asyncio
 import logging
 import time
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from vigil.core.connectors import agent_protocol as proto
 from vigil.core.connectors.agent_protocol import StreamSpec
+from vigil_agent import keys
 
 EXEC_TIMEOUT = 30.0
 CONTROL_TIMEOUT = 60.0
@@ -206,7 +208,7 @@ class AgentRegistry:
 
     def __init__(self):
         self._agents: Dict[str, AgentConnection] = {}
-        self._tokens: Dict[str, str] = {}
+        self._public_keys: Dict[str, Ed25519PublicKey] = {}
         self._event_sink: Optional[Callable[[str, str, float, Dict[str, Any]], None]] = None
         self._connect_sink: Optional[Callable[[str], None]] = None
 
@@ -220,38 +222,30 @@ class AgentRegistry:
                 logging.error(f"agents: entry with no `id` ignored: {entry!r}")
                 continue
             agent_id = str(agent_id)
-            token = self._resolve_token(agent_id, entry)
-            if not token:
+            public_key = self._parse_public_key(agent_id, entry)
+            if public_key is None:
                 logging.error(
-                    f"agent {agent_id!r} has no usable token and will refuse "
-                    f"every connection — set `token` or `token_file`"
+                    f"agent {agent_id!r} has no usable public_key and will refuse "
+                    f"every connection"
                 )
             else:
-                self._tokens[agent_id] = token
+                self._public_keys[agent_id] = public_key
             self._agents[agent_id] = AgentConnection(
                 agent_id, host=str(entry.get('host') or agent_id)
             )
             logging.info(f"Registered agent {agent_id!r}")
 
     @staticmethod
-    def _resolve_token(agent_id: str, entry: Dict[str, Any]) -> Optional[str]:
-        """Take the token from `token_file` if given, else `token`.
-
-        `token_file` is the deployment-friendly form and the one to prefer: the
-        secret stays with the secret manager and never enters config.yaml,
-        which under Nix (and any config-generating deployment) is world
-        readable. Read once at startup, like auth's `password_file`."""
-        token_file = entry.get('token_file')
-        if token_file:
-            try:
-                return Path(str(token_file)).read_text(encoding='utf-8').strip() or None
-            except OSError as e:
-                logging.error(
-                    f"agent {agent_id!r}: could not read token_file {token_file}: {e}"
-                )
-                return None
-        token = entry.get('token')
-        return str(token) if token else None
+    def _parse_public_key(agent_id: str, entry: Dict[str, Any]) -> Optional[Ed25519PublicKey]:
+        """The entry's `public_key`, an OpenSSH ed25519 line, or None if absent or unparseable."""
+        line = entry.get('public_key')
+        if not line:
+            return None
+        try:
+            return keys.load_public_key(str(line))
+        except (ValueError, TypeError) as e:
+            logging.error(f"agent {agent_id!r}: could not parse public_key: {e}")
+            return None
 
     def get(self, agent_id: str) -> Optional[AgentConnection]:
         return self._agents.get(agent_id)
@@ -270,8 +264,8 @@ class AgentRegistry:
             conn = self._agents[agent_id] = AgentConnection(agent_id, host=agent_id)
         return conn
 
-    def token_for(self, agent_id: str) -> Optional[str]:
-        return self._tokens.get(agent_id)
+    def public_key_for(self, agent_id: str) -> Optional[Ed25519PublicKey]:
+        return self._public_keys.get(agent_id)
 
     @property
     def all(self) -> List[AgentConnection]:

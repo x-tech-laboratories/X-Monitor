@@ -12,18 +12,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from vigil_agent import keys
+
 DEFAULT_PATH = "/etc/vigil-agent.yaml"
 
 
-def _read_token(token_file: str) -> Optional[str]:
-    """Read a token from a file, trimming the trailing newline an editor or a
-    secret manager will have added. An unreadable file is a hard failure rather
-    than a silent fall-through to no token, which would otherwise show up as a
-    confusing authentication rejection at the server."""
+def _read_key(key_file: str) -> Ed25519PrivateKey:
+    """Load the agent's private key. An unreadable or wrong key is a hard
+    failure rather than a silent fall-through to no key, which would otherwise
+    show up as a confusing authentication rejection at the server."""
     try:
-        return Path(token_file).read_text(encoding='utf-8').strip()
-    except OSError as e:
-        raise SystemExit(f"vigil-agent: could not read token_file {token_file}: {e}")
+        return keys.load_private_key(key_file)
+    except (OSError, ValueError, TypeError) as e:
+        raise SystemExit(f"vigil-agent: could not load key_file {key_file}: {e}")
 
 
 @dataclass
@@ -33,7 +36,8 @@ class AgentConfig:
     (or wss:// when the dashboard is behind TLS)."""
     agent_id: str
     """Must match an `id` in the server's `agents:` list."""
-    token: str
+    key: Ed25519PrivateKey
+    """The private half of the key pair whose public half the server lists for this `id`."""
     hostname: Optional[str] = None
     notify_only: bool = False
     """Refuse commands and event streams, and only show desktop notifications."""
@@ -41,8 +45,8 @@ class AgentConfig:
     @staticmethod
     def load(path: Optional[str] = None) -> "AgentConfig":
         """Read the config file, letting VIGIL_AGENT_* environment variables
-        override any field. The env path exists so a container or a systemd
-        unit can supply the token without it being written to disk."""
+        override any field, so a container or a systemd unit can point at its
+        key without a config file."""
         import yaml
 
         data = {}
@@ -58,24 +62,17 @@ class AgentConfig:
 
         url = os.environ.get('VIGIL_AGENT_URL') or data.get('url')
         agent_id = os.environ.get('VIGIL_AGENT_ID') or data.get('id')
-        token = os.environ.get('VIGIL_AGENT_TOKEN') or data.get('token')
+        key_file = os.environ.get('VIGIL_AGENT_KEY_FILE') or data.get('key_file')
         hostname = os.environ.get('VIGIL_AGENT_HOSTNAME') or data.get('hostname')
         notify_only = os.environ.get('VIGIL_AGENT_NOTIFY_ONLY', data.get('notify_only', False))
         if isinstance(notify_only, str):
             notify_only = notify_only.strip().lower() in ('1', 'true', 'yes', 'on')
 
-        # token_file is the deployment-friendly form: the token stays in a file
-        # the secret manager owns, so it never enters a config file, a unit's
-        # environment, or (under NixOS) the world-readable Nix store.
-        token_file = os.environ.get('VIGIL_AGENT_TOKEN_FILE') or data.get('token_file')
-        if not token and token_file:
-            token = _read_token(token_file)
-
-        missing = [n for n, v in (('url', url), ('id', agent_id), ('token', token)) if not v]
+        missing = [n for n, v in (('url', url), ('id', agent_id), ('key_file', key_file)) if not v]
         if missing:
             raise SystemExit(
                 f"vigil-agent: missing required setting(s): {', '.join(missing)} "
                 f"(set them in {config_path} or as VIGIL_AGENT_* environment variables)"
             )
-        return AgentConfig(str(url), str(agent_id), str(token),
+        return AgentConfig(str(url), str(agent_id), _read_key(str(key_file)),
                            str(hostname) if hostname else None, bool(notify_only))

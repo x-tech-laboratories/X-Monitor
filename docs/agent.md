@@ -15,12 +15,19 @@ Two things travel on that one connection:
 
 ## Server config
 
-Declare each agent that may connect, then point monitors at it by id:
+Each agent has its own ed25519 key pair, with no passphrase:
+
+```bash
+ssh-keygen -t ed25519 -N "" -C web-01 -f web-01.key
+```
+
+`web-01.key` goes only to the monitored host, for example as a sops-nix secret. Declare each
+agent that may connect with the contents of `web-01.key.pub`, then point monitors at it by id:
 
 ```yaml
 agents:
   - id: "web-01"
-    token_file: "/run/secrets/vigil_agent_web01"   # or `token:` inline
+    public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... web-01"
     host: "web-01.example.com"   # label only; Vigil never dials the agent
 
 plugins:
@@ -38,11 +45,12 @@ plugins:
 | Field   | Description                                                                 |
 |---------|-----------------------------------------------------------------------------|
 | `id`    | Agent identity; a monitor's `agent:` key refers to this                      |
-| `token` | Shared secret the agent authenticates with, inline                            |
-| `token_file` | Path to a file holding that secret, read once at startup. Prefer this wherever `config.yaml` is generated — under Nix it lands world-readable in the store |
+| `public_key` | The agent's OpenSSH ed25519 public key, one line. It is not secret, so it can sit in a generated or world-readable `config.yaml` |
 | `host`  | Display label for the target. Optional — defaults to the id                  |
 
-An agent with neither `token` nor a readable `token_file` can never connect.
+On each connection Vigil sends the agent a fresh random nonce, and the agent signs it with its
+private key. Vigil holds no agent secrets. An agent without a valid `public_key` can never
+connect.
 
 `agent:` on a group is inherited by every monitor beneath it, so moving a whole host
 between transports is one line. A monitor with both `agent:` and `ssh_config:` uses the
@@ -58,15 +66,14 @@ pip install vigil            # ships the `vigil-agent` command
 # /etc/vigil-agent.yaml
 url: "ws://vigil.example.com:8080/api/agent/ws"   # wss:// behind TLS
 id: "web-01"
-token_file: "/run/secrets/vigil_agent_token"      # or `token:` inline
+key_file: "/run/secrets/vigil_agent_key"
 ```
 
 | Field        | Description                                                          |
 |--------------|----------------------------------------------------------------------|
 | `url`        | The server's agent endpoint. `wss://` when the dashboard is behind TLS |
 | `id`         | Must match an `id` in the server's `agents:` list                     |
-| `token`      | The shared secret, inline                                             |
-| `token_file` | Path to a file holding the token, read at runtime. Prefer this: the secret stays with your secret manager and never enters a config file, a unit's environment, or a Nix store path |
+| `key_file`   | Path to the agent's unencrypted OpenSSH ed25519 private key (`ssh-keygen -t ed25519 -N ""`). Keep it with your secret manager, readable only by the agent's user |
 | `hostname`   | Hostname reported to the server. Defaults to the machine's own         |
 
 ```bash
@@ -74,8 +81,8 @@ vigil-agent --config /etc/vigil-agent.yaml
 ```
 
 Every setting can come from the environment instead (`VIGIL_AGENT_URL`, `VIGIL_AGENT_ID`,
-`VIGIL_AGENT_TOKEN`, `VIGIL_AGENT_TOKEN_FILE`, `VIGIL_AGENT_HOSTNAME`), so a systemd unit or
-container can supply the token without writing it to disk.
+`VIGIL_AGENT_KEY_FILE`, `VIGIL_AGENT_HOSTNAME`), so a systemd unit or container can run the
+agent without a config file.
 
 On NixOS the flake exports `nixosModules.agent` for the monitored host, alongside the
 existing `nixosModules.default` for the server. The agent module defaults to
@@ -87,7 +94,7 @@ services.vigil-agent = {
   enable = true;
   url = "ws://vigil.example.com:8080/api/agent/ws";
   id = "web-01";
-  tokenFile = config.sops.secrets.vigil_agent_token.path;
+  keyFile = config.sops.secrets.vigil_agent_key.path;
   extraGroups = [ "systemd-journal" ];      # for journal streams and unit logs
   path = [ pkgs.smartmontools ];            # tools the monitors' commands invoke
 };

@@ -31,12 +31,15 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # --- Frame type tags ---
 
+CHALLENGE = "challenge"
+"""Server -> agent, first frame after connect: the nonce the agent must sign."""
+
 HELLO = "hello"
-"""Agent -> server, first frame after connect: identity and capabilities."""
+"""Agent -> server, answering the challenge: identity, signature and capabilities."""
 
 WELCOME = "welcome"
 """Server -> agent, accepting the hello and carrying the stream subscriptions."""
@@ -82,13 +85,19 @@ def decode(raw: str) -> Dict[str, Any]:
 # --- Frame builders. Kept as functions so both sides agree on field names
 # without either importing the other's module. ---
 
-def hello(agent_id: str, hostname: str, version: str,
+def challenge(nonce: str) -> Dict[str, Any]:
+    """Build the server's opening CHALLENGE frame."""
+    return {'t': CHALLENGE, 'protocol': PROTOCOL_VERSION, 'nonce': nonce}
+
+
+def hello(agent_id: str, signature: str, hostname: str, version: str,
           capabilities: List[str]) -> Dict[str, Any]:
-    """Build the agent's opening HELLO frame."""
+    """Build the agent's HELLO frame, signed over the server's challenge."""
     return {
         't': HELLO,
         'protocol': PROTOCOL_VERSION,
         'agent': agent_id,
+        'sig': signature,
         'hostname': hostname,
         'version': version,
         'caps': capabilities,

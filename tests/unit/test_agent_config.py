@@ -1,88 +1,127 @@
-"""Agent config loading — how a deployment supplies the agent its token."""
+"""Agent key loading — the agent's private key file, and the server's public keys."""
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
+
+
+def _write_private_key(path, key):
+    path.write_bytes(key.private_bytes(serialization.Encoding.PEM,
+                                       serialization.PrivateFormat.OpenSSH,
+                                       serialization.NoEncryption()))
+
+
+def _public_line(key):
+    return key.public_key().public_bytes(serialization.Encoding.OpenSSH,
+                                         serialization.PublicFormat.OpenSSH).decode() + " node-a"
+
 
 class TestAgentConfig:
-    def test_a_token_file_is_read_and_trimmed(self, tmp_path, monkeypatch):
+    def test_a_key_file_is_loaded(self, tmp_path, monkeypatch):
         from vigil_agent.config import AgentConfig
 
-        token_file = tmp_path / "token"
-        token_file.write_text("s3cret\n")
+        key = Ed25519PrivateKey.generate()
+        key_file = tmp_path / "key"
+        _write_private_key(key_file, key)
         config_file = tmp_path / "agent.yaml"
-        config_file.write_text(
-            f"url: ws://vigil/api/agent/ws\nid: node-a\ntoken_file: {token_file}\n"
-        )
-        for var in ('VIGIL_AGENT_URL', 'VIGIL_AGENT_ID', 'VIGIL_AGENT_TOKEN'):
+        config_file.write_text(f"url: ws://vigil/api/agent/ws\nid: node-a\nkey_file: {key_file}\n")
+        for var in ('VIGIL_AGENT_URL', 'VIGIL_AGENT_ID', 'VIGIL_AGENT_KEY_FILE'):
             monkeypatch.delenv(var, raising=False)
 
-        assert AgentConfig.load(str(config_file)).token == "s3cret"
+        loaded = AgentConfig.load(str(config_file)).key
+        assert loaded.public_key().public_bytes_raw() == key.public_key().public_bytes_raw()
 
-    def test_an_unreadable_token_file_fails_loudly(self, tmp_path, monkeypatch):
-        """Falling through to no token would surface as a confusing auth
+    def test_an_unreadable_key_file_fails_loudly(self, tmp_path, monkeypatch):
+        """Falling through to no key would surface as a confusing auth
         rejection at the server instead of a deployment error here."""
         from vigil_agent.config import AgentConfig
 
         config_file = tmp_path / "agent.yaml"
         config_file.write_text(
-            f"url: ws://vigil/api/agent/ws\nid: node-a\ntoken_file: {tmp_path}/missing\n"
+            f"url: ws://vigil/api/agent/ws\nid: node-a\nkey_file: {tmp_path}/missing\n"
         )
-        monkeypatch.delenv('VIGIL_AGENT_TOKEN', raising=False)
+        monkeypatch.delenv('VIGIL_AGENT_KEY_FILE', raising=False)
 
-        with pytest.raises(SystemExit, match="token_file"):
+        with pytest.raises(SystemExit, match="key_file"):
             AgentConfig.load(str(config_file))
 
-    def test_an_explicit_token_wins_over_the_file(self, tmp_path, monkeypatch):
+    def test_a_non_ed25519_key_fails_loudly(self, tmp_path, monkeypatch):
         from vigil_agent.config import AgentConfig
 
+        key_file = tmp_path / "key"
+        _write_private_key(key_file, generate_private_key(65537, 2048))
         config_file = tmp_path / "agent.yaml"
-        config_file.write_text(
-            "url: ws://vigil/api/agent/ws\nid: node-a\n"
-            f"token: inline\ntoken_file: {tmp_path}/missing\n"
-        )
-        monkeypatch.delenv('VIGIL_AGENT_TOKEN', raising=False)
-        assert AgentConfig.load(str(config_file)).token == "inline"
+        config_file.write_text(f"url: ws://vigil/api/agent/ws\nid: node-a\nkey_file: {key_file}\n")
+        monkeypatch.delenv('VIGIL_AGENT_KEY_FILE', raising=False)
+
+        with pytest.raises(SystemExit, match="ed25519"):
+            AgentConfig.load(str(config_file))
+
+    def test_the_environment_names_the_key_file(self, tmp_path, monkeypatch):
+        from vigil_agent.config import AgentConfig
+
+        key_file = tmp_path / "key"
+        _write_private_key(key_file, Ed25519PrivateKey.generate())
+        config_file = tmp_path / "agent.yaml"
+        config_file.write_text("url: ws://vigil/api/agent/ws\nid: node-a\n")
+        monkeypatch.setenv('VIGIL_AGENT_KEY_FILE', str(key_file))
+
+        assert AgentConfig.load(str(config_file)).key is not None
 
 
+class TestServerSidePublicKey:
+    """`agents:` entries carry only a public key, so the server holds no agent secret."""
 
-class TestServerSideTokenFile:
-    """`agents:` entries can take the token from a file, so a generated
-    config.yaml (Nix store, Docker image, config-management output) never
-    carries the secret."""
-
-    def test_a_token_file_is_read_and_trimmed(self, tmp_path):
-        from vigil.core.connectors.agent_connector import AgentRegistry
-
-        token_file = tmp_path / "token"
-        token_file.write_text("s3cret\n")
-
-        registry = AgentRegistry()
-        registry.configure([{'id': 'node-a', 'token_file': str(token_file)}])
-        assert registry.token_for('node-a') == "s3cret"
-
-    def test_a_missing_token_file_leaves_the_agent_unauthenticatable(self, tmp_path):
+    def test_a_public_key_is_parsed(self):
         from vigil.core.connectors.agent_connector import AgentRegistry
 
         registry = AgentRegistry()
-        registry.configure([{'id': 'node-a', 'token_file': str(tmp_path / "missing")}])
-        assert registry.token_for('node-a') is None
+        line = _public_line(Ed25519PrivateKey.generate())
+        registry.configure([{'id': 'node-a', 'public_key': line}])
+        assert registry.public_key_for('node-a') is not None
 
-    def test_an_empty_token_file_is_not_a_valid_token(self, tmp_path):
+    def test_a_malformed_public_key_leaves_the_agent_unauthenticatable(self):
         from vigil.core.connectors.agent_connector import AgentRegistry
 
-        token_file = tmp_path / "token"
-        token_file.write_text("\n")
-
         registry = AgentRegistry()
-        registry.configure([{'id': 'node-a', 'token_file': str(token_file)}])
-        assert registry.token_for('node-a') is None
+        registry.configure([{'id': 'node-a', 'public_key': 'ssh-ed25519 not-base64'}])
+        assert registry.public_key_for('node-a') is None
 
-    def test_a_token_file_wins_over_an_inline_token(self, tmp_path):
+    def test_a_non_ed25519_public_key_is_refused(self):
         from vigil.core.connectors.agent_connector import AgentRegistry
 
-        token_file = tmp_path / "token"
-        token_file.write_text("from-file")
-
         registry = AgentRegistry()
-        registry.configure([{'id': 'node-a', 'token': 'inline',
-                             'token_file': str(token_file)}])
-        assert registry.token_for('node-a') == "from-file"
+        line = _public_line(generate_private_key(65537, 2048))
+        registry.configure([{'id': 'node-a', 'public_key': line}])
+        assert registry.public_key_for('node-a') is None
+
+
+class TestSignature:
+    def test_a_signature_verifies_against_its_own_nonce(self):
+        from vigil_agent import keys
+
+        key = Ed25519PrivateKey.generate()
+        nonce = keys.new_nonce()
+        assert keys.verify(key.public_key(), 'node-a', nonce, keys.sign(key, 'node-a', nonce))
+
+    def test_a_signature_over_another_nonce_is_rejected(self):
+        from vigil_agent import keys
+
+        key = Ed25519PrivateKey.generate()
+        signature = keys.sign(key, 'node-a', keys.new_nonce())
+        assert not keys.verify(key.public_key(), 'node-a', keys.new_nonce(), signature)
+
+    def test_a_signature_for_another_agent_id_is_rejected(self):
+        from vigil_agent import keys
+
+        key = Ed25519PrivateKey.generate()
+        nonce = keys.new_nonce()
+        assert not keys.verify(key.public_key(), 'node-b', nonce, keys.sign(key, 'node-a', nonce))
+
+    def test_a_garbage_signature_is_rejected(self):
+        from vigil_agent import keys
+
+        key = Ed25519PrivateKey.generate()
+        assert not keys.verify(key.public_key(), 'node-a', keys.new_nonce(), 'not base64!')
+        assert not keys.verify(None, 'node-a', keys.new_nonce(), 'AAAA')

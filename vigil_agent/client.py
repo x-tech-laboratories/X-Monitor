@@ -19,7 +19,9 @@ from typing import Any, Dict, List, Optional
 
 import websockets
 
-from vigil_agent import __version__, desktop, executor, protocol as proto, watchers
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from vigil_agent import __version__, desktop, executor, keys, protocol as proto, watchers
 
 _BACKOFF_INITIAL = 1.0
 _BACKOFF_MAX = 60.0
@@ -30,12 +32,12 @@ agent apart from a newer one without a version comparison."""
 
 
 class AgentClient:
-    def __init__(self, url: str, agent_id: str, token: str,
+    def __init__(self, url: str, agent_id: str, key: Ed25519PrivateKey,
                  hostname: Optional[str] = None, notify_only: bool = False):
         self.url = url
         self.notify_only = notify_only
         self.agent_id = agent_id
-        self.token = token
+        self.key = key
         self.hostname = hostname or socket.gethostname()
         self._socket: Any = None
         self._send_lock = asyncio.Lock()
@@ -72,17 +74,21 @@ class AgentClient:
             backoff = min(backoff * 2, _BACKOFF_MAX)
 
     async def _session(self) -> None:
-        """One connection, from hello to disconnect."""
+        """One connection, from challenge to disconnect."""
         async with websockets.connect(self.url, ping_interval=20, ping_timeout=20) as socket_:
             self._socket = socket_
+            challenge = proto.decode(await socket_.recv())
+            nonce = str(challenge.get('nonce') or '')
+            if challenge.get('t') != proto.CHALLENGE or not nonce:
+                raise ConnectionError("server sent no challenge (is it an older Vigil?)")
             caps = [proto.DISMISS, proto.NOTIFY] if self.notify_only else CAPABILITIES
-            hello = proto.hello(self.agent_id, self.hostname, __version__, caps)
-            hello['token'] = self.token
+            signature = keys.sign(self.key, self.agent_id, nonce)
+            hello = proto.hello(self.agent_id, signature, self.hostname, __version__, caps)
             await socket_.send(proto.encode(hello))
 
             welcome = proto.decode(await socket_.recv())
             if welcome.get('t') != proto.WELCOME:
-                raise ConnectionError("server did not accept the agent (check the token)")
+                raise ConnectionError("server did not accept the agent (check the key)")
             logging.info(f"connected to {self.url} as {self.agent_id!r}")
 
             if not self.notify_only:

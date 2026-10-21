@@ -8,9 +8,12 @@ import contextlib
 import socket
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from vigil.core.connectors.agent_connector import AgentRegistry
 from vigil.core.ui.agent_endpoint import register_agent_endpoint
+from vigil_agent import keys, protocol as proto
 from vigil_agent.client import AgentClient
 from vigil_agent.protocol import StreamSpec
 
@@ -49,9 +52,17 @@ async def _server(registry: AgentRegistry):
         await task
 
 
+KEY = Ed25519PrivateKey.generate()
+
+
+def _public_line(key):
+    return key.public_key().public_bytes(serialization.Encoding.OpenSSH,
+                                         serialization.PublicFormat.OpenSSH).decode()
+
+
 @contextlib.asynccontextmanager
-async def _agent(url, agent_id='node-a', token='secret'):
-    client = AgentClient(url, agent_id, token)
+async def _agent(url, agent_id='node-a', key=KEY):
+    client = AgentClient(url, agent_id, key)
     task = asyncio.create_task(client.run_forever())
     try:
         yield client
@@ -71,24 +82,60 @@ async def _await_connected(conn, timeout=5.0):
 
 def _registry(**overrides):
     registry = AgentRegistry()
-    registry.configure([{'id': 'node-a', 'token': 'secret', 'host': 'node-a.lan', **overrides}])
+    registry.configure([{'id': 'node-a', 'public_key': _public_line(KEY), 'host': 'node-a.lan',
+                         **overrides}])
     return registry
 
 
 class TestHandshake:
-    async def test_a_valid_token_connects(self):
+    async def test_a_valid_signature_connects(self):
         registry = _registry()
         async with _server(registry) as url:
             async with _agent(url):
                 await _await_connected(registry.get('node-a'))
                 assert registry.get('node-a').version is not None
 
-    async def test_a_wrong_token_is_refused(self):
+    async def test_a_wrong_key_is_refused(self):
         registry = _registry()
         async with _server(registry) as url:
-            async with _agent(url, token='wrong'):
+            async with _agent(url, key=Ed25519PrivateKey.generate()):
                 await asyncio.sleep(0.5)
                 assert registry.get('node-a').is_connected is False
+
+    async def test_an_unknown_agent_is_refused(self):
+        registry = _registry()
+        async with _server(registry) as url:
+            async with _agent(url, agent_id='node-x'):
+                await asyncio.sleep(0.5)
+                assert registry.get('node-x') is None
+
+    async def test_a_signature_over_another_nonce_is_refused(self):
+        """A signature captured from an earlier connection cannot be replayed."""
+        import websockets
+
+        registry = _registry()
+        async with _server(registry) as url:
+            async with websockets.connect(url) as socket_:
+                challenge = proto.decode(await socket_.recv())
+                assert challenge['t'] == proto.CHALLENGE
+                stale = keys.sign(KEY, 'node-a', keys.new_nonce())
+                await socket_.send(proto.encode(proto.hello('node-a', stale, 'h', '0', [])))
+                with pytest.raises(websockets.ConnectionClosed) as closed:
+                    await socket_.recv()
+                assert closed.value.rcvd.code == 1008
+            assert registry.get('node-a').is_connected is False
+
+    async def test_a_hello_without_a_signature_is_refused(self):
+        import websockets
+
+        registry = _registry()
+        async with _server(registry) as url:
+            async with websockets.connect(url) as socket_:
+                await socket_.recv()
+                await socket_.send(proto.encode(proto.hello('node-a', '', 'h', '0', [])))
+                with pytest.raises(websockets.ConnectionClosed):
+                    await socket_.recv()
+            assert registry.get('node-a').is_connected is False
 
 
 class TestExecOverTheWire:

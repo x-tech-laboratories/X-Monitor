@@ -30,6 +30,8 @@ dependencies = [
     # server side needs nothing extra: NiceGUI already brings FastAPI and
     # uvicorn, which serve the agent WebSocket on the dashboard's own port.
     "websockets>=12.0",
+    # Ed25519 keys the agent signs its handshake with (see vigil_agent/keys.py).
+    "cryptography>=3.0",
 ]
 
 [project.scripts]

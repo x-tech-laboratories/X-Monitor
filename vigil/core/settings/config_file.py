@@ -109,10 +109,10 @@ class ConfigFileManager:
     @property
     def agents(self) -> List[Dict[str, Any]]:
         """The top-level `agents:` list — one entry per Vigil agent that may
-        dial in, each with an `id` and the shared `token` it authenticates
-        with. Declaring an agent here does not require it to be running; a
-        monitor pointed at an absent agent simply reports failed until it
-        connects."""
+        dial in, each with an `id` and the `public_key` its signature is
+        checked against. Declaring an agent here does not require it to be
+        running; a monitor pointed at an absent agent simply reports failed
+        until it connects."""
         return self.data.get('agents', [])
 
     @property

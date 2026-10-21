@@ -26,13 +26,11 @@ class SSHConfig(TypedDict, total=False):
 
 class AgentSettings(TypedDict, total=False):
     """One entry in the top-level `agents:` list. The agent dials into the
-    dashboard's port over a WebSocket and authenticates with `token` (or
-    `token_file`, which is read once at startup and keeps the secret out of a
-    generated config.yaml); `host` is only a display/label value, since the
-    server never dials the agent."""
+    dashboard's port over a WebSocket and proves it holds the private half of
+    `public_key`, an OpenSSH ed25519 public key line; `host` is only a
+    display/label value, since the server never dials the agent."""
     id: str
-    token: str
-    token_file: str
+    public_key: str
     host: str
 
 

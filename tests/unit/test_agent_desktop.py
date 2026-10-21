@@ -221,7 +221,7 @@ class TestNotifyOnly:
             async def send(self, raw):
                 sent.append(proto.decode(raw))
 
-        client = AgentClient('ws://v', 'desk', 't', notify_only=True)
+        client = AgentClient('ws://v', 'desk', None, notify_only=True)
         client._socket = Socket()
         await client._handle_exec({'t': proto.EXEC, 'id': 1, 'cmd': 'id'})
         assert sent[0]['rc'] == -1
@@ -230,9 +230,16 @@ class TestNotifyOnly:
     def test_the_setting_is_read_from_config_and_environment(self, tmp_path, monkeypatch):
         from vigil_agent.config import AgentConfig
 
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        key_file = tmp_path / "key"
+        key_file.write_bytes(Ed25519PrivateKey.generate().private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH,
+            serialization.NoEncryption()))
         config_file = tmp_path / "agent.yaml"
-        config_file.write_text("url: ws://v\nid: desk\ntoken: t\nnotify_only: true\n")
-        for var in ('VIGIL_AGENT_URL', 'VIGIL_AGENT_ID', 'VIGIL_AGENT_TOKEN',
+        config_file.write_text(f"url: ws://v\nid: desk\nkey_file: {key_file}\nnotify_only: true\n")
+        for var in ('VIGIL_AGENT_URL', 'VIGIL_AGENT_ID', 'VIGIL_AGENT_KEY_FILE',
                     'VIGIL_AGENT_NOTIFY_ONLY'):
             monkeypatch.delenv(var, raising=False)
         assert AgentConfig.load(str(config_file)).notify_only is True

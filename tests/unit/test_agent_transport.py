@@ -82,17 +82,15 @@ class TestExecRpc:
 
 
 class TestRegistry:
-    def test_configure_builds_connections_and_tokens(self):
+    def test_configure_builds_connections(self):
         registry = AgentRegistry()
-        registry.configure([{'id': 'node-a', 'token': 'secret', 'host': 'node-a.lan'}])
-
-        assert registry.token_for('node-a') == 'secret'
+        registry.configure([{'id': 'node-a', 'host': 'node-a.lan'}])
         assert registry.get('node-a').host == 'node-a.lan'
 
-    def test_an_entry_without_a_token_never_authenticates(self):
+    def test_an_entry_without_a_public_key_never_authenticates(self):
         registry = AgentRegistry()
         registry.configure([{'id': 'node-a'}])
-        assert registry.token_for('node-a') is None
+        assert registry.public_key_for('node-a') is None
 
     def test_an_undeclared_agent_yields_a_failing_placeholder(self):
         registry = AgentRegistry()
@@ -119,7 +117,7 @@ class TestRegistry:
 class TestTransportSelection:
     def test_agent_key_selects_the_agent_transport(self):
         engine = ConnectorEngine()
-        engine.agents.configure([{'id': 'node-a', 'token': 't', 'host': 'node-a.lan'}])
+        engine.agents.configure([{'id': 'node-a', 'host': 'node-a.lan'}])
 
         ctx = engine.exec_context({'agent': 'node-a'})
         assert ctx.is_agent
@@ -201,7 +199,7 @@ class TestAgentExecutor:
         from vigil_agent import executor
         from vigil_agent.client import AgentClient
 
-        client = AgentClient("ws://unused", "test", "token")
+        client = AgentClient("ws://unused", "test", None)
         pid_file = tmp_path / "cmd.pid"
         task = asyncio.create_task(executor.run(f"echo $$ > {pid_file}; sleep 30", timeout=60))
         client._execs.add(task)

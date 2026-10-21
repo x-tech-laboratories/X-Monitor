@@ -14,7 +14,7 @@ what is planned.
 ```yaml
 agents:
   - id: laptop-desktop
-    token_file: /run/secrets/vigil_agent_laptop_desktop
+    public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... laptop-desktop"
 
 notifications:
   base_url: https://vigil.lan        # the dashboard's address, used to link to a monitor
@@ -161,7 +161,7 @@ instead. A notification is still cleared if you mute the monitor after it appear
 
 The agent must run **inside your graphical session, as you**. Desktop notifications travel over
 your session's message bus, and a system service, such as the regular Vigil agent, cannot reach
-it. Run a second agent for this, with its own `id` and token, and set `notify_only: true`. That
+it. Run a second agent for this, with its own `id` and key, and set `notify_only: true`. That
 agent shows notifications and refuses everything else, including commands. Without it, the server
 could run commands as you.
 
@@ -169,7 +169,7 @@ could run commands as you.
 # ~/.config/vigil-agent-desktop.yaml
 url: wss://vigil.lan/api/agent/ws
 id: laptop-desktop
-token_file: /home/you/.config/vigil/desktop-token   # an absolute path
+key_file: /home/you/.config/vigil/desktop-key   # an absolute path
 notify_only: true
 ```
 
@@ -215,7 +215,7 @@ services.vigil-agent = {
   desktop = {
     enable = true;
     id = "laptop-desktop";
-    tokenFile = "/run/secrets/vigil_agent_laptop_desktop";  # readable by the desktop user
+    keyFile = "/run/secrets/vigil_agent_laptop_desktop";  # readable by the desktop user
   };
 };
 ```

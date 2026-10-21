@@ -33,12 +33,12 @@ let
     url = cfg.url;
     id = cfg.id;
   }
-  // lib.optionalAttrs (cfg.tokenFile != null) { token_file = toString cfg.tokenFile; }
+  // lib.optionalAttrs (cfg.keyFile != null) { key_file = toString cfg.keyFile; }
   // lib.optionalAttrs (cfg.hostname != null) { hostname = cfg.hostname; }
   // cfg.extraSettings;
 
-  # Only the token's *path* reaches this file, so the generated YAML is safe to
-  # live in the world-readable Nix store; the agent reads the secret at runtime.
+  # Only the key's *path* reaches this file, so the generated YAML is safe to
+  # live in the world-readable Nix store; the agent reads the key at runtime.
   configFile = (pkgs.formats.yaml { }).generate "vigil-agent.yaml" settings;
 
   desktopConfigFile = (pkgs.formats.yaml { }).generate "vigil-agent-desktop.yaml" (
@@ -47,8 +47,8 @@ let
       id = cfg.desktop.id;
       notify_only = true;
     }
-    // lib.optionalAttrs (cfg.desktop.tokenFile != null) {
-      token_file = toString cfg.desktop.tokenFile;
+    // lib.optionalAttrs (cfg.desktop.keyFile != null) {
+      key_file = toString cfg.desktop.keyFile;
     }
   );
 
@@ -88,16 +88,16 @@ in
       '';
     };
 
-    tokenFile = mkOption {
+    keyFile = mkOption {
       type = types.nullOr types.path;
       default = null;
-      example = "/run/secrets/vigil_agent_token";
+      example = "/run/secrets/vigil_agent_key";
       description = ''
-        Path to a file on this host containing the shared token this agent
-        authenticates with, matching the `token` declared for its `id` on the
-        server. The agent reads it at runtime, so the token never enters the
-        Nix store — point this at a sops-nix/agenix-managed secret readable by
-        <option>user</option>.
+        Path to this agent's unencrypted OpenSSH ed25519 private key, as
+        `ssh-keygen -t ed25519 -N ""` writes it. The server's `agents:` entry
+        for this `id` holds the matching `public_key`. The agent reads it at
+        runtime, so the key never enters the Nix store — point this at a
+        sops-nix/agenix-managed secret readable by <option>user</option>.
       '';
     };
 
@@ -178,12 +178,13 @@ in
         '';
       };
 
-      tokenFile = mkOption {
+      keyFile = mkOption {
         type = types.path;
-        example = "/run/secrets/vigil_agent_desktop_token";
+        example = "/run/secrets/vigil_agent_desktop_key";
         description = ''
-          Path to the file holding this agent's token. It runs as the logged-in
-          user, so that user must be able to read it.
+          Path to this agent's ed25519 private key, separate from the system
+          agent's. It runs as the logged-in user, so that user must be able to
+          read it.
         '';
       };
     };
@@ -222,11 +223,10 @@ in
     (mkIf cfg.enable {
       assertions = [
         {
-          assertion = cfg.tokenFile != null || cfg.extraSettings ? token;
+          assertion = cfg.keyFile != null || cfg.extraSettings ? key_file;
           message = ''
-            services.vigil-agent: set tokenFile (preferred) or extraSettings.token.
-            Without a token the agent cannot authenticate and the server will
-            refuse every connection.
+            services.vigil-agent: set keyFile. Without a key the agent cannot
+            authenticate and the server will refuse every connection.
           '';
         }
       ];

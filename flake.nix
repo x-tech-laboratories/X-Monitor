@@ -68,6 +68,8 @@
                     # The server side needs nothing extra: nicegui already
                     # brings FastAPI/uvicorn, which serve the agent WebSocket.
                     websockets
+                    # Ed25519 keys for the agent handshake (vigil_agent/keys.py).
+                    cryptography
                 ];
 
                 vigil-pkg = pkgs.python312Packages.buildPythonApplication {
@@ -96,6 +98,7 @@
                 agentPython = pkgs.python312.withPackages (ps: with ps; [
                     websockets
                     pyyaml
+                    cryptography
                 ]);
 
                 agentSrc = pkgs.runCommand "vigil-agent-src" { } ''

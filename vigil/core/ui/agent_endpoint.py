@@ -6,8 +6,9 @@ certificate, or firewall rule beyond what the dashboard already uses.
 
 The dashboard's HTTP Basic middleware does not apply here — it is a
 ``BaseHTTPMiddleware``, which Starlette runs only for ``http`` scopes — so
-this endpoint does its own authentication: the agent presents its id and the
-shared token declared for that id in ``agents:``, compared in constant time.
+this endpoint does its own authentication: it sends a fresh nonce, and the
+agent signs it with the private key whose public half ``agents:`` lists for
+its id. The server holds no agent secrets.
 """
 
 import logging
@@ -16,11 +17,7 @@ from typing import Any
 
 from vigil.core.connectors import agent_protocol as proto
 from vigil.core.connectors.agent_connector import AgentRegistry
-
-
-def _tokens_match(given: str, expected: str) -> bool:
-    import hmac
-    return hmac.compare_digest(given, expected)
+from vigil_agent import keys
 
 
 def register_agent_endpoint(app: Any, registry: AgentRegistry) -> None:
@@ -32,15 +29,17 @@ def register_agent_endpoint(app: Any, registry: AgentRegistry) -> None:
         await websocket.accept()
         conn = None
         try:
+            nonce = keys.new_nonce()
+            await websocket.send_text(proto.encode(proto.challenge(nonce)))
             hello = proto.decode(await websocket.receive_text())
             if hello.get('t') != proto.HELLO:
                 await websocket.close(code=1002, reason='Expected a hello frame')
                 return
 
             agent_id = str(hello.get('agent') or '')
-            expected = registry.token_for(agent_id)
-            given = str(hello.get('token') or '')
-            if not agent_id or not expected or not _tokens_match(given, expected):
+            public_key = registry.public_key_for(agent_id)
+            signature = str(hello.get('sig') or '')
+            if not agent_id or not keys.verify(public_key, agent_id, nonce, signature):
                 logging.warning(
                     f"agent endpoint: rejected connection claiming id {agent_id!r} "
                     f"from {websocket.client.host if websocket.client else 'unknown'}"
