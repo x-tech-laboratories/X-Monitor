@@ -3,6 +3,7 @@ import pytest
 import yaml
 from unittest.mock import MagicMock, AsyncMock, patch
 from vigil.__main__ import VigilEngine
+from vigil.core.coordination.engine import seconds_to_clock_slot
 from vigil.core.database.database import db
 
 
@@ -272,7 +273,7 @@ class TestPerMonitorScheduling:
             if len(calls) >= 3:
                 raise asyncio.CancelledError()
 
-        plugin = MagicMock(id="p", interval=42)
+        plugin = MagicMock(id="p", interval=42, offset=None)
 
         engine = object.__new__(VigilEngine)
         engine._collecting = {}
@@ -296,7 +297,7 @@ class TestPerMonitorScheduling:
             if len(calls) >= 3:
                 raise asyncio.CancelledError()
 
-        plugin = MagicMock(id="p", interval=5)
+        plugin = MagicMock(id="p", interval=5, offset=None)
 
         engine = object.__new__(VigilEngine)
         engine._collecting = {}
@@ -307,6 +308,33 @@ class TestPerMonitorScheduling:
                 await engine._monitor_loop(plugin)
 
         assert engine.run_cycle_now.await_count == 2
+
+    async def test_offset_pins_each_cycle_to_the_clock(self):
+        calls = []
+
+        async def fake_sleep(seconds):
+            calls.append(seconds)
+            if len(calls) >= 3:
+                raise asyncio.CancelledError()
+
+        plugin = MagicMock(id="p", interval=3600, offset=2700)
+
+        engine = object.__new__(VigilEngine)
+        engine.run_cycle_now = AsyncMock(return_value=True)
+        # 10:15 UTC: the first slot is 30 minutes away, and later cycles keep landing on :45.
+        with patch("vigil.core.coordination.engine.asyncio.sleep", side_effect=fake_sleep), \
+                patch("vigil.core.coordination.engine.time.time", return_value=36900.0):
+            with pytest.raises(asyncio.CancelledError):
+                await engine._monitor_loop(plugin)
+
+        assert calls[0] == 1800
+        assert calls[1] == 1800
+        assert engine.run_cycle_now.await_count == 2
+
+    def test_clock_slot_wraps_to_the_next_period(self):
+        assert seconds_to_clock_slot(3600, 2700, 2700.0) == 0
+        assert seconds_to_clock_slot(3600, 2700, 2701.0) == 3599
+        assert seconds_to_clock_slot(900, 0, 1000.0) == 800
 
     async def test_run_starts_one_task_per_flattened_monitor(self, tmp_path):
         cfg_path = str(tmp_path / "config.yaml")

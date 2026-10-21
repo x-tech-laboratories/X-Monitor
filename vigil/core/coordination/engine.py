@@ -41,6 +41,11 @@ from vigil.core.connectors import ConnectorEngine, ExecContext
 
 STARTUP_JITTER_SECONDS = 3.0
 
+
+def seconds_to_clock_slot(interval: int, offset: int, now: float) -> float:
+    """Seconds from `now` until UTC time is next `offset` past a multiple of `interval`."""
+    return (offset - now) % interval
+
 _PRUNE_CHECK_SECONDS = 60
 
 
@@ -474,7 +479,11 @@ class VigilEngine:
         return await self.connectors.http.fetch(request)
 
     async def _monitor_loop(self, plugin: Plugin):
-        await asyncio.sleep(random.uniform(0, STARTUP_JITTER_SECONDS))
+        offset = getattr(plugin, "offset", None)
+        if offset is None:
+            await asyncio.sleep(random.uniform(0, STARTUP_JITTER_SECONDS))
+        else:
+            await asyncio.sleep(seconds_to_clock_slot(plugin.interval, offset, time.time()))
         next_due = time.monotonic()
         while True:
             # A failing plugin cycle must not kill its polling loop; the next tick retries.
@@ -482,6 +491,11 @@ class VigilEngine:
                 await self.run_cycle_now(plugin)
             except Exception as e:
                 logging.error(f"Plugin execution error ({plugin.name}): {e}")
+            # A clock-pinned monitor re-reads the wall clock each cycle, so a suspend or a slow cycle never shifts its slot.
+            if offset is not None:
+                wait = seconds_to_clock_slot(plugin.interval, offset, time.time())
+                await asyncio.sleep(wait if wait >= 1 else wait + plugin.interval)
+                continue
             # interval is the period, not the gap: sleep to the next due time
             # so a slow cycle does not stretch the schedule, and re-anchor
             # rather than burst when a cycle overruns the whole period.

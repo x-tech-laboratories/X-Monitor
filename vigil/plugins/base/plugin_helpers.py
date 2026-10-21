@@ -1,7 +1,7 @@
 """Small pure helpers shared across plugins: resolve_secret (runs a
 password_command on the Vigil host at construction so requests() stays pure),
 the PluginConfigMixin that reads the shared config keys (id, interval,
-ssh_config/target_host), the StatusAccumulator worst-of pattern, shell
+offset, ssh_config/target_host), the StatusAccumulator worst-of pattern, shell
 utilities for probe scripts, and the level_for threshold check plus the
 byte/duration/age formatting functions."""
 
@@ -45,6 +45,7 @@ class PluginConfigMixin:
         self.id = config.get('id', name)
         self.config = config
         self.interval = parse_duration(config.get('interval', 60))
+        self.offset = parse_duration(config['offset']) if 'offset' in config else None
         self.children: List[Any] = []
         ssh_cfg = config.get('ssh_config', {})
         self.target = ssh_cfg.get('host', config.get('target_host', 'localhost'))
