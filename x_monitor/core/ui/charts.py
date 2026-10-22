@@ -6,12 +6,13 @@ follows the client's scheme with no repaint. The history chart is ECharts, which
 canvas, so it takes literal colors from ``theme.palette()`` like ``history_chart`` does.
 """
 
+import math
 from typing import Callable, List, Optional, Sequence
 
 from nicegui import ui
 
 from x_monitor.core.ui import theme
-from x_monitor.core.ui.components import LABEL_CLASS, VALUE_CLASS, card, offload
+from x_monitor.core.ui.components import LABEL_CLASS, VALUE_CLASS, card, mark_card_state, offload
 from x_monitor.core.ui.theme import STATUS_COLORS
 
 # ============================================================================
@@ -50,13 +51,19 @@ def color_for(name: Optional[str], default: str = theme.ACCENT) -> str:
     return NAMED_COLORS.get(name, default)
 
 
-def gauge_style(percent: float, color: str) -> str:
-    """The conic gradient that draws a gauge's arc, filled to `percent` of its sweep."""
-    filled = GAUGE_SWEEP_DEGREES * percent / 100.0
-    start = 180 + (360 - GAUGE_SWEEP_DEGREES) / 2
-    return (f'background: conic-gradient(from {start:.0f}deg, {color} 0deg {filled:.1f}deg, '
-            f'{TRACK_COLOR} {filled:.1f}deg {GAUGE_SWEEP_DEGREES}deg, '
-            f'transparent {GAUGE_SWEEP_DEGREES}deg)')
+# The gauge ring's radius in its 48-unit SVG box, leaving room for the 6-unit stroke.
+GAUGE_RADIUS = 21
+
+# The length of the ring's 270° sweep, along which the dash is measured.
+GAUGE_SWEEP_LENGTH = 2 * math.pi * GAUGE_RADIUS * GAUGE_SWEEP_DEGREES / 360
+
+
+def gauge_fill_style(percent: float, color: str) -> str:
+    """The stroke that draws a gauge's filled arc as a round-capped dash `percent` of the sweep
+    long; an empty gauge draws nothing, since a zero-length round cap would still show a dot."""
+    if percent <= 0:
+        return 'stroke: transparent; stroke-dasharray: 0 999'
+    return f'stroke: {color}; stroke-dasharray: {GAUGE_SWEEP_LENGTH * percent / 100.0:.2f} 999'
 
 
 def strip_states(values: Sequence[Optional[float]], up_above: float = 0.5,
@@ -76,16 +83,9 @@ def up_share(states: Sequence[str]) -> Optional[float]:
     return 100.0 * sum(s == 'online' for s in measured) / len(measured)
 
 
-def strip_style(states: Sequence[str]) -> str:
-    """A hard-stop gradient drawing one cell per state with a hairline gap between cells."""
-    width = 100.0 / len(states)
-    gap = min(0.4, width * 0.25)
-    stops = []
-    for index, state in enumerate(states):
-        left, right = index * width, (index + 1) * width - gap
-        color = TRACK_COLOR if state == 'unavailable' else STATUS_COLORS[state]
-        stops.append(f'{color} {left:.2f}% {right:.2f}%, transparent {right:.2f}% {right + gap:.2f}%')
-    return f'background: linear-gradient(to right, {", ".join(stops)})'
+def strip_cell_color(state: str) -> str:
+    """The color of one strip cell: its status color, or the track color where there is no data."""
+    return TRACK_COLOR if state == 'unavailable' else STATUS_COLORS[state]
 
 
 def share_percents(values: Sequence[Optional[float]]) -> List[float]:
@@ -106,15 +106,19 @@ def render_gauge(page, title: str, metric_name: str, formatter: Callable,
                  caption: Optional[str] = None):
     """A stat panel with its label and value laid out like any other, and a small arc beside them
     filled by the metric's share of `maximum`, colored by the card's status rule or the accent."""
-    with card('halon-stat halon-gauge-card flex-1 min-w-[12rem]'):
+    with card('halon-stat halon-gauge-card flex-1 min-w-[12rem]') as panel:
         with ui.row().classes('halon-gauge-row no-wrap'):
             with ui.column().classes('halon-gauge-text'):
                 ui.label(title).classes(LABEL_CLASS)
                 value_label = ui.label(formatter(None)).classes(f'{VALUE_CLASS} halon-gauge-value')
                 caption_label = ui.label(caption or '').classes('halon-caption')
                 caption_label.set_visibility(bool(caption))
-            arc = ui.element('div').classes('halon-gauge-arc')
-    arc.style(gauge_style(0, theme.ACCENT))
+            with ui.element('svg').classes('halon-gauge-arc').props('viewBox="0 0 48 48" aria-hidden="true"'):
+                ring = (f'cx="24" cy="24" r="{GAUGE_RADIUS}" transform="rotate(135 24 24)"')
+                ui.element('circle').classes('halon-gauge-track').props(ring).style(
+                    f'stroke-dasharray: {GAUGE_SWEEP_LENGTH:.2f} 999')
+                arc = ui.element('circle').classes('halon-gauge-fill').props(ring)
+    arc.style(gauge_fill_style(0, theme.ACCENT))
     last = [None]
 
     def update():
@@ -124,7 +128,8 @@ def render_gauge(page, title: str, metric_name: str, formatter: Callable,
         last[0] = value
         state = color_rule(value) if color_rule else None
         value_label.text = formatter(value)
-        arc.style(gauge_style(fill_percent(value, maximum), color_for(state)))
+        arc.style(gauge_fill_style(fill_percent(value, maximum), color_for(state)))
+        mark_card_state(panel, state)
 
     return update
 
@@ -181,21 +186,26 @@ def render_strip(page, title: str, plugin_id: str, rows: List[dict],
                 with ui.row().classes('halon-strip-row no-wrap'):
                     if labeled:
                         ui.label(row.get('label', row['metric'])).classes('halon-strip-label')
-                    strip = ui.element('div').classes('halon-strip')
+                    with ui.element('div').classes('halon-strip') as strip:
+                        cell_elements = [ui.element('div').classes('halon-strip-cell') for _ in range(cells)]
                     share_label = ui.label('--').classes('halon-strip-share')
-                drawn.append((row['metric'], strip, share_label, [None]))
+                drawn.append((row['metric'], strip, cell_elements, share_label, [None]))
 
     def read():
         return [[m.value for m in page.plugin.data.metric_history(plugin_id, metric, limit=cells)]
-                for metric, _, _, _ in drawn]
+                for metric, _, _, _, _ in drawn]
 
     async def update():
-        for (_, strip, share_label, last), values in zip(drawn, await offload(read)()):
+        for (_, strip, cell_elements, share_label, last), values in zip(drawn, await offload(read)()):
             states = strip_states(values, up_above, cells)
             if states == last[0]:
                 continue
+            previous = last[0] or [None] * cells
             last[0] = states
-            strip.style(strip_style(states))
+            # Only the cells whose state changed are restyled, so a scrolling strip sends little.
+            for cell, state, before in zip(cell_elements, states, previous):
+                if state != before:
+                    cell.style(f'background: {strip_cell_color(state)}')
             share = up_share(states)
             share_label.text = '--' if share is None else f'{share:.1f}% up'
             strip.props(f'aria-label="{share_label.text} over the last {cells} checks" role="img"')

@@ -360,6 +360,17 @@ a, .q-link { color: var(--accent); }
 
 .halon-card-header .nicegui-row { gap: var(--space-2); flex-wrap: nowrap; align-items: center; }
 
+/* A panel whose value is in warning or failed takes a hint of that state on its border and ground (§6.7). */
+.halon-card.halon-card--warning {
+    border-color: color-mix(in srgb, var(--status-warning-text) 55%, var(--border-default));
+    background-color: color-mix(in srgb, var(--status-warning) 7%, var(--surface-default));
+}
+
+.halon-card.halon-card--failed {
+    border-color: color-mix(in srgb, var(--status-danger) 55%, var(--border-default));
+    background-color: color-mix(in srgb, var(--status-danger) 7%, var(--surface-default));
+}
+
 /* A labelled value: the label pinned to the top and the value centred in the space below it, both flush left. */
 .halon-stat { justify-content: flex-start; gap: var(--space-2); min-height: 84px; }
 .halon-stat > .halon-value, .halon-gauge-text > .halon-value { margin-block: auto; }
@@ -870,16 +881,11 @@ a, .q-link { color: var(--accent); }
 .halon-gauge-row { flex: 1 1 auto; width: 100%; align-items: stretch; justify-content: space-between; gap: var(--space-5); }
 .halon-gauge-text { justify-content: flex-start; gap: var(--space-2); min-width: 0; }
 
-/* The arc is a 6px ring, a meter's thickness, drawn by a conic gradient and masked to its edge. */
-.halon-gauge-arc {
-    width: 48px;
-    height: 48px;
-    flex-shrink: 0;
-    align-self: center;
-    border-radius: 50%;
-    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
-    mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
-}
+/* The arc is a round-capped 6px stroke, a meter's thickness, over a track of the same shape. */
+.halon-gauge-arc { width: 48px; height: 48px; flex-shrink: 0; align-self: center; }
+.halon-gauge-arc circle { fill: none; stroke-width: 6; stroke-linecap: round; }
+.halon-gauge-track { stroke: var(--surface-secondary); }
+.halon-gauge-fill { transition: stroke-dasharray var(--duration-slow); }
 
 /* A meter is 6px thick and rounds at half that; its value is always printed above it (§3.6). */
 .halon-repeat-bars { display: flex; flex-direction: column; gap: var(--space-5); width: 100%; }
@@ -931,11 +937,12 @@ a, .q-link { color: var(--accent); }
 .halon-tile-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background-color: var(--halon-tile-color); }
 .halon-tile-label { font-size: var(--text-control); font-weight: 600; color: var(--text-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* An uptime strip: one cell per check, drawn as hard gradient stops, with the up share beside it. */
+/* An uptime strip: one rounded cell per check, with the up share beside it. */
 .halon-strip-rows { display: flex; flex-direction: column; gap: var(--space-4); width: 100%; }
 .halon-strip-row { align-items: center; gap: var(--space-5); width: 100%; }
 .halon-strip-label { width: 10rem; flex-shrink: 0; font-size: var(--text-control); color: var(--text-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.halon-strip { flex: 1 1 auto; min-width: 0; height: 16px; border-radius: 2px; }
+.halon-strip { flex: 1 1 auto; min-width: 0; height: 16px; display: flex; gap: 2px; }
+.halon-strip-cell { flex: 1 1 0; min-width: 2px; border-radius: 2px; background-color: var(--surface-secondary); }
 .halon-strip-share { font-size: var(--text-caption); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* A share bar splits one whole; every part's value is printed in the legend beneath it. */

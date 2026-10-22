@@ -6,7 +6,7 @@ from nicegui import ui
 from nicegui.testing import User
 
 from x_monitor.core.connectors.types import CollectResult
-from x_monitor.core.ui import spec
+from x_monitor.core.ui import charts, spec
 from x_monitor.core.ui.theme import STATUS_COLORS
 from x_monitor.plugins.cpu import Cpu
 
@@ -80,9 +80,20 @@ class TestGauge:
     async def test_the_arc_takes_the_status_color_and_fills_its_share(self, user: User, plugin, render_page):
         plugin.storage.apply(CollectResult(metrics={'cpu_pct': 78.0}, status='warning'))
         built = await _ticked(user, render_page)
-        arc = _by_class(built, 'halon-gauge-arc')[0]
-        assert STATUS_COLORS['warning'] in arc._style['background']
-        assert '210.6deg' in arc._style['background']
+        arc = _by_class(built, 'halon-gauge-fill')[0]
+        assert arc._style['stroke'] == STATUS_COLORS['warning']
+        assert arc._style['stroke-dasharray'] == f'{charts.GAUGE_SWEEP_LENGTH * 0.78:.2f} 999'
+
+    async def test_a_gauge_past_its_warning_tints_its_card(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'cpu_pct': 78.0}, status='warning'))
+        built = await _ticked(user, render_page)
+        assert 'halon-card--warning' in _by_class(built, 'halon-gauge-card')[0]._classes
+
+    async def test_a_healthy_gauge_leaves_its_card_plain(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'cpu_pct': 12.0}, status='online'))
+        built = await _ticked(user, render_page)
+        classes = _by_class(built, 'halon-gauge-card')[0]._classes
+        assert 'halon-card--warning' not in classes and 'halon-card--failed' not in classes
 
     async def test_the_value_is_styled_like_any_other_stat(self, user: User, render_page):
         built = await _ticked(user, render_page)
@@ -95,7 +106,7 @@ class TestGauge:
     async def test_no_reading_leaves_the_arc_empty(self, user: User, render_page):
         built = await _ticked(user, render_page)
         assert _texts(built, 'halon-gauge-value') == ['-- %']
-        assert '0.0deg' in _by_class(built, 'halon-gauge-arc')[0]._style['background']
+        assert _by_class(built, 'halon-gauge-fill')[0]._style['stroke'] == 'transparent'
 
 
 class TestShare:
@@ -130,7 +141,9 @@ class TestStrip:
     async def test_a_down_check_is_drawn_in_the_failed_color(self, user: User, plugin, render_page):
         plugin.storage.apply(CollectResult(metrics={'up': 0.0}, status='failed'))
         built = await _ticked(user, render_page)
-        assert STATUS_COLORS['failed'] in _by_class(built, 'halon-strip')[0]._style['background']
+        cells = _by_class(built, 'halon-strip-cell')[:4]
+        assert cells[-1]._style['background'] == STATUS_COLORS['failed']
+        assert cells[0]._style['background'] == 'var(--surface-secondary)'
 
     async def test_a_single_strip_carries_no_row_label(self, user: User, render_page):
         built = await _ticked(user, render_page)

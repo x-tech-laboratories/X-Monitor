@@ -35,16 +35,16 @@ class TestColorFor:
         assert charts.color_for(None) == 'var(--accent)'
 
 
-class TestGaugeStyle:
-    def test_the_arc_fills_its_share_of_the_sweep(self):
-        style = charts.gauge_style(50, 'red')
-        assert 'red 0deg 135.0deg' in style
+class TestGaugeFillStyle:
+    def test_the_dash_is_its_share_of_the_sweep(self):
+        half = charts.GAUGE_SWEEP_LENGTH / 2
+        assert f'stroke-dasharray: {half:.2f} 999' in charts.gauge_fill_style(50, 'red')
 
-    def test_the_arc_opens_at_the_bottom(self):
-        assert 'from 225deg' in charts.gauge_style(0, 'red')
+    def test_the_dash_takes_the_given_color(self):
+        assert 'stroke: red' in charts.gauge_fill_style(50, 'red')
 
-    def test_the_gap_below_the_sweep_stays_clear(self):
-        assert 'transparent 270deg' in charts.gauge_style(100, 'red')
+    def test_an_empty_gauge_draws_no_round_cap(self):
+        assert 'stroke: transparent' in charts.gauge_fill_style(0, 'red')
 
 
 class TestStripStates:
@@ -72,13 +72,12 @@ class TestUpShare:
         assert charts.up_share(['unavailable', 'unavailable']) is None
 
 
-class TestStripStyle:
-    def test_each_cell_takes_its_state_color(self):
-        style = charts.strip_style(['online', 'failed'])
-        assert STATUS_COLORS['online'] in style and STATUS_COLORS['failed'] in style
+class TestStripCellColor:
+    def test_a_cell_takes_its_state_color(self):
+        assert charts.strip_cell_color('failed') == STATUS_COLORS['failed']
 
     def test_a_cell_with_no_data_takes_the_track_color(self):
-        assert 'var(--surface-secondary)' in charts.strip_style(['unavailable'])
+        assert charts.strip_cell_color('unavailable') == 'var(--surface-secondary)'
 
 
 class TestSharePercents:
