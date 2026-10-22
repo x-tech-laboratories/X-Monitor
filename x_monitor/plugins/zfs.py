@@ -16,9 +16,15 @@ def _sanitize_pool(name: str) -> str:
     return ''.join(c if c.isalnum() or c == '_' else '_' for c in name.lower())
 
 
+def _pool_caption(item: Dict[str, Any]) -> str:
+    """A pool tile's caption: its health word and how full it is."""
+    return f"{item.get('health', '--')} · {item.get('usage') or 0.0:.0f}%"
+
+
 class Zfs(SignalPlugin):
     """ZFS pool state and capacity from one `zpool list`, reporting a count of
-    degraded pools plus a usage metric per pool and the fullest pool's usage.
+    degraded pools plus a usage metric per pool and the fullest pool's usage,
+    with each pool's health and usage kept in the snapshot for its tile.
     A zpool that fails to run or lists no pools measured nothing, so it is
     unavailable; a pool in any unhealthy state is failed."""
 
@@ -32,6 +38,12 @@ class Zfs(SignalPlugin):
         """Color one pool's meter by its own capacity against this monitor's thresholds."""
         return level_for(item.get('value') or 0.0, self.warning, self.threshold)
 
+    def _pool_state(self, item):
+        """Color one pool's tile failed when it is unhealthy, otherwise by its capacity."""
+        if item.get('health') in _UNHEALTHY:
+            return 'failed'
+        return level_for(item.get('usage') or 0.0, self.warning, self.threshold)
+
     SAMPLED = True
 
     def commands(self) -> List[Command]:
@@ -44,6 +56,7 @@ class Zfs(SignalPlugin):
 
         ok, degraded = 0, 0
         usage: Dict[str, float] = {}
+        pools: List[Dict[str, Any]] = []
         logs, statuses = [], []
         for line in stdout.splitlines():
             parts = line.strip().split()
@@ -55,6 +68,7 @@ class Zfs(SignalPlugin):
             except ValueError:
                 continue
             usage[pool] = usage_pct
+            pools.append({'label': pool, 'health': health, 'usage': usage_pct})
 
             if health in _UNHEALTHY:
                 degraded += 1
@@ -70,7 +84,9 @@ class Zfs(SignalPlugin):
             ))
 
         if not usage:
-            return CollectResult.unavailable("No ZFS pools found")
+            result = CollectResult.unavailable("No ZFS pools found")
+            result.snapshot = []
+            return result
 
         metrics = {
             'pools_total': ok + degraded,
@@ -81,7 +97,7 @@ class Zfs(SignalPlugin):
         for pool, usage_pct in usage.items():
             metrics[f'pool_usage_{_sanitize_pool(pool)}'] = usage_pct
 
-        return CollectResult(metrics=metrics, logs=logs, status=_worst(statuses))
+        return CollectResult(metrics=metrics, logs=logs, status=_worst(statuses), snapshot=pools)
 
     def cards(self) -> Dict[str, Dict[str, Any]]:
         return {
@@ -92,6 +108,16 @@ class Zfs(SignalPlugin):
                     {'metric': 'pools_ok', 'label': 'Healthy', 'color': 'online'},
                     {'metric': 'pools_degraded', 'label': 'Degraded', 'color': 'failed'},
                 ],
+            },
+            'zfs_pool_tiles': {
+                'title': 'POOL STATE',
+                'repeat': {
+                    'source': 'snapshot',
+                    'container': 'tiles',
+                    'item_format_fn': _pool_caption,
+                    'item_color_by': self._pool_state,
+                    'empty_text': 'No ZFS pools found',
+                },
             },
             'zfs_pools': {
                 'title': 'POOL CAPACITY',
@@ -112,7 +138,7 @@ class Zfs(SignalPlugin):
         return ['zfs_total_card', 'zfs_degraded_card']
 
     def rows(self) -> List[List[str]]:
-        return [['zfs_pools']]
+        return [['zfs_pool_tiles'], ['zfs_pools']]
 
     def charts(self) -> Dict[str, Dict[str, Any]]:
         return {'zfs_chart': {'metric': 'zfs_usage_max', 'title': 'FULLEST POOL CAPACITY (%)'}}

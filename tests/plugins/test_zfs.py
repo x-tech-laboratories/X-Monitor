@@ -121,3 +121,37 @@ class TestUiSpec:
         cards = plugin.UI_SPEC['cards']
         assert not {'zfs_ok_card', 'zfs_usage_card'} & set(cards)
         assert plugin.card_row() == ['zfs_total_card', 'zfs_degraded_card']
+
+
+class TestPoolTiles:
+    def test_each_pool_is_recorded_with_its_health_and_usage(self, plugin):
+        result = plugin.parse([CmdResult(0, _make_zpool(
+            {"tank": ("ONLINE", 78), "back-up": ("DEGRADED", 12)}), "")])
+        assert result.snapshot == [
+            {'label': 'tank', 'health': 'ONLINE', 'usage': 78.0},
+            {'label': 'back-up', 'health': 'DEGRADED', 'usage': 12.0},
+        ]
+
+    def test_no_pools_clears_the_tiles(self, plugin):
+        assert plugin.parse([CmdResult(0, "", "")]).snapshot == []
+
+    def test_the_tiles_are_their_own_row_above_the_meters(self, plugin):
+        layout = plugin.UI_SPEC['layout']
+        assert layout.index(['zfs_pool_tiles']) < layout.index(['zfs_pools'])
+
+    def test_the_tiles_repeat_over_the_snapshot(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['zfs_pool_tiles']['repeat']
+        assert repeat['source'] == 'snapshot'
+        assert repeat['container'] == 'tiles'
+
+    def test_the_caption_is_health_and_usage(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['zfs_pool_tiles']['repeat']
+        assert repeat['item_format_fn']({'health': 'ONLINE', 'usage': 78.0}) == 'ONLINE · 78%'
+
+    @pytest.mark.parametrize("health,usage,state", [
+        ("ONLINE", 10, 'online'), ("ONLINE", 85, 'warning'), ("ONLINE", 95, 'failed'),
+        ("DEGRADED", 10, 'failed'), ("FAULTED", 10, 'failed'), ("UNAVAIL", 10, 'failed'),
+    ])
+    def test_the_tile_color_follows_health_then_usage(self, plugin, health, usage, state):
+        repeat = plugin.UI_SPEC['cards']['zfs_pool_tiles']['repeat']
+        assert repeat['item_color_by']({'health': health, 'usage': float(usage)}) == state
