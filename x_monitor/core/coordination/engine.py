@@ -10,7 +10,8 @@ Collection has two paths. The polling loop runs each monitor's declared
 requests on its own `interval`, as it always has. Alongside it, monitors on an
 agent-backed target can subscribe to event streams the agent watches locally
 and pushes the instant they change; those arrive through _on_agent_event and
-are persisted the same way, without waiting for the next cycle.
+are persisted the same way, without waiting for the next cycle. A third loop
+runs each monitor's scheduled actions at the times its `schedule` names.
 
 The class is named ``XMonitorEngine`` for continuity (``core/contracts.py``'s
 ``EngineLike`` and the test suite reference it); "Coordination Engine" is its
@@ -47,6 +48,9 @@ def seconds_to_clock_slot(interval: int, offset: int, now: float) -> float:
     return (offset - now) % interval
 
 _PRUNE_CHECK_SECONDS = 60
+
+# Cron times are whole minutes, so checking twice a minute never misses one.
+_SCHEDULE_CHECK_SECONDS = 30
 
 
 def _defined_in(cls: type, module_path: str) -> bool:
@@ -104,6 +108,8 @@ class XMonitorEngine:
         # Of those, the streams that stand in for a poll rather than
         # supplementing one, so an event on them marks the monitor collected.
         self._collection_streams: Set[str] = set()
+        # State keys of the scheduled actions now running, so a slow one is never started twice.
+        self._scheduled_running: Set[str] = set()
         if db_path_override:
             self.db_path = db_path_override
         else:
@@ -505,6 +511,49 @@ class XMonitorEngine:
                 next_due = now + plugin.interval
             await asyncio.sleep(next_due - now)
 
+    async def _schedule_loop(self):
+        while True:
+            # A broken schedule check must not end the loop; the next pass retries.
+            try:
+                self._start_due_schedules(time.time())
+            except Exception as e:
+                logging.error(f"Scheduled action check failed: {e}")
+            await asyncio.sleep(_SCHEDULE_CHECK_SECONDS)
+
+    def _start_due_schedules(self, now: float) -> None:
+        """Start every scheduled action whose next run has come, recording it as handled first.
+
+        A schedule seen for the first time is only recorded, so it first runs
+        at its next time rather than at once. Recording before the run means a
+        restart never repeats it, and runs missed while X-Monitor was down collapse
+        into one run when it returns."""
+        for plugin in self._flatten(self.plugins):
+            for entry in plugin.scheduled_actions:
+                key = entry.state_key(plugin.id)
+                if key in self._scheduled_running:
+                    continue
+                handled = self.db.get_setting(key)
+                if handled is not None and not entry.due(float(handled), now):
+                    continue
+                self.db.set_setting(key, str(int(now)))
+                if handled is None:
+                    continue
+                self._scheduled_running.add(key)
+                self._spawn(self._run_scheduled(plugin, entry, key))
+
+    async def _run_scheduled(self, plugin: Plugin, entry, key: str) -> None:
+        """Run one scheduled action through the same path as its button, and log the outcome on the monitor."""
+        label = f"Scheduled {entry.action} ({entry.cron.expression})"
+        try:
+            success, _ = await self.dispatch_action(plugin, entry.action, **entry.args)
+            log = (f"{label} ran", 'INFO') if success else (f"{label} failed", 'ERROR')
+        # A failing action must not end the task silently; its error goes to the monitor's log.
+        except Exception as e:
+            log = (f"{label} failed: {e}", 'ERROR')
+        finally:
+            self._scheduled_running.discard(key)
+        self._apply(plugin, CollectResult(logs=[log]))
+
     async def _prune_loop(self):
         while True:
             self._maybe_prune_logs()
@@ -566,6 +615,8 @@ class XMonitorEngine:
         for plugin in polled:
             self._spawn(self._monitor_loop(plugin))
 
+        if any(p.scheduled_actions for p in monitors):
+            self._spawn(self._schedule_loop())
         self._spawn(self._prune_loop())
 
     def _maybe_prune_logs(self, interval: float = 3600.0):
