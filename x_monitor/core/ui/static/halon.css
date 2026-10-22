@@ -854,7 +854,7 @@ a, .q-link { color: var(--accent); }
 /* A gauge is a stat panel whose value sits inside a 270° arc drawn by a conic gradient. */
 .halon-gauge-card { align-items: flex-start; }
 
-.halon-gauge { position: relative; width: 96px; height: 96px; flex-shrink: 0; }
+.halon-gauge { position: relative; width: 120px; height: 120px; flex-shrink: 0; }
 
 .halon-gauge-arc {
     position: absolute;
