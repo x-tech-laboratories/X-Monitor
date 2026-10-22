@@ -252,6 +252,12 @@ To run just the dashboard against an existing database:
 x-monitor-gui --db x-monitor.db --port 8080
 ```
 
+To try a dashboard change without any hosts, start it on the bundled demo fleet, which picks its own free port and keeps its own database (see [dev/demo](dev/demo/README.md)):
+
+```bash
+dev/demo/run.sh
+```
+
 ### Nix Integration
 
 X-Monitor supports Flakes for reproducible environments:
