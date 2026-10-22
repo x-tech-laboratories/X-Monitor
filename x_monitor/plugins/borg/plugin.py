@@ -487,6 +487,15 @@ class Borg(Plugin):
         oks = []
         for name, (label, max_age, setting) in self._expected_checks().items():
             state = states.get(name, {})
+            if name in self.check_kinds and not state.get('ok') and not state.get('failed'):
+                # A kind X-Monitor has never run gets one max age from when it was first expected, so a new schedule has time to reach it.
+                since = state.get('since') or now
+                states[name] = {**state, 'since': since}
+                if now - since <= max_age:
+                    logs.append((f"Repository check: {label} has not run yet", "INFO"))
+                else:
+                    problems.append(f"{label} has not run within {setting} of {format_duration(max_age)}")
+                continue
             oks.append(state.get('ok') or 0)
             if state.get('failed'):
                 problems.append(f"{label} last run failed: {state.get('error') or 'see its journal'}")
@@ -1215,6 +1224,8 @@ class Borg(Plugin):
             return 'Pending', 'unavailable'
         if ok.value < 0.5:
             return 'Failed' if any(s.get('failed') for s in self._stored_checks().values()) else 'Stale', 'failed'
+        if not oldest.value:
+            return 'Pending', 'unavailable'
         return f'Passed {format_age(int(time.time()) - int(oldest.value))}', 'online'
 
     @property

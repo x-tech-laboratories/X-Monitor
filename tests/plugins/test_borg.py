@@ -1482,13 +1482,32 @@ class TestCheckKinds:
         _cycle_with(p, run_cycle)
         assert _latest_status("test-borg") == "online"
 
-    async def test_a_kind_never_run_fails_the_monitor(self, make_plugin, run_cycle):
+    async def test_a_kind_never_run_waits_one_max_age(self, make_plugin, run_cycle):
         p = make_plugin(Borg, TRACKED_CFG)
+        _finish_job(p, "check_repo", 0, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_metric("test-borg", "checks_ok") == 1.0
+        assert _latest_status("test-borg") == "online"
+
+    async def test_a_kind_never_run_fails_once_its_max_age_has_passed(self, make_plugin, run_cycle, monkeypatch):
+        p = make_plugin(Borg, TRACKED_CFG)
+        _finish_job(p, "check_repo", 0, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        later = time.time() + 33 * 86400
+        monkeypatch.setattr(time, "time", lambda: later)
         _finish_job(p, "check_repo", 0, kind="repository")
         p.commands()
         _cycle_with(p, run_cycle)
         assert _latest_metric("test-borg", "checks_ok") == 0.0
         assert _latest_status("test-borg") == "failed"
+
+    async def test_a_kind_never_run_reads_as_pending(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, {**TRACKED_CFG, "check_kinds": {"extract": "32d"}})
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert p._checks_pair() == ('Pending', 'unavailable')
 
     async def test_a_failed_check_fails_until_one_succeeds(self, make_plugin, run_cycle):
         p = make_plugin(Borg, {**TRACKED_CFG, "check_kinds": {"repository": "8d"}})
@@ -1503,6 +1522,9 @@ class TestCheckKinds:
 
     async def test_units_and_kinds_are_judged_together(self, make_plugin, run_cycle):
         p = make_plugin(Borg, {**CHECK_CFG, "check_kinds": {"extract": "32d"}})
+        p.commands()
+        _cycle_with(p, run_cycle, checks=_checks_out(ok=int(time.time()) - 3600))
+        _finish_job(p, "check_repo", 2, kind="extract")
         p.commands()
         _cycle_with(p, run_cycle, checks=_checks_out(ok=int(time.time()) - 3600))
         assert _latest_status("test-borg") == "failed"
