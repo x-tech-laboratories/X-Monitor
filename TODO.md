@@ -1,3 +1,13 @@
+# TODO — Finish the move to X-Tech Laboratories
+
+- [ ] Design a hexagon logo in the X-Tech style (see the `.github` repo's `branding/README.md`) and use it as the app, agent and desktop-notification icon.
+- [ ] Add `AGENTS.md` (with `CLAUDE.md` importing it), a CI workflow running `ruff check` and `pytest`, the AI review workflow, and the readiness badge in the README.
+- [ ] Protect `main` with a ruleset that requires CI to pass.
+- [ ] Run the full test suite and fix anything the rename broke.
+- [ ] Add a "Moving from Vigil" section to the README: new option names, commands, `XMONITOR_*` variables, users, `/var/lib/x-monitor/x-monitor.db`, the `x_monitor_self` type and `x_monitor_*` metrics.
+- [ ] Add X-Monitor to the website's projects and home pages, and rescore readiness.
+- [ ] Update TechNet: flake input `github:x-tech-laboratories/X-Monitor`, `services.x-monitor*` options, hard-coded `vigil`/`vigil-agent` users and sudo rules, persisted `/var/lib/vigil`, and move the old database across.
+
 # TODO — Feature gaps vs LNXlink and Valent
 
 Gap analysis of X-Monitor's 45 plugins against two adjacent Linux projects, 2026-08-11.
