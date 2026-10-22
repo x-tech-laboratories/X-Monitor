@@ -14,7 +14,7 @@ pytest_plugins = ['nicegui.testing.user_plugin']
 pytestmark = pytest.mark.nicegui_main_file(None)
 
 CHART_SPEC = {
-    'layout': [['gauge', 'share'], ['strip'], ['bars', 'tiles'], ['lines']],
+    'layout': [['gauge', 'share'], ['strip'], ['strips'], ['bars', 'tiles'], ['lines']],
     'cards': {
         'gauge': {'kind': 'gauge', 'metric': 'cpu_pct', 'title': 'CPU', 'format': 'percent1',
                   'color': {'warning': 70, 'threshold': 85}},
@@ -22,6 +22,8 @@ CHART_SPEC = {
                   'parts': [{'metric': 'allowed', 'label': 'Allowed'},
                             {'metric': 'blocked', 'label': 'Blocked', 'color': 'warning'}]},
         'strip': {'kind': 'strip', 'metric': 'up', 'title': 'AVAILABILITY', 'cells': 4},
+        'strips': {'kind': 'strip', 'title': 'CHECKS', 'cells': 4,
+                   'rows': [{'metric': 'ssh_up', 'label': 'SSH'}, {'metric': 'api_up', 'label': 'API'}]},
         'bars': {'title': 'SPACE USED', 'repeat': {
             'source': 'metrics_prefix', 'metrics_prefix': 'fs_', 'metrics_suffix': '_pct',
             'container': 'bars', 'item_format': 'percent0', 'bar_marker': 85}},
@@ -108,12 +110,21 @@ class TestStrip:
         for up in (1.0, 0.0, 1.0):
             plugin.storage.apply(CollectResult(metrics={'up': up}, status='online'))
         built = await _ticked(user, render_page)
-        assert _texts(built, 'halon-strip-share') == ['66.7% up']
+        assert _texts(built, 'halon-strip-share')[0] == '66.7% up'
 
     async def test_a_down_check_is_drawn_in_the_failed_color(self, user: User, plugin, render_page):
         plugin.storage.apply(CollectResult(metrics={'up': 0.0}, status='failed'))
         built = await _ticked(user, render_page)
         assert STATUS_COLORS['failed'] in _by_class(built, 'halon-strip')[0]._style['background']
+
+    async def test_a_single_strip_carries_no_row_label(self, user: User, render_page):
+        built = await _ticked(user, render_page)
+        assert _texts(built, 'halon-strip-label') == ['SSH', 'API']
+
+    async def test_each_row_of_a_panel_reads_its_own_metric(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'up': 1.0, 'ssh_up': 1.0, 'api_up': 0.0}, status='failed'))
+        built = await _ticked(user, render_page)
+        assert _texts(built, 'halon-strip-share') == ['100.0% up', '100.0% up', '0.0% up']
 
 
 class TestRepeatPanels:

@@ -92,6 +92,8 @@ match, in this order:
                 value printed through ``format`` in the legend; ``'strip'`` — the last
                 ``cells`` (default 60) readings of a 0/1 ``metric`` as up and down cells,
                 up meaning above ``up_above`` (default 0.5), with the up share beside them.
+                A strip listing ``rows`` (``[{'metric', 'label'}, ...]``) draws one labeled
+                strip per row in the same panel instead.
 no ``metric``   ``value_attr``: ``getattr(plugin, value_attr)`` pushed through the
 key present:    ``value_format`` template (default ``'{}'``); otherwise static ``value``
                 text (default ``'--'``). With ``color_attr`` (a plugin attribute holding a

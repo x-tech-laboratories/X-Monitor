@@ -37,6 +37,7 @@ class CardSpec(TypedDict, total=False):
     parts: List["SharePartSpec"]   # share: the metrics the bar splits between
     cells: int                     # strip: how many past readings to draw (default 60)
     up_above: float                # strip: a reading above this is up (default 0.5)
+    rows: List["SeriesSpec"]       # strip: several labeled strips in one panel, in place of metric
     # status_card only:
     on_text: str
     off_text: str

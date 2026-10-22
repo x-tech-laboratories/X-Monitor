@@ -101,19 +101,24 @@ class TestPortsActions:
 
 
 class TestUiSpec:
-    async def test_every_check_gets_an_uptime_strip_of_its_up_metric(self, plugin):
-        cards = plugin.UI_SPEC['cards']
-        assert cards['strip_ssh'] == {'kind': 'strip', 'metric': 'ssh_up', 'title': 'SSH AVAILABILITY'}
-        assert cards['strip_api'] == {'kind': 'strip', 'metric': 'api_up', 'title': 'API AVAILABILITY'}
+    async def test_every_check_gets_a_labeled_uptime_strip_in_one_panel(self, plugin):
+        assert plugin.UI_SPEC['cards']['strips'] == {
+            'kind': 'strip', 'title': 'AVAILABILITY',
+            'rows': [{'metric': 'ssh_up', 'label': 'SSH'}, {'metric': 'api_up', 'label': 'API'}],
+        }
 
-    async def test_each_strip_sits_above_its_latency_chart(self, plugin):
+    async def test_the_strips_sit_above_the_latency_charts(self, plugin):
         layout = plugin.UI_SPEC['layout']
         assert layout == [
             ['host_card', 'up_card', 'down_card'],
-            ['strip_ssh'], ['chart_ssh'],
-            ['strip_api'], ['chart_api'],
+            ['strips'],
+            ['chart_ssh'], ['chart_api'],
             ['events'],
         ]
+
+    async def test_no_checks_draws_no_strip_panel(self, make_plugin):
+        bare = make_plugin(Ports, {"checks": []})
+        assert 'strips' not in bare.UI_SPEC['cards']
 
     async def test_the_reachable_and_down_counts_stay(self, plugin):
         assert {'up_card', 'down_card'} <= set(plugin.UI_SPEC['cards'])

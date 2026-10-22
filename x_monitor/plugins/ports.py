@@ -174,13 +174,12 @@ class Ports(Plugin):
     def UI_SPEC(self):
         checks = self._checks
         strips = {
-            f"strip_{check['metric']}": {
+            'strips': {
                 'kind': 'strip',
-                'metric': f"{check['metric']}_up",
-                'title': f"{check['name']} AVAILABILITY",
-            }
-            for check in checks
-        }
+                'title': 'AVAILABILITY',
+                'rows': [{'metric': f"{check['metric']}_up", 'label': check['name']} for check in checks],
+            },
+        } if checks else {}
         charts = {
             f"chart_{check['metric']}": {
                 'metric': f"{check['metric']}_latency_ms",
@@ -188,9 +187,8 @@ class Ports(Plugin):
             }
             for check in checks
         }
-        # Each check's uptime strip sits directly above its latency chart.
-        check_rows = [row for check in checks
-                      for row in ([f"strip_{check['metric']}"], [f"chart_{check['metric']}"])]
+        # Every check's uptime strip shares one panel above the latency charts.
+        check_rows = ([['strips']] if checks else []) + [[f"chart_{check['metric']}"] for check in checks]
         layout = [_DEFAULT_LAYOUT[0], *check_rows, _DEFAULT_LAYOUT[1]]
         return {
             'layout': layout,

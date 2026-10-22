@@ -166,31 +166,39 @@ def render_share(page, title: str, parts: List[dict], formatter: Callable):
 # Uptime strip card
 # ============================================================================
 
-def render_strip(page, title: str, plugin_id: str, metric_name: str,
+def render_strip(page, title: str, plugin_id: str, rows: List[dict],
                  up_above: float = 0.5, cells: int = STRIP_CELLS):
-    """The last `cells` readings of a 0/1 metric as a row of up and down cells, with the share
-    of them that were up printed beside the row."""
+    """The last `cells` readings of each row's 0/1 metric as a row of up and down cells, with
+    the share of them that were up printed beside it; several rows share one panel, each
+    labeled."""
+    labeled = len(rows) > 1 or bool(rows and rows[0].get('label'))
+    drawn = []
     with card('w-full', title=title):
-        with ui.row().classes('halon-strip-row no-wrap'):
-            strip = ui.element('div').classes('halon-strip')
-            share_label = ui.label('--').classes('halon-strip-share')
-    last = [None]
+        with ui.element('div').classes('halon-strip-rows'):
+            for row in rows:
+                with ui.row().classes('halon-strip-row no-wrap'):
+                    if labeled:
+                        ui.label(row.get('label', row['metric'])).classes('halon-strip-label')
+                    strip = ui.element('div').classes('halon-strip')
+                    share_label = ui.label('--').classes('halon-strip-share')
+                drawn.append((row['metric'], strip, share_label, [None]))
 
     def read():
-        return [m.value for m in page.plugin.data.metric_history(plugin_id, metric_name, limit=cells)]
+        return [[m.value for m in page.plugin.data.metric_history(plugin_id, metric, limit=cells)]
+                for metric, _, _, _ in drawn]
 
     async def update():
-        states = strip_states(await offload(read)(), up_above, cells)
-        if states == last[0]:
-            return
-        last[0] = states
-        strip.style(strip_style(states))
-        share = up_share(states)
-        share_label.text = '--' if share is None else f'{share:.1f}% up'
-        strip.props(f'aria-label="{share_label.text} over the last {cells} checks" role="img"')
+        for (_, strip, share_label, last), values in zip(drawn, await offload(read)()):
+            states = strip_states(values, up_above, cells)
+            if states == last[0]:
+                continue
+            last[0] = states
+            strip.style(strip_style(states))
+            share = up_share(states)
+            share_label.text = '--' if share is None else f'{share:.1f}% up'
+            strip.props(f'aria-label="{share_label.text} over the last {cells} checks" role="img"')
 
     page.on_refresh(update)
-    return strip
 
 
 # ============================================================================
@@ -342,7 +350,8 @@ def render_chart_card(plugin, page, widget_name: str, card_spec: dict,
     if kind == 'share':
         return render_share(page, title, card_spec['parts'], formatter)
     if kind == 'strip':
-        render_strip(page, title, plugin.id, card_spec['metric'],
+        rows = card_spec.get('rows') or [{'metric': card_spec['metric']}]
+        render_strip(page, title, plugin.id, rows,
                      up_above=card_spec.get('up_above', 0.5),
                      cells=card_spec.get('cells', STRIP_CELLS))
         return None

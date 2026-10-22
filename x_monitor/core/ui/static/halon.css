@@ -926,7 +926,9 @@ a, .q-link { color: var(--accent); }
 .halon-tile-label { font-size: var(--text-control); font-weight: 600; color: var(--text-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* An uptime strip: one cell per check, drawn as hard gradient stops, with the up share beside it. */
+.halon-strip-rows { display: flex; flex-direction: column; gap: var(--space-4); width: 100%; }
 .halon-strip-row { align-items: center; gap: var(--space-5); width: 100%; }
+.halon-strip-label { width: 10rem; flex-shrink: 0; font-size: var(--text-control); color: var(--text-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .halon-strip { flex: 1 1 auto; min-width: 0; height: 16px; border-radius: 2px; }
 .halon-strip-share { font-size: var(--text-caption); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
