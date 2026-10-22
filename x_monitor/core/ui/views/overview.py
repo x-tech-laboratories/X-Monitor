@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 from nicegui import ui
 from x_monitor.core.contracts import EngineLike
+from x_monitor.core.coordination.monitor_graph import iter_monitors, view_roots
 from .. import theme
 from ..theme import STATUS_COLORS, ACCENT
 from ..components import card, feed_columns, section_title, on_data_event, offload, refresh_rows
@@ -112,14 +113,8 @@ def _treemap_options() -> dict:
 
 
 def _collect_leaf_monitors(plugins) -> list:
-    """Flattens the plugin hierarchy into its leaf monitors."""
-    monitors = []
-    for p in plugins:
-        if not p.children:
-            monitors.append(p)
-        else:
-            monitors.extend(_collect_leaf_monitors(p.children))
-    return monitors
+    """Flattens the plugin hierarchy into its leaf monitors, each once however many groups hold it."""
+    return [p for p in iter_monitors(plugins) if not p.children]
 
 
 def _build_table_rows(monitors, statuses, flt: _ChartFilter) -> list:
@@ -319,7 +314,7 @@ def render_overview(engine: EngineLike, switch_view: Callable):
     """Renders the overview: the two charts, the filterable monitor table and recent activity."""
     section_title('Monitors')
 
-    monitors = _collect_leaf_monitors(engine.plugins)
+    monitors = _collect_leaf_monitors(view_roots(engine))
     plugin_by_id = {p.id: p for p in monitors}
     flt = _ChartFilter()
 

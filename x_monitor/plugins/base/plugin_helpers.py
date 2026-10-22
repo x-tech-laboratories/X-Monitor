@@ -8,7 +8,7 @@ byte/duration/age formatting functions."""
 import re
 import shlex
 import subprocess
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from x_monitor.core.settings.config_schema import PluginConfig
 from x_monitor.core.connectors.types import Status
@@ -49,6 +49,8 @@ class PluginConfigMixin:
         self.offset = parse_duration(config['offset']) if 'offset' in config else None
         self.scheduled_actions = parse_schedule(config.get('schedule'))
         self.children: List[Any] = []
+        # Children this monitor holds through a link, by id, with the label that link gives them.
+        self.links: Dict[str, Optional[str]] = {}
         ssh_cfg = config.get('ssh_config', {})
         self.target = ssh_cfg.get('host', config.get('target_host', 'localhost'))
 
