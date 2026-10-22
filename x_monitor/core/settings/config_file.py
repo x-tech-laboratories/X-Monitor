@@ -7,20 +7,15 @@ from typing import Any, Dict, List
 
 from x_monitor.core.settings.config_schema import (
     AuthSettings, DatabaseSettings, ExporterSettings, NotificationSettings, PluginConfig,
-    SSHConfig, ThemeSettings, ViewSettings, XMonitorConfig,
+    SSHConfig, ThemeSettings, XMonitorConfig,
 )
 from x_monitor.core.state import BufferSizes
-
-# The sidebar's label for the `plugins` tree when `view_name` does not set one.
-PRIMARY_VIEW_NAME = 'Monitors'
 
 # Which shape each top-level section must have, so a section written as the wrong
 # kind of YAML is named at startup rather than raising inside whoever reads it.
 _SECTION_SHAPES: Dict[str, type] = {
     'agents': list,
     'plugins': list,
-    'view_name': str,
-    'views': list,
     'notifications': dict,
     'control': list,
     'database': dict,
@@ -110,29 +105,6 @@ class ConfigFileManager:
     @property
     def plugins(self) -> List[PluginConfig]:
         return self.data.get('plugins', [])
-
-    @property
-    def view_name(self) -> str:
-        """The sidebar's label for the tree `plugins` builds, beside the other `views`."""
-        name = self.data.get('view_name')
-        return name if isinstance(name, str) and name else PRIMARY_VIEW_NAME
-
-    @property
-    def views(self) -> List[ViewSettings]:
-        """The extra `views:`, each a name and its own `plugins` tree, skipping any entry without a name."""
-        entries = self.data.get('views')
-        if not isinstance(entries, list):
-            return []
-        views = []
-        for position, entry in enumerate(entries, start=1):
-            if not isinstance(entry, dict) or not entry.get('name'):
-                logging.error(f"{self.path}: views entry {position} has no 'name' and is ignored")
-                continue
-            if not isinstance(entry.get('plugins', []), list):
-                logging.error(f"{self.path}: view {entry['name']!r} has 'plugins' that is not a list and is ignored")
-                continue
-            views.append(entry)
-        return views
 
     @property
     def agents(self) -> List[Dict[str, Any]]:

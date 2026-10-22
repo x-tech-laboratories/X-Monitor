@@ -33,18 +33,9 @@ let
         withChildren
     ) plugins;
 
-  # A view can define monitors of its own, so its tree gets the same injection.
   withBorgPassphrase =
-    if cfg.settings != null && cfg.borgPassphraseFile != null then
-      cfg.settings
-      // lib.optionalAttrs (cfg.settings ? plugins) {
-        plugins = injectBorgPassphrase cfg.settings.plugins;
-      }
-      // lib.optionalAttrs (cfg.settings ? views) {
-        views = map (
-          v: if v ? plugins then v // { plugins = injectBorgPassphrase v.plugins; } else v
-        ) cfg.settings.views;
-      }
+    if cfg.settings != null && cfg.borgPassphraseFile != null && cfg.settings ? plugins then
+      cfg.settings // { plugins = injectBorgPassphrase cfg.settings.plugins; }
     else
       cfg.settings;
 

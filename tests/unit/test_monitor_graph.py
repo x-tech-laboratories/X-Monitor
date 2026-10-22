@@ -1,9 +1,9 @@
-"""The monitor graph: links between views, edge labels, and walks that visit each monitor once."""
+"""The monitor graph: links between groups, edge labels, and walks that visit each monitor once."""
 
 from types import SimpleNamespace
 
 from x_monitor.core.coordination.monitor_graph import (
-    Link, View, all_monitors, child_label, iter_monitors, parent_ids, resolve_links,
+    Link, all_monitors, child_label, parent_ids, resolve_links,
 )
 
 
@@ -12,13 +12,12 @@ def _node(node_id, *children):
 
 
 def _by_host_and_domain():
-    """Two hosts each holding a cpu, and a second view grouping both cpus under one domain."""
+    """Two hosts each holding a cpu, and a second root grouping both cpus under one domain."""
     host_a = _node('a', _node('a-cpu'))
     host_b = _node('b', _node('b-cpu'))
     domain = _node('compute', Link('a-cpu', 'A'), Link('b-cpu', 'B'))
-    views = [View('By host', [host_a, host_b]), View('By domain', [domain])]
-    resolve_links(views)
-    return views, host_a, host_b, domain
+    roots = resolve_links([_node('by-host', host_a, host_b), _node('by-domain', domain)])
+    return roots, host_a, host_b, domain
 
 
 class TestResolveLinks:
@@ -35,24 +34,23 @@ class TestResolveLinks:
     def test_a_link_without_a_name_shows_the_monitor_name(self):
         host = _node('a', _node('a-cpu'))
         domain = _node('compute', Link('a-cpu'))
-        resolve_links([View('one', [host, domain])])
+        resolve_links([host, domain])
         assert child_label(domain, host.children[0]) == 'A-Cpu'
 
     def test_a_link_may_name_a_monitor_defined_later(self):
         domain = _node('compute', Link('a-cpu'))
         host = _node('a', _node('a-cpu'))
-        resolve_links([View('one', [domain, host])])
+        resolve_links([domain, host])
         assert domain.children == host.children
 
-    def test_a_view_root_can_be_a_link(self):
+    def test_a_top_level_link_is_dropped(self, caplog):
         sensors = _node('sensors')
-        second = View('two', [Link('sensors')])
-        resolve_links([View('one', [sensors]), second])
-        assert second.children == [sensors]
+        assert resolve_links([sensors, Link('sensors')]) == [sensors]
+        assert 'top-level' in caplog.text
 
     def test_a_link_to_an_unknown_id_is_dropped(self, caplog):
         domain = _node('compute', Link('nowhere'))
-        resolve_links([View('one', [domain])])
+        resolve_links([domain])
         assert domain.children == []
         assert 'nowhere' in caplog.text
 
@@ -61,28 +59,25 @@ class TestResolveLinks:
         mid = _node('mid', leaf)
         root = _node('root', mid)
         leaf.children.append(Link('root'))
-        # A view entering at the leaf must not cost the definition edges their place.
-        resolve_links([View('one', [root]), View('two', [Link('leaf')])])
+        # A group linking to the leaf from elsewhere must not cost the definition edges their place.
+        resolve_links([_node('other', Link('leaf')), root])
         assert leaf.children == [] and mid.children == [leaf] and root.children == [mid]
         assert 'cycle' in caplog.text
 
     def test_a_link_to_itself_is_dropped(self):
         group = _node('g', Link('g'))
-        resolve_links([View('one', [group])])
+        resolve_links([group])
         assert group.children == []
 
 
 class TestWalks:
     def test_a_monitor_held_twice_is_visited_once(self):
-        views, *_ = _by_host_and_domain()
-        engine = SimpleNamespace(views=views, plugins=views[0].children)
-        assert [p.id for p in all_monitors(engine)] == ['a', 'a-cpu', 'b', 'b-cpu', 'compute']
-
-    def test_walks_fall_back_to_the_plugin_list_without_views(self):
-        root = _node('root', _node('leaf'))
-        assert [p.id for p in all_monitors(SimpleNamespace(plugins=[root]))] == ['root', 'leaf']
+        roots, *_ = _by_host_and_domain()
+        engine = SimpleNamespace(plugins=roots)
+        assert [p.id for p in all_monitors(engine)] == [
+            'by-host', 'a', 'a-cpu', 'b', 'b-cpu', 'by-domain', 'compute']
 
     def test_a_monitor_has_every_group_that_holds_it_as_a_parent(self):
-        views, *_ = _by_host_and_domain()
-        parents = parent_ids(iter_monitors(r for v in views for r in v.children))
+        roots, *_ = _by_host_and_domain()
+        parents = parent_ids(roots)
         assert parents['a-cpu'] == {'a', 'compute'}

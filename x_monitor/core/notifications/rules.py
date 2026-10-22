@@ -101,7 +101,7 @@ def resolve_rules(roots: Iterable[Any], defaults: Mapping[str, Any],
 
     A group's `notify:` settings pass down to everything defined beneath it,
     not to monitors it only links to, so each monitor has one rule however many
-    views show it. A group never notifies for itself, because its status only
+    places show it. A group never notifies for itself, because its status only
     repeats its children's.
     """
     rules: Dict[str, Rule] = {}

@@ -249,26 +249,6 @@ a, .q-link { color: var(--accent); }
     padding: 0 var(--space-4);
 }
 
-/* The view picker stands where the tree's heading would, so it keeps the heading's type. */
-.q-btn.halon-view-picker {
-    flex: none;
-    height: auto;
-    min-height: 0;
-    margin-left: var(--space-4);
-    padding: var(--space-1) 0 var(--space-1) var(--space-2);
-    border-color: transparent;
-}
-.halon-view-picker .q-icon { margin-left: 0; font-size: var(--icon-size-small); }
-.halon-view-picker .q-btn__content {
-    flex-wrap: nowrap;
-    white-space: nowrap;
-    font-size: var(--text-label);
-    font-weight: 600;
-    letter-spacing: var(--letter-spacing-caps);
-    text-transform: uppercase;
-    color: var(--accent);
-}
-
 .halon-sidebar-heading {
     width: 100%;
     padding-top: var(--space-5);

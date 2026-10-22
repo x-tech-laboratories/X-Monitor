@@ -144,18 +144,10 @@ class PluginConfig(TypedDict, total=False):
     notify: Any                 # bool | NotifySettings; passed down to a group's children
 
 
-class ViewSettings(TypedDict, total=False):
-    """One entry in `views`: another arrangement of the same monitors, shown as its own sidebar tree."""
-    name: str
-    plugins: List[PluginConfig]  # roots of this view; an entry may define a monitor or link to one with `ref`
-
-
 class XMonitorConfig(TypedDict, total=False):
     agents: List[AgentSettings]
     database: DatabaseSettings
     plugins: List[PluginConfig]
-    view_name: str
-    views: List[ViewSettings]
     notifications: NotificationSettings
     theme: ThemeSettings
     exporters: ExporterSettings

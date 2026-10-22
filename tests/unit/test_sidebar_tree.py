@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from x_monitor.core.coordination.monitor_graph import Link, View, resolve_links
+from x_monitor.core.coordination.monitor_graph import Link, resolve_links
 from x_monitor.core.ui.sidebar import branch_ids, build_tree_nodes, monitor_for_key
 
 
@@ -13,10 +13,8 @@ def _node(node_id, *children):
 def _engine():
     host = _node('a', _node('a-cpu'))
     domain = _node('compute', Link('a-cpu', 'Host A'), Link('a'))
-    views = [View('By host', [host, domain])]
-    resolve_links(views)
     db = SimpleNamespace(latest_statuses=lambda: {'a-cpu': 'failed'})
-    return SimpleNamespace(views=views, plugins=views[0].children, db=db)
+    return SimpleNamespace(plugins=resolve_links([host, domain]), db=db)
 
 
 def _keys(nodes):

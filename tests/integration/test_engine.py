@@ -264,50 +264,47 @@ class TestFlatten:
         assert list(XMonitorEngine._flatten(engine.plugins)) == [root, mid, leaf]
 
 
-class TestViews:
-    def _engine(self, tmp_path, **config):
+class TestLinks:
+    def _engine(self, tmp_path, *extra_roots):
         cfg_path = _write_config(tmp_path, {
             "database": {"path": str(tmp_path / "t.db")},
             "plugins": [
-                {"name": "Host A", "id": "a", "type": "group", "children": [
-                    {"name": "Availability", "id": "a-up", "type": "uptime", "target_host": "a.lan"}]},
-                {"name": "Host B", "id": "b", "type": "group", "children": [
-                    {"name": "Availability", "id": "b-up", "type": "uptime", "target_host": "b.lan"}]},
+                {"name": "By host", "id": "by-host", "type": "group", "children": [
+                    {"name": "Host A", "id": "a", "type": "group", "children": [
+                        {"name": "Availability", "id": "a-up", "type": "uptime", "target_host": "a.lan"}]},
+                    {"name": "Host B", "id": "b", "type": "group", "children": [
+                        {"name": "Availability", "id": "b-up", "type": "uptime", "target_host": "b.lan"}]},
+                ]},
+                *extra_roots,
             ],
-            **config,
         })
         with patch("x_monitor.core.connectors.engine.SSHConnection"):
             engine = XMonitorEngine(cfg_path)
             engine.setup_modules()
         return engine
 
-    def test_a_view_groups_the_same_monitors_another_way(self, tmp_path):
-        engine = self._engine(tmp_path, view_name="By host", views=[{
-            "name": "By domain",
-            "plugins": [{"name": "Availability", "id": "availability", "type": "group", "children": [
-                {"ref": "a-up", "name": "Host A"}, {"ref": "b-up", "name": "Host B"}]}],
-        }])
-        by_host, by_domain = engine.views
-        assert (by_host.name, by_domain.name) == ("By host", "By domain")
+    def test_a_second_root_groups_the_same_monitors_another_way(self, tmp_path):
+        engine = self._engine(tmp_path, {
+            "name": "By domain", "id": "by-domain", "type": "group", "children": [
+                {"name": "Availability", "id": "availability", "type": "group", "children": [
+                    {"ref": "a-up", "name": "Host A"}, {"ref": "b-up", "name": "Host B"}]}]})
+        by_host, by_domain = engine.plugins
+        host_a, host_b = by_host.children
         domain = by_domain.children[0]
-        assert domain.children == [engine.plugins[0].children[0], engine.plugins[1].children[0]]
+        assert domain.children == [host_a.children[0], host_b.children[0]]
         assert domain.links == {"a-up": "Host A", "b-up": "Host B"}
 
-    def test_every_monitor_runs_once_however_many_views_hold_it(self, tmp_path):
-        engine = self._engine(tmp_path, views=[{
-            "name": "Flat", "plugins": [{"ref": "a-up"}, {"ref": "b-up"}]}])
-        assert [p.id for p in engine.all_monitors()] == ["a", "a-up", "b", "b-up"]
+    def test_every_monitor_runs_once_however_many_groups_hold_it(self, tmp_path):
+        engine = self._engine(tmp_path, {
+            "name": "Flat", "id": "flat", "type": "group", "children": [{"ref": "a-up"}, {"ref": "b-up"}]})
+        assert [p.id for p in engine.all_monitors()] == ["by-host", "a", "a-up", "b", "b-up", "flat"]
 
     def test_a_link_is_not_a_duplicate_id(self, tmp_path):
-        engine = self._engine(tmp_path, views=[{"name": "Flat", "plugins": [{"ref": "a-up"}]}])
+        engine = self._engine(tmp_path, {
+            "name": "Flat", "id": "flat", "type": "group", "children": [{"ref": "a-up"}]})
         engine.db = MagicMock()
         engine._warn_on_duplicate_ids()
         engine.db.insert_event.assert_not_called()
-
-    def test_without_views_there_is_one_view_named_monitors(self, tmp_path):
-        engine = self._engine(tmp_path)
-        assert [v.name for v in engine.views] == ["Monitors"]
-        assert engine.views[0].children == engine.plugins
 
 
 class TestPerMonitorScheduling:
