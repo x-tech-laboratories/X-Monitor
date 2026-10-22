@@ -84,6 +84,14 @@ class TestGauge:
         assert STATUS_COLORS['warning'] in arc._style['background']
         assert '210.6deg' in arc._style['background']
 
+    async def test_the_value_is_styled_like_any_other_stat(self, user: User, render_page):
+        built = await _ticked(user, render_page)
+        assert 'halon-value' in _by_class(built, 'halon-gauge-value')[0]._classes
+
+    async def test_the_panel_is_a_stat_panel_so_it_matches_its_neighbours(self, user: User, render_page):
+        built = await _ticked(user, render_page)
+        assert 'halon-stat' in _by_class(built, 'halon-gauge-card')[0]._classes
+
     async def test_no_reading_leaves_the_arc_empty(self, user: User, render_page):
         built = await _ticked(user, render_page)
         assert _texts(built, 'halon-gauge-value') == ['-- %']
@@ -96,6 +104,13 @@ class TestShare:
         built = await _ticked(user, render_page)
         grows = [e._style['flex-grow'] for e in _by_class(built, 'halon-share-part')]
         assert grows == ['75.00', '25.00']
+
+    async def test_the_title_is_a_stat_label_rather_than_a_header_strip(self, user: User, render_page):
+        built = await _ticked(user, render_page)
+        panel = _by_class(built, 'halon-share-card')[0]
+        assert 'halon-stat' in panel._classes
+        assert 'QUERIES' not in _texts(built, 'halon-card-title')
+        assert 'QUERIES' in _texts(built, 'halon-label')
 
     async def test_the_legend_prints_every_parts_value(self, user: User, plugin, render_page):
         plugin.storage.apply(CollectResult(metrics={'allowed': 3.0, 'blocked': 1.0}, status='online'))
