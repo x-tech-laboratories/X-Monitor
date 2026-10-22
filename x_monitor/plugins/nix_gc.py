@@ -610,7 +610,7 @@ class NixGc(Plugin):
                                'refresh': True},
                 'next_gc_card': {'title': 'NEXT COLLECTION', 'value_attr': '_next_gc_text',
                                  'color_attr': '_next_gc_color'},
-                'store_card': {'metric': 'store_used_pct', 'title': 'STORE USED',
+                'store_card': {'kind': 'gauge', 'metric': 'store_used_pct', 'title': 'STORE USED',
                                'format': 'percent1',
                                'color': {'warning': self.warning,
                                          'threshold': self.threshold}},

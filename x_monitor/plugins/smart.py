@@ -91,12 +91,12 @@ class Smart(SignalPlugin):
     def cards(self) -> Dict[str, Dict[str, Any]]:
         return {
             'smart_total_card': {'metric': 'disks_total', 'title': 'DISKS', 'format': 'int'},
-            'smart_ok_card': {
-                'metric': 'disks_ok', 'title': 'HEALTHY', 'format': 'int',
-                'color': 'always_online',
-            },
             'smart_failed_card': {
-                'metric': 'disks_failed', 'title': 'FAILED', 'format': 'int',
-                'color': 'nonzero_failed',
+                'kind': 'share', 'title': 'DISK HEALTH', 'format': 'int',
+                'parts': [
+                    {'metric': 'disks_ok', 'label': 'Healthy', 'color': 'online'},
+                    {'metric': 'disks_failed', 'label': 'Failed', 'color': 'failed'},
+                    {'metric': 'disks_unknown', 'label': 'Unreadable', 'color': 'neutral'},
+                ],
             },
         }

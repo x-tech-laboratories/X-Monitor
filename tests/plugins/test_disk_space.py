@@ -143,3 +143,14 @@ class TestDiskSpaceCollection:
 class TestDiskSpaceActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_usage_is_a_gauge_colored_by_the_threshold(self, plugin):
+        usage = plugin.UI_SPEC['cards']['usage_card']
+        assert usage['kind'] == 'gauge'
+        assert usage['metric'] == 'used_pct'
+        assert usage['color'] == {'warning': plugin.threshold, 'threshold': plugin.threshold}
+
+    async def test_path_available_and_total_cards_stay(self, plugin):
+        assert {'path_card', 'avail_card', 'total_card'} <= set(plugin.UI_SPEC['cards'])

@@ -276,3 +276,17 @@ class TestDegradedOutput:
 class TestFilesystemsActions:
     async def test_on_action_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_filesystems_are_meters_ticked_at_the_warning_level(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['filesystems']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_value'] == 'used_pct'
+        assert repeat['bar_marker'] == plugin.warning
+        assert repeat['item_color_by'] == plugin._item_color
+
+    async def test_the_meters_make_the_worst_usage_card_redundant(self, plugin):
+        spec = plugin.UI_SPEC
+        assert 'worst_card' not in spec['cards']
+        assert 'worst_card' not in {cell for row in spec['layout'] for cell in row}

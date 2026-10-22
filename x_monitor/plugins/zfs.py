@@ -29,7 +29,7 @@ class Zfs(SignalPlugin):
         self.pools = list(config.get('pools') or [])
 
     def _item_level(self, item):
-        """Color one pool's chip by its own capacity against this monitor's thresholds."""
+        """Color one pool's meter by its own capacity against this monitor's thresholds."""
         return level_for(item.get('value') or 0.0, self.warning, self.threshold)
 
     SAMPLED = True
@@ -86,34 +86,30 @@ class Zfs(SignalPlugin):
     def cards(self) -> Dict[str, Dict[str, Any]]:
         return {
             'zfs_total_card': {'metric': 'pools_total', 'title': 'POOLS', 'format': 'int'},
-            'zfs_ok_card': {
-                'metric': 'pools_ok', 'title': 'HEALTHY', 'format': 'int',
-                'color': 'always_online',
-            },
             'zfs_degraded_card': {
-                'metric': 'pools_degraded', 'title': 'DEGRADED', 'format': 'int',
-                'color': 'nonzero_failed',
-            },
-            'zfs_usage_card': {
-                'metric': 'zfs_usage_max', 'title': 'FULLEST POOL',
-                'format': 'percent1',
-                'color': {'warning': self.warning, 'threshold': self.threshold},
+                'kind': 'share', 'title': 'POOL HEALTH', 'format': 'int',
+                'parts': [
+                    {'metric': 'pools_ok', 'label': 'Healthy', 'color': 'online'},
+                    {'metric': 'pools_degraded', 'label': 'Degraded', 'color': 'failed'},
+                ],
             },
             'zfs_pools': {
+                'title': 'POOL CAPACITY',
                 'repeat': {
                     'source': 'metrics_prefix',
                     'metrics_prefix': 'pool_usage_', 'metrics_suffix': '',
                     'item_format': 'percent1',
                     'item_color_by': self._item_level,
                     'label_transform': 'spaces_upper',
-                    'container': 'cards',
+                    'container': 'bars',
+                    'bar_marker': self.warning,
                     'empty_text': 'No ZFS pools found',
                 },
             },
         }
 
     def card_row(self) -> List[str]:
-        return ['zfs_total_card', 'zfs_ok_card', 'zfs_degraded_card', 'zfs_usage_card']
+        return ['zfs_total_card', 'zfs_degraded_card']
 
     def rows(self) -> List[List[str]]:
         return [['zfs_pools']]

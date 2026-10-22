@@ -256,3 +256,18 @@ class TestFailures:
         _collect(plugin, _scan(_port(22, "ssh"), ended=int(time.time()) - 3600))
         assert plugin._last_scan_text.endswith(" ago")
         assert plugin._last_scan_color == "online"
+
+
+class TestUiSpec:
+    async def test_finding_counts_share_one_bar(self, plugin):
+        findings = plugin.UI_SPEC['cards']['vulnerable_card']
+        assert findings['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in findings['parts']] == [
+            ('vulnerable', 'failed'), ('suspected', 'warning'), ('noted', 'neutral')]
+
+    async def test_every_card_is_laid_out_and_every_cell_defined(self, plugin):
+        spec = plugin.UI_SPEC
+        laid_out = {cell for row in spec['layout'] for cell in row}
+        defined = set(spec['cards']) | set(spec['tables']) | {'host_card', 'chart', 'events'}
+        assert set(spec['cards']) <= laid_out
+        assert laid_out <= defined

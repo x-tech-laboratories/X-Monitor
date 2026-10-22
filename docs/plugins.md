@@ -1490,9 +1490,9 @@ The same keys can instead be given as a **mapping of widget name → properties*
 | `connections`      | `host_card`, `conn_total_card`, `conn_states_card`, `conn_total_chart`, `events` |
 | `wifi`             | `host_card`, `wifi_iface_card`, `quality_card`, `signal_card`, `quality_chart`, `signal_chart`, `events` |
 | `power`            | `host_card`, `charge_card`, `power_card`, `state_card`, `health_card`, `capacity_card`, `batteries`, `charge_chart`, `capacity_chart`, `events` |
-| `smart`            | `host_card`, `smart_total_card`, `smart_ok_card`, `smart_failed_card`, `events` |
-| `zfs`              | `host_card`, `zfs_total_card`, `zfs_ok_card`, `zfs_degraded_card`, `zfs_usage_card`, `zfs_pools`, `zfs_chart`, `events` |
-| `md`               | `host_card`, `md_total_card`, `md_ok_card`, `md_degraded_card`, `events`    |
+| `smart`            | `host_card`, `smart_total_card`, `smart_failed_card`, `events`               |
+| `zfs`              | `host_card`, `zfs_total_card`, `zfs_degraded_card`, `zfs_pools`, `zfs_chart`, `events` |
+| `md`               | `host_card`, `md_total_card`, `md_degraded_card`, `events`                  |
 | `disk_io`          | `host_card`, `io_device_card`, `read_card`, `write_card`, `read_chart`, `events` |
 | `processes`        | `host_card`, `count_card`, `top_cpu_card`, `table`, `logs`                  |
 | `disk_space`       | `host_card`, `path_card`, `threshold_card`, `usage_card`, `avail_card`, `total_card`, `chart`, `logs` |

@@ -75,7 +75,7 @@ class DiskSpace(Plugin):
                 'path_card': {'title': 'PATH', 'value_attr': 'path'},
                 'threshold_card': {'title': 'THRESHOLD', 'value_attr': 'threshold', 'value_format': '{}%'},
                 'usage_card': {
-                    'metric': 'used_pct', 'title': 'USAGE',
+                    'kind': 'gauge', 'metric': 'used_pct', 'title': 'USAGE',
                     'format': 'percent1',
                     'color': {'warning': self.threshold, 'threshold': self.threshold},
                 },
