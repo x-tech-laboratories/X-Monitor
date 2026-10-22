@@ -7,6 +7,7 @@ an optional agent for monitored hosts. Read `README.md` first; the design is in 
 
 - `nix develop` gives the pinned toolchain and puts the repository on `PYTHONPATH`.
 - `x-monitor-run` starts the app on <http://localhost:8080> with `config.yaml`.
+- `dev/demo/run.sh` starts the dashboard on a self-contained demo fleet, on its own free port, and `dev/demo/shoot.sh` screenshots it; use them to check a UI change. See `dev/demo/README.md`.
 - Run only the tests for what you changed (`pytest tests/plugins/test_<name>.py`); CI runs the full suite and `ruff check`.
 
 ## Rules

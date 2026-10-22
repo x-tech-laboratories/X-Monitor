@@ -1,0 +1,53 @@
+# A demo fleet for trying dashboard changes locally; run.sh renders it per port.
+#
+# Every state shows up within a minute: the HTTP and ping checks against this
+# machine come up online, the dead endpoint fails, and the SSH-based monitors
+# point at a closed port so they stay unavailable. Nothing leaves the machine.
+
+notifications:
+  channels:
+    # A webhook to a closed local port, so the Notifications dialog has a channel to show.
+    - id: "demo-hook"
+      type: "webhook"
+      url: "http://127.0.0.1:9/hook"
+
+plugins:
+  - name: "Local Services"
+    type: "group"
+    children:
+      - name: "Dashboard Self"
+        id: "self-http"
+        type: "http"
+        url: "http://127.0.0.1:__PORT__/"
+        interval: 15
+        expect:
+          status: [200, 302, 307]
+      - name: "Dead Endpoint"
+        id: "dead-http"
+        type: "http"
+        url: "http://127.0.0.1:9/"
+        interval: 15
+      - name: "Loopback Ping"
+        id: "lo-ping"
+        type: "uptime"
+        target_host: "127.0.0.1"
+        interval: 15
+
+  - name: "Workstation"
+    type: "group"
+    children:
+      - name: "CPU"
+        id: "ws-cpu"
+        type: "cpu"
+        interval: 30
+        ssh_config:
+          host: "127.0.0.1"
+          port: 1
+      - name: "Nginx"
+        id: "ws-nginx"
+        type: "systemd_service"
+        service_name: "nginx.service"
+        interval: 30
+        ssh_config:
+          host: "127.0.0.1"
+          port: 1
