@@ -306,5 +306,5 @@ class TestOptionalLimits:
             "docs": {**_folder_status(state="syncing", need_bytes=500), "globalBytes": 1000},
             "photos": _folder_status(),
         })
-        assert _latest_status() == "online"
+        assert _latest_status() == "info"
         assert _latest_metric("folders_stalled") == 0
