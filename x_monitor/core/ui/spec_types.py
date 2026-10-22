@@ -50,7 +50,7 @@ class RepeatSpec(TypedDict, total=False):
     source: str                    # 'snapshot' (default) | 'setting' | 'metrics_prefix'
     container: str                 # 'chips' (default) | 'bars' | 'tiles' | anything else -> info_card grid
     bar_value: str                 # bars: item key the meter fills from (default item_value)
-    bar_max: float                 # bars: the value that fills a meter (default 100)
+    bar_max: Union[float, str]     # bars: the value that fills a meter (default 100), or 'largest' item at each refresh
     bar_marker: float              # bars: the warning tick, as a percentage
     item_label: str
     item_value: str

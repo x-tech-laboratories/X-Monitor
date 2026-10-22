@@ -128,7 +128,8 @@ container         ``'chips'`` (default) for label: value chips; ``'bars'`` for o
                   item and ``'tiles'`` for one status tile per item, both inside one panel
                   carrying the card's title; anything else for a grid of small info cards.
 bar_value         For ``'bars'``: the item key the meter fills from (default item_value).
-bar_max           For ``'bars'``: the value that fills a meter (default 100).
+bar_max           For ``'bars'``: the value that fills a meter (default 100), or
+                  ``'largest'`` to fill against the largest item's value at each refresh.
 bar_marker        For ``'bars'``: where to tick the warning level, as a percentage.
 item_label        Item key holding the label (``'key'`` for metrics_prefix, else
                   ``'label'``).

@@ -400,6 +400,12 @@ _LABEL_TRANSFORMS = {
 REPEAT_PANELS = ('bars', 'tiles')
 
 
+def _largest_bar_value(items: list, bar_value: str) -> float:
+    """The largest numeric meter value among the items, or zero when none has one."""
+    values = [item.get(bar_value) for item in items]
+    return max((value for value in values if isinstance(value, (int, float))), default=0.0)
+
+
 def render_repeat_card(plugin, page, repeat_spec: dict, title: Optional[str] = None):
     """Render one chip, card, meter or tile per item resolved from a repeat spec's data source;
     meters and tiles sit together in one titled panel."""
@@ -450,6 +456,7 @@ def render_repeat_card(plugin, page, repeat_spec: dict, title: Optional[str] = N
             with container:
                 ui.label(empty_text).classes('halon-caption')
             return
+        scale = _largest_bar_value(items, bar_value) if bar_max == 'largest' else bar_max
         with container:
             for item in items:
                 raw_label = str(item.get(item_label, ''))
@@ -467,7 +474,7 @@ def render_repeat_card(plugin, page, repeat_spec: dict, title: Optional[str] = N
                     chip_label(label, value, color)
                 elif container_kind == 'bars':
                     charts.meter_row(label or '--', value,
-                                     charts.fill_percent(item.get(bar_value), bar_max),
+                                     charts.fill_percent(item.get(bar_value), scale),
                                      color or charts.color_for(None), bar_marker)
                 elif container_kind == 'tiles':
                     charts.status_tile(label or '--', value, state)
