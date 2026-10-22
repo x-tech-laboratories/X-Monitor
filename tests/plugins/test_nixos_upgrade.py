@@ -471,8 +471,37 @@ def _poll_once(plugin, poll_result):
 
 
 class TestActions:
-    def test_both_actions_exposed(self, plugin):
-        assert {a['action_id'] for a in plugin.get_actions()} == {"update_flake", "switch"}
+    def test_every_action_exposed(self, plugin):
+        assert {a['action_id'] for a in plugin.get_actions()} == {"update_flake", "switch", "reboot"}
+
+    def test_reboot_asks_first(self, plugin):
+        reboot = next(a for a in plugin.get_actions() if a['action_id'] == "reboot")
+        assert reboot['confirm'] and reboot['variant'] == "danger"
+
+    def test_reboot_runs_on_the_target_as_root(self, make_plugin):
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "switch_agent": "builder"})
+        plan = p.plan_action("reboot")
+        assert plan.command == "sudo -n systemctl reboot" and plan.agent is None
+
+    def test_reboot_honours_require_sudo(self, make_plugin):
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "require_sudo": False})
+        assert p.plan_action("reboot").command == "systemctl reboot"
+
+    async def test_reboot_starts_no_job(self, plugin):
+        outcome = await _launch(plugin, "reboot")
+        assert outcome.success is True
+        assert plugin.jobs.running() is None
+
+    async def test_failed_reboot_logs_why(self, plugin):
+        plugin.plan_action("reboot")
+        outcome = plugin.interpret_action("reboot", CmdResult(1, "", "sudo: a password is required"))
+        assert outcome.success is False
+        assert any("password is required" in m for m, _ in outcome.logs)
+
+    async def test_reboot_refused_while_a_job_runs(self, plugin):
+        await _launch(plugin)
+        refused = plugin.plan_action("reboot")
+        assert any("already running" in m for m, _ in refused.logs)
 
     def test_unknown_action_is_unhandled(self, plugin):
         assert plugin.plan_action("nonsense") is None

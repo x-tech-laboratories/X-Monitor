@@ -17,7 +17,7 @@ and update jobs on another agent's host, which with `target_host` lets one host
 build every other's closure and activate it over SSH; the probe stays on the target,
 so drift is still read from the machine it describes. Actions launch
 detached jobs on the target: `nix flake update` on the flake, and
-`nixos-rebuild switch --flake`; a `github:` flake with a `push_ssh_key` is
+`nixos-rebuild switch --flake`; Reboot runs `systemctl reboot` on the target itself; a `github:` flake with a `push_ssh_key` is
 updated in a fresh clone that is committed and pushed back over SSH. With `auto_switch`, drift that outlasts
 `auto_switch_after` launches the switch itself, once per target closure, and
 only when the flake changed after the running generation was made. `update_at` and
@@ -677,6 +677,8 @@ class NixosUpgrade(Plugin):
              'variant': 'secondary', 'icon': 'sync'},
             {'name': 'Rebuild & Switch', 'action_id': 'switch',
              'variant': 'primary', 'icon': 'rocket_launch'},
+            {'name': 'Reboot', 'action_id': 'reboot', 'variant': 'danger', 'icon': 'restart_alt',
+             'confirm': f'Reboot {self.name}? Everything running on it stops until it is back up.'},
         ]
 
     def _update_command(self) -> str:
@@ -734,11 +736,14 @@ class NixosUpgrade(Plugin):
         return f'{switch}; rc=$?; {self.post_switch}; (exit $rc)'
 
     def plan_action(self, action_id: str, **kwargs):
-        if action_id not in ('update_flake', 'switch', 'build'):
+        if action_id not in ('update_flake', 'switch', 'build', 'reboot'):
             return None
         if self._running_job() is not None:
             return CollectResult.failed('A job is already running for this monitor',
                                         level='WARNING', status=None)
+        # The reboot is for the probed machine, so it ignores switch_agent and runs no job.
+        if action_id == 'reboot':
+            return ActionPlan(f'{self._sudo()}systemctl reboot')
         if action_id == 'update_flake' and not (self.local_path or self.pushes_to_github):
             return CollectResult.failed(
                 f"Cannot update {self.flake}: only a local checkout, or a github: flake with a "
@@ -754,6 +759,11 @@ class NixosUpgrade(Plugin):
         return ActionPlan(detached.launch_command(command, workdir), agent=self._agent_for(kind))
 
     def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
+        if action_id == 'reboot':
+            if result.exit_code != 0:
+                return CollectResult.failed(
+                    f"Failed to reboot: {(result.stderr or result.stdout).strip()[:200]}")
+            return CollectResult(logs=[('Reboot requested', 'INFO')], success=True)
         if action_id not in ('update_flake', 'switch', 'build'):
             return result.exit_code == 0
 
