@@ -54,7 +54,9 @@ def _oneshot_output(result="success", exit_code="0", epoch=None,
 
 
 def _run(plugin, outputs):
-    """outputs: list of (exit_code, stdout, stderr) tuples matching plugin.commands() order."""
+    """outputs: list of (exit_code, stdout, stderr) tuples matching plugin.commands() order; the boot state defaults to enabled."""
+    if len(outputs) == 2:
+        outputs = [*outputs, (0, "enabled", "")]
     results = [CmdResult(*o) for o in outputs]
     result = plugin.parse(results)
     plugin.storage.apply(result)
@@ -119,6 +121,10 @@ class TestOneshotMode:
     async def test_successful_recent_run_is_online(self, plugin):
         _run(plugin, [(0, _oneshot_output("success", "0"), ""), (0, "logs", "")])
         assert _latest_status("test-upgrade") == "online"
+
+    async def test_boot_state_metric(self, plugin):
+        _run(plugin, [(0, _oneshot_output("success", "0"), ""), (0, "", ""), (1, "disabled", "")])
+        assert _latest_metric("test-upgrade", "enabled") == pytest.approx(0.0)
 
     async def test_never_run_is_failed(self, plugin):
         _run(plugin, [(0, "result=empty exit=empty epoch=0 active=inactive sub=dead", ""), (0, "", "")])
@@ -303,9 +309,30 @@ class TestActions:
     async def test_unknown_action_returns_false(self, plugin):
         assert plugin.plan_action("nuke") is None
 
-    def test_get_actions_includes_restart_stop_enable_disable(self, plugin):
-        ids = {a["action_id"] for a in plugin.get_actions()}
+    def test_get_actions_includes_restart_and_stop(self, plugin):
+        ids = {a.get("action_id") for a in plugin.get_actions()}
         assert "restart_service" in ids
         assert "stop_service" in ids
-        assert "enable_service" in ids
-        assert "disable_service" in ids
+
+    def test_boot_is_one_toggle_over_enable_and_disable(self, plugin):
+        toggles = [a for a in plugin.get_actions() if a.get("kind") == "toggle"]
+        assert toggles == [{"name": "Start on Boot", "kind": "toggle", "metric": "enabled",
+                            "on_action_id": "enable_service", "off_action_id": "disable_service"}]
+        assert not {"enable_service", "disable_service"} & {a.get("action_id") for a in plugin.get_actions()}
+
+    def test_boot_state_is_queried(self, plugin):
+        assert plugin.commands()[-1].text == "systemctl is-enabled nginx.service"
+
+    @pytest.mark.parametrize("answer,expected", [
+        ((0, "enabled", ""), 1.0),
+        ((0, "enabled-runtime", ""), 1.0),
+        ((1, "disabled", ""), 0.0),
+    ])
+    async def test_boot_state_metric(self, plugin, answer, expected):
+        _run(plugin, [(0, "active", ""), (0, "", ""), answer])
+        assert _latest_metric("test-nginx", "enabled") == pytest.approx(expected)
+
+    @pytest.mark.parametrize("answer", [(0, "static", ""), (1, "masked", ""), (1, "", "Failed to get unit file state")])
+    async def test_a_unit_that_cannot_be_switched_records_no_boot_state(self, plugin, answer):
+        result = _run(plugin, [(0, "active", ""), (0, "", ""), answer])
+        assert "enabled" not in result.metrics

@@ -61,11 +61,17 @@ class ActionButtonSpec(TypedDict, total=False):
     "custom action button" system rendered by main_dashboard.py's plugin
     detail header. Distinct from spec.py's ButtonSpec (a UI_SPEC-embedded
     button rendered inline in the page body via render_buttons); this one
-    is always rendered in the fixed header regardless of UI_SPEC."""
+    is always rendered in the fixed header regardless of UI_SPEC. With
+    kind 'toggle' it is a switch instead: its position is the latest value
+    of `metric`, and flipping it runs `on_action_id` or `off_action_id`."""
     action_id: str
     name: str
     icon: str
     variant: str
+    kind: str
+    metric: str
+    on_action_id: str
+    off_action_id: str
 
 
 @runtime_checkable

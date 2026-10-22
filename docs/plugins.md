@@ -354,7 +354,9 @@ Monitors systemd units over SSH. Operates in two modes depending on whether `max
 
 **Oneshot metrics**: `last_run_epoch` (Unix timestamp), `last_run_success` (1/0)
 
-**Actions**: Restart Service, Stop Service, Enable on Boot, Disable on Boot
+**Both modes**: `enabled` (1/0), from `systemctl is-enabled`; not recorded for units that cannot be enabled or disabled, such as static or masked ones
+
+**Actions**: Restart Service, Stop Service, and a Start on Boot switch that enables or disables the unit
 
 The service detail UI also includes:
 
