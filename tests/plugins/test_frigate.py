@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.frigate import Frigate, _parse_config, _parse_response
-from vigil.core.connectors.types import HttpRequest, HttpResult, IoActionPlan
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.frigate import Frigate, _parse_config, _parse_response
+from x_monitor.core.connectors.types import HttpRequest, HttpResult, IoActionPlan
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -293,9 +293,9 @@ class TestRecordingsSyncActions:
                                             'error_message': error_message}})
 
     def _run(self, plugin, action_id, post, gets):
-        with patch('vigil.plugins.frigate.requests.post', return_value=post) as p_post, \
-             patch('vigil.plugins.frigate.requests.get', side_effect=gets), \
-             patch('vigil.plugins.frigate.time.sleep'):
+        with patch('x_monitor.plugins.frigate.requests.post', return_value=post) as p_post, \
+             patch('x_monitor.plugins.frigate.requests.get', side_effect=gets), \
+             patch('x_monitor.plugins.frigate.time.sleep'):
             outcome = plugin.interpret_action(action_id, plugin.plan_action(action_id).call())
         return outcome, p_post
 
@@ -365,7 +365,7 @@ class TestRecordingsSyncActions:
 
     async def test_unreachable_api_fails(self, plugin):
         import requests as _requests
-        with patch('vigil.plugins.frigate.requests.post',
+        with patch('x_monitor.plugins.frigate.requests.post',
                    side_effect=_requests.RequestException("boom")):
             outcome = plugin.interpret_action(
                 'sync_recordings', plugin.plan_action('sync_recordings').call())

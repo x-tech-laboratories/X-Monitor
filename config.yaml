@@ -1,12 +1,12 @@
-# Vigil Configuration Sample
+# X-Monitor Configuration Sample
 #
 # This is a minimal example. A full deployment (the TechNet homelab) is defined
-# declaratively in NixOS via services.vigil — see that module for a complete,
+# declaratively in NixOS via services.x-monitor — see that module for a complete,
 # real-world plugin tree.
 
 # Database settings
 database:
-  path: "vigil.db"
+  path: "x-monitor.db"
 
 # Log storage settings
 # Collected log lines (e.g. journald output) are stored persistently and
@@ -48,10 +48,10 @@ logging:
 #     interval: 30            # seconds between pushes
 #     # InfluxDB 2.x:
 #     org: "my-org"
-#     bucket: "vigil"
+#     bucket: "x-monitor"
 #     token: "my-api-token"
 #     # InfluxDB 1.x (use instead of org/bucket/token):
-#     # database: "vigil"
+#     # database: "x-monitor"
 
 # Global SSH connection defaults.
 # Merged into every plugin's `ssh_config` unless the plugin overrides a given
@@ -69,14 +69,14 @@ ssh_defaults:
 # auth:
 #   username: "admin"
 #   password: "change-me"                       # or password_file, below
-#   # password_file: "/run/secrets/vigil_password"
-#   # session_secret_file: "/run/secrets/vigil_session_key"  # fixed signing key,
+#   # password_file: "/run/secrets/x_monitor_password"
+#   # session_secret_file: "/run/secrets/x_monitor_session_key"  # fixed signing key,
 #   #                       so restarts do not sign everyone out; else generated
 #   # session_hours: 12     # How long a sign-in lasts
 #   # remember_days: 30     # How long "keep me signed in" lasts
 
 # Theme — the dashboard is themed with Halon, whose token set lives in
-# vigil/core/ui/static/halon-tokens.css. Every field here is optional; each one
+# x_monitor/core/ui/static/halon-tokens.css. Every field here is optional; each one
 # overrides a single Halon token, in both the light and the dark scheme, so an
 # override that only suits one of them is yours to audit.
 theme:
@@ -93,19 +93,19 @@ theme:
 
 # Notifications (optional) — see docs/notifications.md.
 # notifications:
-#   base_url: "https://vigil.lan"   # the dashboard's address, for links to a monitor
+#   base_url: "https://x-monitor.lan"   # the dashboard's address, for links to a monitor
 #   channels:
 #     - id: laptop
 #       type: desktop               # shown by a notify-only agent in your desktop session
 #       agent: laptop-desktop
-#       icon: vigil                 # or an icon theme name, or an image path on that computer
+#       icon: x-monitor                 # or an icon theme name, or an image path on that computer
 #       urgency: {failed: critical, recovered: low}
 #     - id: phone
 #       type: ntfy                  # phone notifications through ntfy.sh or your own server
 #       topic_file: "/run/secrets/ntfy_topic"
 #     - id: home-assistant
 #       type: webhook               # JSON to any URL; `payload:` sends a template instead
-#       url_file: "/run/secrets/ha_vigil_webhook_url"
+#       url_file: "/run/secrets/ha_x_monitor_webhook_url"
 #   defaults:                       # every monitor's rule; a monitor's `notify:` overrides it
 #     on: [failed]                  # failed, warning, unavailable
 #     after: 1                      # problem cycles in a row before notifying
@@ -214,7 +214,7 @@ plugins:
         interval: 1h
         max_age: 1d
         repo: "/path/to/borg/repo"
-        # passphrase_command: "cat /etc/vigil/borg.pass"   # for encrypted repos
+        # passphrase_command: "cat /etc/x_monitor/borg.pass"   # for encrypted repos
         # require_sudo: true   # for a root-only repo; needs passwordless sudo
         #                      # for borg on the target host
         # collect_stats: true  # also run `borg info` for size/dedup metrics
@@ -234,7 +234,7 @@ plugins:
         # one_file_system: true                # don't cross mounts (default)
         # compression: "zstd"                  # or "lz4", "zstd,10", "none"
         # archive_prefix: "nightly"            # archives: "<prefix>-<UTC stamp>"
-        # cache_dir: "/var/cache/vigil-borg"   # persistent BORG_BASE_DIR; must be
+        # cache_dir: "/var/cache/x-monitor-borg"   # persistent BORG_BASE_DIR; must be
         #                                      # writable, else every backup is a
         #                                      # full re-read instead of incremental;
         #                                      # when set, monitoring polls reuse it

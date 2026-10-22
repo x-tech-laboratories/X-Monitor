@@ -1,7 +1,7 @@
 
 import pytest
 
-from vigil.plugins.unbound import (
+from x_monitor.plugins.unbound import (
     Unbound,
     SCRIPT_SEP,
     _build_probe_script,
@@ -9,8 +9,8 @@ from vigil.plugins.unbound import (
     _resolved_ok,
     _split_response,
 )
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {

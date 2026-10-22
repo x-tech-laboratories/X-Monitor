@@ -1,8 +1,8 @@
 import pytest
 from typing import List
 
-from vigil.plugins.base.plugin_base import Plugin
-from vigil.core.connectors.types import CmdResult, Command, CollectResult
+from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors.types import CmdResult, Command, CollectResult
 
 
 class _Probe(Plugin):
@@ -33,7 +33,7 @@ class TestLatestSnapshot:
         assert plugin.storage.latest_snapshot(default=[]) == [{"pid": 1}, {"pid": 2}]
 
     def test_scoped_by_plugin_id_not_name(self, plugin, db_manager):
-        from vigil.core.connectors.types import CollectResult
+        from x_monitor.core.connectors.types import CollectResult
         # A different plugin id writing a snapshot must not leak into this one.
         db_manager.apply_result("host1", "someone-else", "probe",
                                 CollectResult(snapshot=[{"pid": 99}]))

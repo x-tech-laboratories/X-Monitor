@@ -1,9 +1,9 @@
 import pytest
 
 
-from vigil.plugins.power import Power, _parse_uevents
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.power import Power, _parse_uevents
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-power", "id": "test-power", "ssh_config": {"host": "test.host"}}
 

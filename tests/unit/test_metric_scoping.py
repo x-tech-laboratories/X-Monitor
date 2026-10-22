@@ -1,9 +1,9 @@
 import pytest
 from typing import List
 
-from vigil.plugins.base.plugin_base import Plugin
-from vigil.core.connectors.types import CmdResult, Command, CollectResult
-from vigil.core.database.database import db, Event, Metric
+from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors.types import CmdResult, Command, CollectResult
+from x_monitor.core.database.database import db, Event, Metric
 
 
 class _Probe(Plugin):
@@ -51,7 +51,7 @@ class TestMetricScoping:
 
 class TestLogLineScoping:
     def test_log_lines_are_written_under_the_id(self, colliding, db_manager):
-        from vigil.core.database.database import LogLine
+        from x_monitor.core.database.database import LogLine
         a, _ = colliding
         a.storage.apply(CollectResult(log_lines=[("boot ok", "INFO", "2026-01-01T00:00:00")]))
         db_manager.flush()
@@ -60,7 +60,7 @@ class TestLogLineScoping:
         assert row.plugin_id == "odin-borgmatic-on-disk"
 
     def test_identical_lines_from_siblings_both_survive(self, colliding, db_manager):
-        from vigil.core.database.database import LogLine
+        from x_monitor.core.database.database import LogLine
         a, b = colliding
         for p in (a, b):
             p.storage.apply(CollectResult(log_lines=[
@@ -75,11 +75,11 @@ class TestLogLineScoping:
 class TestDuplicateIdDetection:
     def _engine(self, tmp_path, plugins):
         from unittest.mock import patch
-        from vigil.__main__ import VigilEngine
+        from x_monitor.__main__ import XMonitorEngine
         cfg = tmp_path / "c.yaml"
         cfg.write_text("plugins: []\n")
-        with patch("vigil.__main__.VigilEngine._connect", create=True):
-            engine = VigilEngine(str(cfg), db_path_override=str(tmp_path / "e.db"))
+        with patch("x_monitor.__main__.XMonitorEngine._connect", create=True):
+            engine = XMonitorEngine(str(cfg), db_path_override=str(tmp_path / "e.db"))
         engine.plugins = plugins
         return engine
 
@@ -112,7 +112,7 @@ class TestDuplicateIdDetection:
 class TestMigration:
     def test_adds_source_id_to_a_pre_existing_event_table(self, tmp_path):
         import sqlite3
-        from vigil.core.database.database import DatabaseManager, db as peewee_db
+        from x_monitor.core.database.database import DatabaseManager, db as peewee_db
 
         path = tmp_path / "old.db"
         old = sqlite3.connect(path)
@@ -132,7 +132,7 @@ class TestMigration:
             peewee_db.close()
 
     def test_migration_is_idempotent(self, tmp_path):
-        from vigil.core.database.database import DatabaseManager, db as peewee_db
+        from x_monitor.core.database.database import DatabaseManager, db as peewee_db
         path = tmp_path / "twice.db"
         if not peewee_db.is_closed():
             peewee_db.close()

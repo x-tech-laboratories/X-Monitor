@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import MagicMock
-from vigil.plugins.group import Group
-from vigil.core.connectors.types import Status
-from vigil.core.database.database import db, StatusHistory
+from x_monitor.plugins.group import Group
+from x_monitor.core.connectors.types import Status
+from x_monitor.core.database.database import db, StatusHistory
 
 
 GROUP_CFG = {

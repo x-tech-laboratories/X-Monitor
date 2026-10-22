@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from vigil.core.notifications.maintenance import parse_windows, window
+from x_monitor.core.notifications.maintenance import parse_windows, window
 
 # 2026-09-27 is a Sunday.
 SUNDAY = datetime(2026, 9, 27)

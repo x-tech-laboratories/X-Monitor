@@ -2,7 +2,7 @@
 
 import pytest
 
-from vigil.core.ui.spec import COLOR_RULES, _card_color_rule
+from x_monitor.core.ui.spec import COLOR_RULES, _card_color_rule
 
 
 class TestInlineThresholds:

@@ -4,9 +4,9 @@ import time
 from datetime import datetime
 import pytest
 
-from vigil.plugins.borg import Borg, _frame_line
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.borg import Borg, _frame_line
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -184,7 +184,7 @@ class TestFailures:
     async def test_a_cache_lock_timeout_is_unavailable(self, plugin, run_cycle):
         _collect(plugin, run_cycle, CmdResult(
             2, "", "Failed to create/acquire the lock "
-                   "/var/cache/vigil-borg/.cache/borg/abc/lock.exclusive (timeout)."))
+                   "/var/cache/x-monitor-borg/.cache/borg/abc/lock.exclusive (timeout)."))
         assert _latest_status("test-borg") == "unavailable"
 
     async def test_missing_repo_config_is_failed(self, make_plugin, run_cycle):
@@ -228,8 +228,8 @@ class TestCommand:
 
     def test_command_sets_writable_borg_base_dir(self, make_plugin):
         p = make_plugin(Borg, BASE_CFG)
-        assert 'BORG_BASE_DIR="$__vigil_poll_base"' in p._list_command()
-        assert "__vigil_poll_base=$(mktemp -d)" in p._poll_command()
+        assert 'BORG_BASE_DIR="$__x_monitor_poll_base"' in p._list_command()
+        assert "__x_monitor_poll_base=$(mktemp -d)" in p._poll_command()
 
     def test_passphrase_passed_as_env_not_argv(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "passphrase": "s3cret"})
@@ -283,10 +283,10 @@ class TestCommand:
         assert "--last 1" in p._list_command()
 
     def test_ssh_key_sets_borg_rsh(self, make_plugin):
-        p = make_plugin(Borg, {**BASE_CFG, "ssh_key": "/run/secrets/vigil_ssh_key"})
+        p = make_plugin(Borg, {**BASE_CFG, "ssh_key": "/run/secrets/x_monitor_ssh_key"})
         cmd = p._list_command()
         assert "BORG_RSH=" in cmd
-        assert "/run/secrets/vigil_ssh_key" in cmd
+        assert "/run/secrets/x_monitor_ssh_key" in cmd
         assert "IdentitiesOnly=yes" in cmd
         assert "BatchMode=yes" in cmd
 
@@ -308,7 +308,7 @@ class TestCommand:
         assert "BORG_RSH=" not in make_plugin(Borg, BASE_CFG)._list_command()
 
     def test_borg_defaults_to_a_longer_timeout(self, make_plugin):
-        from vigil.core.connectors.ssh_connector import COLLECT_TIMEOUT
+        from x_monitor.core.connectors.ssh_connector import COLLECT_TIMEOUT
         p = make_plugin(Borg, BASE_CFG)
         assert p.timeout == Borg.DEFAULT_TIMEOUT
         assert p.timeout > COLLECT_TIMEOUT
@@ -401,7 +401,7 @@ class TestLockHints:
     async def test_a_cache_lock_points_at_the_shared_cache_dir(self, plugin, run_cycle):
         result = _collect(plugin, run_cycle, CmdResult(
             2, "", "Failed to create/acquire the lock "
-                   "/var/cache/vigil-borg/.cache/borg/abc123/lock.exclusive (timeout)."))
+                   "/var/cache/x-monitor-borg/.cache/borg/abc123/lock.exclusive (timeout)."))
         messages = " | ".join(m for m, _ in result.logs)
         assert "chunks cache" in messages
         assert "cache_dir" in messages
@@ -415,14 +415,14 @@ class TestPollDeadline:
 
     def test_a_sudo_poll_is_bounded_by_a_root_side_timeout(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "require_sudo": True, "timeout": "30m"})
-        assert 'timeout -k 5 "$(__vigil_poll_left)"' in p._list_command()
-        assert 'timeout -k 5 "$(__vigil_poll_left)"' in p._info_command()
+        assert 'timeout -k 5 "$(__x_monitor_poll_left)"' in p._list_command()
+        assert 'timeout -k 5 "$(__x_monitor_poll_left)"' in p._info_command()
 
     def test_one_deadline_covers_the_whole_poll(self, make_plugin):
         # Given the full timeout each, two calls run in sequence could together outlast the monitor's interval
         cmd = make_plugin(Borg, {**BASE_CFG, "timeout": "30m"})._poll_command()
         assert cmd.count("+ 1800 ))") == 1
-        assert cmd.count('timeout -k 5 "$(__vigil_poll_left)"') == 2
+        assert cmd.count('timeout -k 5 "$(__x_monitor_poll_left)"') == 2
 
     def test_the_deadline_sits_after_sudo_so_root_owns_it(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "require_sudo": True, "timeout": "30m"})
@@ -525,7 +525,7 @@ class TestBackupCommand:
 
     def test_backup_uses_persistent_cache_dir(self, make_plugin):
         cmd = make_plugin(Borg, BACKUP_CFG)._backup_command()
-        assert "BORG_BASE_DIR=/var/cache/vigil-borg" in cmd
+        assert "BORG_BASE_DIR=/var/cache/x-monitor-borg" in cmd
         assert "mktemp" not in cmd
 
     def test_cache_dir_configurable(self, make_plugin):
@@ -540,7 +540,7 @@ class TestBackupCommand:
         cmd = make_plugin(Borg, {**BASE_CFG, "cache_dir": "/srv/borgcache"})._poll_command()
         assert "$(mktemp -d)" in cmd
         assert "BORG_BASE_DIR=/srv/borgcache" in cmd
-        assert 'BORG_BASE_DIR="$__vigil_poll_base"' not in cmd
+        assert 'BORG_BASE_DIR="$__x_monitor_poll_base"' not in cmd
 
     def test_configured_cache_dir_applies_to_polls(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "cache_dir": "/srv/borgcache"})
@@ -591,10 +591,10 @@ class TestBackupCommand:
 def _poll(size, exit_code, alive, out):
     """Build the raw stdout one poll_command produces on the target."""
     return CmdResult(0, (
-        f"===VIGIL_SIZE===\n{size}\n"
-        f"===VIGIL_EXIT===\n{exit_code if exit_code is not None else ''}\n"
-        f"===VIGIL_ALIVE===\n{1 if alive else 0}\n"
-        f"===VIGIL_OUT===\n{out}"
+        f"===XMONITOR_SIZE===\n{size}\n"
+        f"===XMONITOR_EXIT===\n{exit_code if exit_code is not None else ''}\n"
+        f"===XMONITOR_ALIVE===\n{1 if alive else 0}\n"
+        f"===XMONITOR_OUT===\n{out}"
     ), "")
 
 
@@ -605,7 +605,7 @@ def backup_plugin(make_plugin):
 
 async def _launch(plugin, action_id="run_backup", pid=4242):
     """Drive plan_action -> ActionPlan (launch) -> interpret_action, mirroring
-    VigilEngine.dispatch_action for a launched detached job. Fakes the launch
+    XMonitorEngine.dispatch_action for a launched detached job. Fakes the launch
     command's stdout as the remote pid."""
     plan = plugin.plan_action(action_id)
     if plan is None:
@@ -811,7 +811,7 @@ class TestRepoStats:
 
 class TestEventLogging:
     async def test_messages_land_where_the_ui_reads_them(self, plugin, run_cycle, db_manager):
-        from vigil.core.database.database import Event, LogLine
+        from x_monitor.core.database.database import Event, LogLine
         _collect(plugin, run_cycle, CmdResult(0, _list_json(int(time.time()) - 60), ""))
         db_manager.flush()
 
@@ -870,7 +870,7 @@ class TestArchiveCache:
         assert "original" not in archives[0]
 
 
-CANARY_CFG = {**BASE_CFG, "canary_path": "/Storage/System/.vigil-canary", "collect_stats": False}
+CANARY_CFG = {**BASE_CFG, "canary_path": "/Storage/System/.x-monitor-canary", "collect_stats": False}
 
 
 def _cycle_with(plugin, run_cycle, **extra):
@@ -892,12 +892,12 @@ class TestRestoreCanary:
         cmd = p.commands()[0].text
         assert p._poll_calls == ['list', 'canary', 'canary_live']
         assert "extract --stdout" in cmd
-        assert "host-2024 Storage/System/.vigil-canary" in cmd.replace("'", "")
+        assert "host-2024 Storage/System/.x-monitor-canary" in cmd.replace("'", "")
 
     async def test_the_live_canary_is_read_without_sudo_first(self, make_plugin, run_cycle, tmp_path):
         import subprocess
-        from vigil.plugins.borg.shell import _split_poll
-        canary = tmp_path / ".vigil-canary"
+        from x_monitor.plugins.borg.shell import _split_poll
+        canary = tmp_path / ".x-monitor-canary"
         canary.write_text("token")
         p = make_plugin(Borg, {**CANARY_CFG, "canary_path": str(canary), "require_sudo": True})
         _cycle_with(p, run_cycle)
@@ -1064,7 +1064,7 @@ LISTING = "\n".join([
 def _run_filter(member: str, lines: str, tmp_path) -> str:
     """Runs the children filter the browse command uses over a borg listing, in a real shell."""
     import subprocess
-    from vigil.plugins.borg.parsing import _children_filter
+    from x_monitor.plugins.borg.parsing import _children_filter
     listing = tmp_path / "listing"
     listing.write_text(lines + "\n")
     return subprocess.run(["sh", "-c", f"{_children_filter(member)} {listing}"],
@@ -1116,7 +1116,7 @@ class TestBrowse:
         assert outcome.success is True and "3 entries" in outcome.metadata['content']
 
     async def test_a_real_item_beats_a_made_up_folder(self):
-        from vigil.plugins.borg.parsing import _parse_listing
+        from x_monitor.plugins.borg.parsing import _parse_listing
         entries = _parse_listing("d\t\t\tx/etc\nd\t0\t2026-09-20T10:00:00\tx/etc")
         assert len(entries) == 1 and entries[0]['mtime'] == "2026-09-20 10:00"
 

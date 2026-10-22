@@ -1,7 +1,7 @@
-# Vigil Plugin Reference
+# X-Monitor Plugin Reference
 
-Every monitor type Vigil ships, with its config keys, metrics, actions, and
-config examples. For what Vigil is and how to run it, see the
+Every monitor type X-Monitor ships, with its config keys, metrics, actions, and
+config examples. For what X-Monitor is and how to run it, see the
 [README](../README.md); for agent setup, see [Agent](agent.md).
 
 ## Contents
@@ -57,7 +57,7 @@ config examples. For what Vigil is and how to run it, see the
 |------|----------|------------|-------------|---------|
 | [`uptime`](#uptime)                     | Host reachability                     | ICMP ping                                        | `up`, `latency_ms`                              | — |
 | [`push`](#push)                         | External heartbeat (dead man's switch) | REST API (caller pushes in)                     | `last_push_epoch`, `reported_up`, `value`       | — |
-| [`http`](#http)                         | HTTP(S)/WebSocket endpoint health     | HTTP from the Vigil host, or `websocat` over SSH | `probe_ok`, `probe_status`, `probe_latency_ms`  | — |
+| [`http`](#http)                         | HTTP(S)/WebSocket endpoint health     | HTTP from the X-Monitor host, or `websocat` over SSH | `probe_ok`, `probe_status`, `probe_latency_ms`  | — |
 | [`dns_record`](#dns_record)             | DNS record resolution                 | DNS query (via dnspython, in-process)            | `resolved`, `ttl`, `matches_expected`            | — |
 | [`ddns_updater`](#ddns_updater)         | Dynamic DNS record kept current       | Public IP lookup + DNS query (in-process)        | `in_sync`, `last_update_epoch`                   | Force Update |
 | [`systemd_service`](#systemd_service)   | systemd unit state / last run         | SSH (`systemctl`)                                | `active` *or* `last_run_epoch`, `last_run_success` | Restart, Stop, Enable, Disable |
@@ -125,9 +125,9 @@ Checks host availability using ICMP ping.
 ---
 
 ### `push`
-The inverse of every other monitor: instead of Vigil reaching out to a target, an external script, cron job, or task with no fixed host calls Vigil's REST API to say "I'm alive." Vigil reports `failed` once a heartbeat hasn't arrived within `max_age` — a dead man's switch, not a poll.
+The inverse of every other monitor: instead of X-Monitor reaching out to a target, an external script, cron job, or task with no fixed host calls X-Monitor's REST API to say "I'm alive." X-Monitor reports `failed` once a heartbeat hasn't arrived within `max_age` — a dead man's switch, not a poll.
 
-`interval` controls how often Vigil *checks* for staleness, not how often heartbeats are expected — that's `max_age`'s job. A missing `max_age` defaults to twice the interval, tolerating one missed beat before alarming.
+`interval` controls how often X-Monitor *checks* for staleness, not how often heartbeats are expected — that's `max_age`'s job. A missing `max_age` defaults to twice the interval, tolerating one missed beat before alarming.
 
 | Option      | Description                                                                 |
 |-------------|------------------------------------------------------------------------------|
@@ -150,10 +150,10 @@ To push a heartbeat, hit `GET` or `POST /api/push/{id}/{token}`, optionally with
 
 ```bash
 # At the end of the cron job:
-curl "https://vigil.example.com/api/push/nightly-backup/a1b2c3d4e5f6...?status=up"
+curl "https://x-monitor.example.com/api/push/nightly-backup/a1b2c3d4e5f6...?status=up"
 
 # Or report a failure the job detected itself, while still checking in on time:
-curl "https://vigil.example.com/api/push/nightly-backup/a1b2c3d4e5f6...?status=down&msg=disk+full"
+curl "https://x-monitor.example.com/api/push/nightly-backup/a1b2c3d4e5f6...?status=down&msg=disk+full"
 ```
 
 ---
@@ -161,7 +161,7 @@ curl "https://vigil.example.com/api/push/nightly-backup/a1b2c3d4e5f6...?status=d
 ### `http`
 Generic endpoint probe: is this URL reachable and answering sanely, and how fast. Covers the thin "GET this URL with this auth, check the body looks right" service checks that don't warrant a dedicated plugin. Two probe kinds, selected by the URL scheme:
 
-- **`http://` / `https://`** — the request runs from the Vigil host (the URL must be reachable from it), with configurable method, headers, body and basic auth. Latency is recorded and charted.
+- **`http://` / `https://`** — the request runs from the X-Monitor host (the URL must be reachable from it), with configurable method, headers, body and basic auth. Latency is recorded and charted.
 - **`ws://` / `wss://`** — the probe pipes `body` into `websocat` on the *target* over SSH (websocat must be installed there); on agent-backed hosts the agent samples it locally. Success is a reply matching `expect`.
 
 A reply matching every expectation is online; anything else — a connection failure, an unexpected status, or a body that fails the `expect` checks (e.g. a login page served with a 200) — is failed. There is no warning tier.
@@ -187,8 +187,8 @@ A reply matching every expectation is online; anything else — a connection fai
 - name: "Calibre-Web"
   type: "http"
   url: "http://books.example.com:8083/opds"
-  username: "vigil"
-  password_command: "cat /run/secrets/calibre-vigil"
+  username: "x-monitor"
+  password_command: "cat /run/secrets/calibre-x-monitor"
   check_title: "OPDS FEED"
   expect:
     body_contains: "<feed"
@@ -201,8 +201,8 @@ A reply matching every expectation is online; anything else — a connection fai
   method: "PROPFIND"
   headers: { "Depth": "0", "Content-Type": "application/xml" }
   body: '<?xml version="1.0"?><propfind xmlns="DAV:"><prop><current-user-principal/></prop></propfind>'
-  username: "vigil"
-  password_command: "cat /run/secrets/radicale-vigil"
+  username: "x-monitor"
+  password_command: "cat /run/secrets/radicale-x-monitor"
   check_title: "PROPFIND"
   expect:
     status: 207
@@ -301,7 +301,7 @@ The domain is worth hiding for the same reason the update URL is: it names the c
 - name: "DDNS"
   id: "ddns-home"
   type: "ddns_updater"
-  domain_file: "/run/secrets/rendered/vigil-ddns-domain"
+  domain_file: "/run/secrets/rendered/x-monitor-ddns-domain"
   update_url_file: "/run/secrets/freedns_update_url"
   interval: 5m
 ```
@@ -419,9 +419,9 @@ Tracks a NixOS host against the flake it is deployed from: whether the running s
 
 Drift is a comparison of two store paths — `readlink -f /run/current-system` against what `nix eval` says `…config.system.build.toplevel` is — so it is exact rather than inferred from a `configurationRevision` that a config may never set.
 
-Two cadences share one monitor. Every `interval` it runs one cheap script (`readlink`, `stat`, `nixos-version`) and re-checks drift against the last evaluation, so a completed switch clears the flag on the next cycle. Every `eval_interval` it additionally runs `nix eval` and `nix flake metadata` — the expensive half. The last evaluation is stored with the monitor, so a Vigil restart resumes that schedule instead of re-evaluating. A failed evaluation is not held for the whole `eval_interval`: it is retried after `retry_interval`, so a fixed flake or a restored network clears the error promptly. A poll from the dashboard always runs the full evaluation. When the running closure changes between evaluations — a deploy landed — the monitor re-evaluates before judging drift, so a system that is *newer* than the stored target is not reported as out of date.
+Two cadences share one monitor. Every `interval` it runs one cheap script (`readlink`, `stat`, `nixos-version`) and re-checks drift against the last evaluation, so a completed switch clears the flag on the next cycle. Every `eval_interval` it additionally runs `nix eval` and `nix flake metadata` — the expensive half. The last evaluation is stored with the monitor, so a X-Monitor restart resumes that schedule instead of re-evaluating. A failed evaluation is not held for the whole `eval_interval`: it is retried after `retry_interval`, so a fixed flake or a restored network clears the error promptly. A poll from the dashboard always runs the full evaluation. When the running closure changes between evaluations — a deploy landed — the monitor re-evaluates before judging drift, so a system that is *newer* than the stored target is not reported as out of date.
 
-Both actions launch a **detached** job on the target, polled to completion by this monitor's own cycle (see [Job control](develop.md#job-control)), so a `nixos-rebuild switch` survives a dropped SSH connection and a Vigil restart. Keep `interval` at a few minutes if you want a running job's output to advance at that rate.
+Both actions launch a **detached** job on the target, polled to completion by this monitor's own cycle (see [Job control](develop.md#job-control)), so a `nixos-rebuild switch` survives a dropped SSH connection and a X-Monitor restart. Keep `interval` at a few minutes if you want a running job's output to advance at that rate.
 
 | Option | Description |
 |--------|-------------|
@@ -449,7 +449,7 @@ Both actions launch a **detached** job on the target, polled to completion by th
 | `build_at` | Launch the build action every day at this local time, e.g. `"02:30"` (default: unset) |
 | `switch_wrapper` | Command the switch runs under, outside `sudo`, e.g. `["systemd-inhibit", "--what=idle:sleep", "--mode=block"]` to keep a laptop or phone awake through it |
 | `push_ssh_key` | Private key, on the host Update Flake runs on, that can push to a `github:` flake's repo, such as a write deploy key. Update Flake is offered for a `github:` flake only when this is set. `github.com` must already be in that host's known_hosts, since the host key is checked strictly (default: unset) |
-| `commit_author` | Author of the commit Update Flake pushes to a `github:` flake (default: `Vigil <vigil@localhost>`) |
+| `commit_author` | Author of the commit Update Flake pushes to a `github:` flake (default: `X-Monitor <x-monitor@localhost>`) |
 | `commit_message` | Subject of that commit; the updated inputs are listed below it (default: `chore(flake): update inputs`) |
 | `post_switch` | Shell run after every switch, whether it succeeded or not, e.g. to restart a session the switch stopped; the job keeps the switch's own exit status |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
@@ -462,11 +462,11 @@ Both actions launch a **detached** job on the target, polled to completion by th
 
 With `auto_switch`, drift that has lasted `auto_switch_after` launches the same job the button does, and the job panel shows it. Each target closure gets one attempt: a switch that fails, or succeeds without converging, is not repeated until the flake evaluates to something new. It never runs off a failed evaluation, and it never runs when the running generation was created after the flake last changed, because that system came from somewhere else (an unpushed checkout, a local test build) and switching would roll it back. That case still reports drift.
 
-With `update_at` or `build_at`, that job launches once a day at the given local time, on `switch_agent`'s host like the button. Each slot runs once: the slot is stored with the monitor when the job launches, so a restart never repeats it, and a slot missed while Vigil was down runs once when it returns, however many days it missed. Turning a schedule on never fires at once; it first runs at its next slot. A running job holds it until the job finishes, and when both are due the update goes first. Stagger the clocks of monitors that depend on one another, such as the monitor that updates a shared flake and those that build from it: a monitor runs one job at a time, but nothing orders jobs across monitors.
+With `update_at` or `build_at`, that job launches once a day at the given local time, on `switch_agent`'s host like the button. Each slot runs once: the slot is stored with the monitor when the job launches, so a restart never repeats it, and a slot missed while X-Monitor was down runs once when it returns, however many days it missed. Turning a schedule on never fires at once; it first runs at its next slot. A running job holds it until the job finishes, and when both are due the update goes first. Stagger the clocks of monitors that depend on one another, such as the monitor that updates a shared flake and those that build from it: a monitor runs one job at a time, but nothing orders jobs across monitors.
 
-Update Flake works on a local flake path in place, as root. On a `github:owner/repo[/branch]` flake with a `push_ssh_key` it runs as the monitoring user in a fresh shallow clone over SSH: `nix flake update`, a commit of `flake.lock` if anything moved, and a push back to the same branch. A branch that moved in the meantime rejects the push and the job fails, with nothing left behind. The pushed revision is new drift for every monitor on that flake, so with `auto_switch` one button updates the whole fleet. Any other remote ref is not offered the button: update it where it lives and Vigil picks up the new revision on its next evaluation. Checking never mutates anything: `--no-write-lock-file` is passed to both commands, and `--refresh` only for a remote ref, where a mutable branch would otherwise be served from Nix's tarball cache.
+Update Flake works on a local flake path in place, as root. On a `github:owner/repo[/branch]` flake with a `push_ssh_key` it runs as the monitoring user in a fresh shallow clone over SSH: `nix flake update`, a commit of `flake.lock` if anything moved, and a push back to the same branch. A branch that moved in the meantime rejects the push and the job fails, with nothing left behind. The pushed revision is new drift for every monitor on that flake, so with `auto_switch` one button updates the whole fleet. Any other remote ref is not offered the button: update it where it lives and X-Monitor picks up the new revision on its next evaluation. Checking never mutates anything: `--no-write-lock-file` is passed to both commands, and `--refresh` only for a remote ref, where a mutable branch would otherwise be served from Nix's tarball cache.
 
-> Both actions run as root by default (`require_sudo`), so the SSH user needs passwordless sudo for `nixos-rebuild` and `nix`. Set `require_sudo: false` when Vigil already connects as root, or add `--use-remote-sudo` to `rebuild_args` for the build-locally-activate-remotely arrangement.
+> Both actions run as root by default (`require_sudo`), so the SSH user needs passwordless sudo for `nixos-rebuild` and `nix`. Set `require_sudo: false` when X-Monitor already connects as root, or add `--use-remote-sudo` to `rebuild_args` for the build-locally-activate-remotely arrangement.
 
 ```yaml
 # Local checkout on the host, with a staleness limit on its inputs
@@ -500,11 +500,11 @@ Whether Nix garbage collection is actually keeping a host's store in check: when
 
 One cheap script per cycle reads the store filesystem (`df`), the store path and indirect-GC-root counts, every profile's generation links, the `nix-gc` unit and timer state (`systemctl show`), and the last collection's own summary line from the journal. Nothing here needs root, and nothing takes the GC lock: `nix-store --gc --print-dead` would give an exact reclaimable figure but walks the whole store — minutes, with the lock held — so it is deliberately not run.
 
-The last collection's epoch, outcome and yield are stored with the monitor, so a journal that has since rotated past that run does not erase what Vigil already saw. The stored record only ever moves forward.
+The last collection's epoch, outcome and yield are stored with the monitor, so a journal that has since rotated past that run does not erase what X-Monitor already saw. The stored record only ever moves forward.
 
 Profiles are discovered rather than configured: every symlink under `/nix/var/nix/profiles/` and `/nix/var/nix/profiles/per-user/*/` whose target is its own generation link. Their generation counts and the age of the oldest generation still on disk are what a `--delete-older-than` collection is supposed to be bounding, so they are the direct evidence that it is working.
 
-The action launches a **detached** `nix-collect-garbage` on the target, polled to completion by this monitor's own cycle (see [Job control](develop.md#job-control)), so a collection that runs for an hour survives a dropped connection and a Vigil restart.
+The action launches a **detached** `nix-collect-garbage` on the target, polled to completion by this monitor's own cycle (see [Job control](develop.md#job-control)), so a collection that runs for an hour survives a dropped connection and a X-Monitor restart.
 
 | Option | Description |
 |--------|-------------|
@@ -623,7 +623,7 @@ A host that does not answer on the `discovery_ports` is `unavailable` rather tha
 ### `smart`
 SMART health of every physical disk on a host, via `smartctl`. Classification is by positive assertion: only an explicit `PASSED` verdict counts a disk as healthy, so a check that could not run reads as **unavailable** rather than as a clean disk. Virtual block devices (zram, ZFS zvols, loop/md/device-mapper nodes) are filtered out before probing, and a device that genuinely has no SMART support is skipped rather than counted.
 
-> Needs passwordless `sudo` access to `smartctl` for the SSH user (e.g. `vigil ALL=(ALL) NOPASSWD: /usr/bin/smartctl`).
+> Needs passwordless `sudo` access to `smartctl` for the SSH user (e.g. `x-monitor ALL=(ALL) NOPASSWD: /usr/bin/smartctl`).
 
 | Option       | Description                                                                 |
 |--------------|-----------------------------------------------------------------------------|
@@ -1101,20 +1101,20 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 |--------|-------------|
 | `repo` | Repository path or URL (required) |
 | `max_age` | Age of the newest archive before it counts as stale (default: `1d`) |
-| `passphrase` / `passphrase_file` / `passphrase_command` | How borg gets the key passphrase; the file is read by Vigil, the command runs on the target |
+| `passphrase` / `passphrase_file` / `passphrase_command` | How borg gets the key passphrase; the file is read by X-Monitor, the command runs on the target |
 | `ssh_key` / `rsh` | Key borg uses to reach a remote repo, or a full `BORG_RSH` command |
 | `require_sudo` | Run borg as root through `sudo -n` (default: `false`) |
 | `borg_bin` | borg binary (default: `borg`) |
 | `list_archives` | How many of the newest archives to list (default: `10`) |
 | `collect_stats` | Read sizes with `borg info` (default: `true`) |
-| `cache_dir` | borg's cache and config dir for jobs, and for polls when set (default: `/var/cache/vigil-borg`) |
+| `cache_dir` | borg's cache and config dir for jobs, and for polls when set (default: `/var/cache/x-monitor-borg`) |
 | `lock_wait` / `backup_lock_wait` | Seconds to wait for a lock in polls / in jobs (defaults: `30` / `600`) |
 | `source_paths`, `exclude`, `exclude_from`, `exclude_caches`, `exclude_if_present`, `one_file_system`, `compression`, `archive_prefix` | The backup set for the Run Backup action |
 | `canary_path` / `canary_interval` | A file extracted from the newest archive and compared with the live copy, and how often (default: `1d`) |
 | `check_units` / `check_max_age` | systemd units that run `borg check`, read from the journal, and how old their last success may be (default: `8d`) |
 | `keep_within`, `keep_last`, `keep_hourly`, `keep_daily`, `keep_weekly`, `keep_monthly`, `keep_yearly`, … | Retention policy for Prune Preview and Prune |
 | `prune_match` | Archives the policy applies to (default: `<archive_prefix>-*`) |
-| `restore_dir` | Where restores land (default: `/var/tmp/vigil-restore`) |
+| `restore_dir` | Where restores land (default: `/var/tmp/x-monitor-restore`) |
 | `browse_limit` | Most entries shown per folder or diff (default: `2000`) |
 | `allow_delete` | Allow Prune, deleting archives and Break Lock (default: `false`) |
 | `check_verify_data` | Make the Check job read every chunk (`--verify-data`), which is much slower (default: `false`) |
@@ -1128,7 +1128,7 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 
 **Status**: `failed` when borg reports an error, the repo has no archives, the newest one is older than `max_age`, the restore canary does not match, or a check unit failed or is older than `check_max_age`; `unavailable` when the host, the borg binary or the repo cannot be reached, a lock was not released in time, or the output could not be read.
 
-> Prune, delete, Purge Excluded and Break Lock act on the repository itself. Break Lock is only safe when no borg process is using the repo, since breaking a live lock can corrupt it, so Vigil refuses it while one of its own jobs is running. Delete only accepts an archive the monitor has listed.
+> Prune, delete, Purge Excluded and Break Lock act on the repository itself. Break Lock is only safe when no borg process is using the repo, since breaking a live lock can corrupt it, so X-Monitor refuses it while one of its own jobs is running. Delete only accepts an archive the monitor has listed.
 
 ```yaml
 - name: "Vault backups"
@@ -1515,23 +1515,23 @@ All SSH-based plugins (`systemd_service`, `cpu`, `smart`, `disk_space`, `through
 ```yaml
 ssh_config:
   host: "myhost.example.com"
-  user: "vigil"
+  user: "x-monitor"
   port: 22
-  key_file: "/home/vigil/.ssh/id_ed25519"
+  key_file: "/home/x_monitor/.ssh/id_ed25519"
 ```
 
-Vigil speaks SSH natively (AsyncSSH) rather than shelling out to the system
+X-Monitor speaks SSH natively (AsyncSSH) rather than shelling out to the system
 `ssh` client, and opens one persistent connection per host — every SSH-based
 monitor on that host runs its commands as a channel on that one connection
 rather than a separate connection each. Host key verification is
 trust-on-first-use: the first successful connection to a host stores its key
-(under `$VIGIL_SSH_CONTROL_DIR/known_hosts`, defaulting to a `vigil-ssh`
+(under `$XMONITOR_SSH_CONTROL_DIR/known_hosts`, defaulting to a `x-monitor-ssh`
 directory under the system temp dir), and every later connection is checked
 against it — a changed key is refused rather than silently accepted.
 
 **The number of monitors you can point at one host is bounded by how many
 concurrent SSH sessions that host's `sshd` allows** (`MaxSessions` in
-`sshd_config`, default `10`). Vigil caps its own concurrency per host below
+`sshd_config`, default `10`). X-Monitor caps its own concurrency per host below
 that default (8 regular monitors + 2 for long-running jobs like `borg`, at
 most 10 total in flight at once), so a host running its `sshd` at the
 OpenSSH default is safe by construction — extra monitors queue rather than

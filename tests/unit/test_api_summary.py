@@ -7,7 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from vigil.core.ui.api import register_api
+from x_monitor.core.ui.api import register_api
 
 
 def _plugin(plugin_id, children=()):

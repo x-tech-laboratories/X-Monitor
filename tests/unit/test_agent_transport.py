@@ -6,10 +6,10 @@ import json
 import pytest
 from unittest.mock import MagicMock
 
-from vigil.core.connectors.agent_connector import AgentConnection, AgentRegistry
-from vigil.core.connectors.engine import ConnectorEngine
-from vigil_agent import protocol as proto
-from vigil.core.connectors.types import CmdResult
+from x_monitor.core.connectors.agent_connector import AgentConnection, AgentRegistry
+from x_monitor.core.connectors.engine import ConnectorEngine
+from x_monitor_agent import protocol as proto
+from x_monitor.core.connectors.types import CmdResult
 
 
 class FakeSocket:
@@ -145,11 +145,11 @@ class TestStreamSpec:
 
 class TestAgentExecutor:
     async def test_returns_the_ssh_shaped_triple(self):
-        from vigil_agent import executor
+        from x_monitor_agent import executor
         assert await executor.run("echo hello") == (0, "hello\n", "")
 
     async def test_a_failing_command_reports_its_code_and_stderr(self):
-        from vigil_agent import executor
+        from x_monitor_agent import executor
         code, _, err = await executor.run("echo oops >&2; exit 3")
         assert code == 3
         assert "oops" in err
@@ -158,7 +158,7 @@ class TestAgentExecutor:
         """The gap the SSH transport had: killing the remote shell left its
         children running. Here a grandchild must die with the command."""
         import os
-        from vigil_agent import executor
+        from x_monitor_agent import executor
 
         pid_file = tmp_path / "child.pid"
         code, _, err = await executor.run(
@@ -176,7 +176,7 @@ class TestAgentExecutor:
         """A cancelled exec must not strand its command: the server that
         asked for it is gone, and a long evaluation would only load the host."""
         import os
-        from vigil_agent import executor
+        from x_monitor_agent import executor
 
         pid_file = tmp_path / "cmd.pid"
         task = asyncio.create_task(executor.run(f"echo $$ > {pid_file}; sleep 30", timeout=60))
@@ -196,8 +196,8 @@ class TestAgentExecutor:
     async def test_disconnect_cancels_in_flight_commands(self, tmp_path):
         """Losing the socket cancels every exec still running for it."""
         import os
-        from vigil_agent import executor
-        from vigil_agent.client import AgentClient
+        from x_monitor_agent import executor
+        from x_monitor_agent.client import AgentClient
 
         client = AgentClient("ws://unused", "test", None)
         pid_file = tmp_path / "cmd.pid"
@@ -223,8 +223,8 @@ class TestEventRouting:
     def _engine(db, plugin):
         # Built field-by-field rather than through __init__, which would stand
         # up the config loader, exporters and connectors this path never uses.
-        from vigil.core.coordination.engine import VigilEngine
-        engine = object.__new__(VigilEngine)
+        from x_monitor.core.coordination.engine import XMonitorEngine
+        engine = object.__new__(XMonitorEngine)
         engine.db = db
         engine._event_targets = {plugin.id: plugin}
         engine._event_targets.update({s.id: plugin for s in plugin.subscriptions()})
@@ -235,7 +235,7 @@ class TestEventRouting:
         return engine
 
     def test_an_event_is_parsed_and_persisted(self, make_plugin, db_manager):
-        from vigil.plugins.oom import Oom
+        from x_monitor.plugins.oom import Oom
         plugin = make_plugin(Oom, {})
         engine = self._engine(db_manager, plugin)
 
@@ -246,12 +246,12 @@ class TestEventRouting:
         assert any('redis' in m for m in messages)
 
     def test_an_event_for_an_unknown_stream_is_dropped(self, make_plugin, db_manager):
-        from vigil.plugins.oom import Oom
+        from x_monitor.plugins.oom import Oom
         engine = self._engine(db_manager, make_plugin(Oom, {}))
         engine._on_agent_event('node-a', 'no-such-stream', 1234.0, {})  # must not raise
 
     def test_a_plugin_that_raises_does_not_kill_the_socket(self, make_plugin, db_manager):
-        from vigil.plugins.oom import Oom
+        from x_monitor.plugins.oom import Oom
         plugin = make_plugin(Oom, {})
         engine = self._engine(db_manager, plugin)
         plugin.parse_event = MagicMock(side_effect=RuntimeError("plugin bug"))
@@ -262,7 +262,7 @@ class TestEventRouting:
         """The engine runs no polling loop for a pushed monitor, so the event
         is the only thing that can mark it collected; without this it reads as
         forever stalled to the staleness check."""
-        from vigil.plugins.cpu import Cpu
+        from x_monitor.plugins.cpu import Cpu
         plugin = make_plugin(Cpu, {})
         engine = self._engine(db_manager, plugin)
 
@@ -274,7 +274,7 @@ class TestEventRouting:
     def test_a_sample_event_counts_even_when_the_parse_fails(self, make_plugin, db_manager):
         """Matches the poll's own finally: the mark means a cycle arrived, not
         that it carried usable data."""
-        from vigil.plugins.cpu import Cpu
+        from x_monitor.plugins.cpu import Cpu
         plugin = make_plugin(Cpu, {})
         engine = self._engine(db_manager, plugin)
         plugin.parse_event = MagicMock(side_effect=RuntimeError("plugin bug"))
@@ -286,7 +286,7 @@ class TestEventRouting:
     def test_a_journal_event_does_not_stand_in_for_the_poll(self, make_plugin, db_manager):
         """A journal stream supplements a monitor that still polls, so a chatty
         unit must not mask that unit's poll having wedged."""
-        from vigil.plugins.oom import Oom
+        from x_monitor.plugins.oom import Oom
         plugin = make_plugin(Oom, {})
         engine = self._engine(db_manager, plugin)
 
@@ -298,21 +298,21 @@ class TestEventRouting:
 
 class TestPluginSubscriptions:
     def test_oom_subscribes_to_the_kernel_journal(self, make_plugin):
-        from vigil.plugins.oom import Oom
+        from x_monitor.plugins.oom import Oom
         plugin = make_plugin(Oom, {})
         spec = next(s for s in plugin.subscriptions() if s.kind == 'journal')
         assert spec.id == f'{plugin.id}:journal'
         assert spec.params['kernel'] is True
 
     def test_a_sampled_plugin_carries_its_poll_command(self, make_plugin):
-        from vigil.plugins.cpu import Cpu
+        from x_monitor.plugins.cpu import Cpu
         plugin = make_plugin(Cpu, {})
         spec = next(s for s in plugin.subscriptions() if s.kind == 'sample')
         assert spec.params['command'] == plugin.commands()[0].text
         assert spec.params['interval'] == plugin.interval
 
     def test_a_sample_frame_parses_through_the_poll_parser(self, make_plugin):
-        from vigil.plugins.cpu import Cpu
+        from x_monitor.plugins.cpu import Cpu
         plugin = make_plugin(Cpu, {})
         stdout = 'cpu  100 0 100 800 0 0 0 0\ncpu  200 0 200 1200 0 0 0 0'
         result = plugin.parse_event(f'{plugin.id}:sample',
@@ -320,21 +320,21 @@ class TestPluginSubscriptions:
         assert result.metrics == plugin.parse([CmdResult(0, stdout, '')]).metrics
 
     def test_systemd_subscribes_to_its_own_unit(self, make_plugin):
-        from vigil.plugins.systemd_service import SystemdService
+        from x_monitor.plugins.systemd_service import SystemdService
         plugin = make_plugin(SystemdService, {'service_name': 'nginx.service'})
         assert plugin.subscriptions()[0].params['unit'] == 'nginx.service'
 
     def test_a_streamed_line_never_changes_status(self, make_plugin):
         """Status stays owned by the poll, so one noisy log line cannot flip a
         healthy service to failed."""
-        from vigil.plugins.systemd_service import SystemdService
+        from x_monitor.plugins.systemd_service import SystemdService
         plugin = make_plugin(SystemdService, {'service_name': 'nginx.service'})
         result = plugin.parse_event(plugin.id, {'message': 'FAILED to reload'}, 1234.0)
         assert result.status is None
         assert result.log_lines[0][1] == 'ERROR'
 
     def test_a_poll_only_plugin_declares_no_streams(self, make_plugin):
-        from vigil.plugins.uptime import Uptime
+        from x_monitor.plugins.uptime import Uptime
         assert make_plugin(Uptime).subscriptions() == []
 
 
@@ -343,7 +343,7 @@ class TestSampleStreamContract:
     """The generic sample path: a plugin's poll command, run by the agent."""
 
     def test_a_plugin_is_poll_only_by_default(self, make_plugin):
-        from vigil.plugins.borg import Borg
+        from x_monitor.plugins.borg import Borg
         plugin = make_plugin(Borg, {'repo': '/srv/repo'})
         assert plugin.SAMPLED is False
         assert plugin.event_driven() is False
@@ -351,28 +351,28 @@ class TestSampleStreamContract:
     def test_no_stream_without_exactly_one_command(self, make_plugin):
         """service_list issues two commands, so the generic path cannot carry
         it and must not claim to — suppressing its poll would collect nothing."""
-        from vigil.plugins.service_list import ServiceList
+        from x_monitor.plugins.service_list import ServiceList
         plugin = make_plugin(ServiceList, {})
         plugin.SAMPLED = True
         assert plugin.subscriptions() == []
         assert plugin.event_driven() is False
 
     def test_a_failing_sample_parses_as_unavailable(self, make_plugin):
-        from vigil.plugins.cpu import Cpu
+        from x_monitor.plugins.cpu import Cpu
         plugin = make_plugin(Cpu, {})
         result = plugin.parse_event(f'{plugin.id}:sample',
                                     {'exit_code': 1, 'stdout': '', 'stderr': 'boom'}, 0.0)
         assert result.status == 'unavailable'
 
     def test_a_malformed_frame_does_not_raise(self, make_plugin):
-        from vigil.plugins.cpu import Cpu
+        from x_monitor.plugins.cpu import Cpu
         plugin = make_plugin(Cpu, {})
         assert plugin.parse_event(f'{plugin.id}:sample', {}, 0.0).status == 'unavailable'
 
     def test_the_sample_stream_bounds_quiet_suppression(self, make_plugin):
         """The agent may skip unchanged frames but must push within five
         intervals, so a quiet monitor's stored data keeps advancing."""
-        from vigil.plugins.cpu import Cpu
+        from x_monitor.plugins.cpu import Cpu
         plugin = make_plugin(Cpu, {})
         spec = plugin.subscriptions()[0]
         assert spec.params['max_quiet'] == (
@@ -389,7 +389,7 @@ class TestSampleWatcher:
 
     @staticmethod
     async def _run(params, outputs, monkeypatch):
-        from vigil_agent import executor, watchers
+        from x_monitor_agent import executor, watchers
 
         feed = iter(outputs)
 
@@ -480,7 +480,7 @@ class TestJournalMux:
                 await task
 
     def test_per_stream_filters_reproduce_journalctl(self):
-        from vigil_agent.watchers import _entry_matches as m
+        from x_monitor_agent.watchers import _entry_matches as m
         assert m({'unit': 'redis'}, {'_SYSTEMD_UNIT': 'redis.service'}, 'x')
         assert not m({'unit': 'redis'}, {'_SYSTEMD_UNIT': 'nginx.service'}, 'x')
         assert m({'unit': 'a.service'}, {'UNIT': 'a.service'}, 'x')
@@ -493,7 +493,7 @@ class TestJournalMux:
         assert not m({'identifier': 'sshd'}, {'SYSLOG_IDENTIFIER': 'cron'}, 'x')
 
     async def test_unit_streams_share_one_follower(self, monkeypatch):
-        from vigil_agent import watchers
+        from x_monitor_agent import watchers
         monkeypatch.setattr(watchers, '_JOURNAL_SETTLE_SECONDS', 0.01)
 
         spawned = []
@@ -525,7 +525,7 @@ class TestJournalMux:
         assert got == {'nginx': ['from nginx'], 'redis': ['from redis']}
 
     async def test_a_kernel_stream_keeps_its_own_follower(self, monkeypatch):
-        from vigil_agent import watchers
+        from x_monitor_agent import watchers
         monkeypatch.setattr(watchers, '_JOURNAL_SETTLE_SECONDS', 0.01)
 
         spawned = []
@@ -557,7 +557,7 @@ class TestJournalMux:
 
     async def test_a_dead_follower_fails_its_streams(self, monkeypatch):
         """EOF must surface as a raise so supervise() restarts the stream."""
-        from vigil_agent import watchers
+        from x_monitor_agent import watchers
         monkeypatch.setattr(watchers, '_JOURNAL_SETTLE_SECONDS', 0.01)
 
         async def fake_spawn(group, cmd):

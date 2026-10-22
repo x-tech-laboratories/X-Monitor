@@ -1,6 +1,6 @@
-# Vigil agent
+# X-Monitor agent
 #
-# The companion daemon for a monitored host. It dials outward to the Vigil
+# The companion daemon for a monitored host. It dials outward to the X-Monitor
 # server and holds one WebSocket open, carrying both the commands the server
 # asks it to run and the events it observes locally.
 #
@@ -20,7 +20,7 @@ self:
   ...
 }:
 let
-  cfg = config.services.vigil-agent;
+  cfg = config.services.x-monitor-agent;
   inherit (lib)
     mkEnableOption
     mkOption
@@ -39,9 +39,9 @@ let
 
   # Only the key's *path* reaches this file, so the generated YAML is safe to
   # live in the world-readable Nix store; the agent reads the key at runtime.
-  configFile = (pkgs.formats.yaml { }).generate "vigil-agent.yaml" settings;
+  configFile = (pkgs.formats.yaml { }).generate "x-monitor-agent.yaml" settings;
 
-  desktopConfigFile = (pkgs.formats.yaml { }).generate "vigil-agent-desktop.yaml" (
+  desktopConfigFile = (pkgs.formats.yaml { }).generate "x-monitor-agent-desktop.yaml" (
     {
       url = cfg.url;
       id = cfg.desktop.id;
@@ -54,15 +54,15 @@ let
 
 in
 {
-  options.services.vigil-agent = {
-    enable = mkEnableOption "Vigil agent";
+  options.services.x-monitor-agent = {
+    enable = mkEnableOption "X-Monitor agent";
 
     package = mkOption {
       type = types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.agent;
-      defaultText = literalExpression "vigil-agent (from flake)";
+      defaultText = literalExpression "x-monitor-agent (from flake)";
       description = ''
-        The package providing the `vigil-agent` binary. Defaults to the
+        The package providing the `x-monitor-agent` binary. Defaults to the
         standalone agent package, which carries only what the agent imports —
         deliberately not the server package, so a monitored host never builds
         nicegui, peewee, dnspython or asyncssh to run an agent.
@@ -71,9 +71,9 @@ in
 
     url = mkOption {
       type = types.str;
-      example = "ws://vigil.example.com:8080/api/agent/ws";
+      example = "ws://x-monitor.example.com:8080/api/agent/ws";
       description = ''
-        The Vigil server's agent endpoint. Use `wss://` when the dashboard is
+        The X-Monitor server's agent endpoint. Use `wss://` when the dashboard is
         behind TLS. This is an outbound connection, so only egress to the
         server's dashboard port is required.
       '';
@@ -91,7 +91,7 @@ in
     keyFile = mkOption {
       type = types.nullOr types.path;
       default = null;
-      example = "/run/secrets/vigil_agent_key";
+      example = "/run/secrets/x_monitor_agent_key";
       description = ''
         Path to this agent's unencrypted OpenSSH ed25519 private key, as
         `ssh-keygen -t ed25519 -N ""` writes it. The server's `agents:` entry
@@ -112,7 +112,7 @@ in
 
     user = mkOption {
       type = types.str;
-      default = "vigil-agent";
+      default = "x-monitor-agent";
       description = ''
         User the agent runs as, and therefore the user every command the server
         sends executes as. Grant it the group memberships and scoped sudo rules
@@ -122,7 +122,7 @@ in
 
     group = mkOption {
       type = types.str;
-      default = "vigil-agent";
+      default = "x-monitor-agent";
       description = "Group the agent runs as.";
     };
 
@@ -163,7 +163,7 @@ in
     desktop = {
       enable = mkEnableOption ''
         a second, notify-only agent in each user's graphical session, to show
-        Vigil's desktop notifications. The system agent cannot: it runs as its
+        X-Monitor's desktop notifications. The system agent cannot: it runs as its
         own user and has no access to a desktop session. This one runs no
         commands, so it gives the server no access to the user's account
       '';
@@ -180,7 +180,7 @@ in
 
       keyFile = mkOption {
         type = types.path;
-        example = "/run/secrets/vigil_agent_desktop_key";
+        example = "/run/secrets/x_monitor_agent_desktop_key";
         description = ''
           Path to this agent's ed25519 private key, separate from the system
           agent's. It runs as the logged-in user, so that user must be able to
@@ -192,8 +192,8 @@ in
 
   config = lib.mkMerge [
     (mkIf cfg.desktop.enable {
-      systemd.user.services.vigil-agent-desktop = {
-        description = "Vigil agent (desktop notifications)";
+      systemd.user.services.x-monitor-agent-desktop = {
+        description = "X-Monitor agent (desktop notifications)";
         wantedBy = [ "graphical-session.target" ];
         partOf = [ "graphical-session.target" ];
         after = [ "graphical-session.target" ];
@@ -214,7 +214,7 @@ in
         );
 
         serviceConfig = {
-          ExecStart = "${cfg.package}/bin/vigil-agent --config ${desktopConfigFile}";
+          ExecStart = "${cfg.package}/bin/x-monitor-agent --config ${desktopConfigFile}";
           Restart = "always";
           RestartSec = "10s";
         };
@@ -225,14 +225,14 @@ in
         {
           assertion = cfg.keyFile != null || cfg.extraSettings ? key_file;
           message = ''
-            services.vigil-agent: set keyFile. Without a key the agent cannot
+            services.x-monitor-agent: set keyFile. Without a key the agent cannot
             authenticate and the server will refuse every connection.
           '';
         }
       ];
 
-      systemd.services.vigil-agent = {
-        description = "Vigil agent (monitored-host companion)";
+      systemd.services.x-monitor-agent = {
+        description = "X-Monitor agent (monitored-host companion)";
         wantedBy = [ "multi-user.target" ];
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
@@ -272,7 +272,7 @@ in
         ];
 
         serviceConfig = {
-          ExecStart = "${cfg.package}/bin/vigil-agent --config ${configFile}";
+          ExecStart = "${cfg.package}/bin/x-monitor-agent --config ${configFile}";
           User = cfg.user;
           Group = cfg.group;
 
@@ -300,17 +300,17 @@ in
         };
       };
 
-      users.users.${cfg.user} = lib.mkIf (cfg.user == "vigil-agent") {
+      users.users.${cfg.user} = lib.mkIf (cfg.user == "x-monitor-agent") {
         isSystemUser = true;
         group = cfg.group;
-        description = "Vigil agent service user";
+        description = "X-Monitor agent service user";
         extraGroups = cfg.extraGroups;
         # Commands arrive as shell strings and are run through a shell, so this
         # account needs a real one.
         shell = pkgs.bashInteractive;
       };
 
-      users.groups.${cfg.group} = lib.mkIf (cfg.group == "vigil-agent") { };
+      users.groups.${cfg.group} = lib.mkIf (cfg.group == "x-monitor-agent") { };
     })
   ];
 }

@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.uptime import Uptime
-from vigil.core.connectors.types import PingResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.uptime import Uptime
+from x_monitor.core.connectors.types import PingResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 UPTIME_CFG = {

@@ -13,8 +13,8 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
-from vigil.core.connectors.types import CmdResult, CollectResult
-from vigil.plugins.borg import Borg, _frame_line
+from x_monitor.core.connectors.types import CmdResult, CollectResult
+from x_monitor.plugins.borg import Borg, _frame_line
 
 pytest_plugins = ['nicegui.testing.user_plugin']
 pytestmark = pytest.mark.nicegui_main_file(None)
@@ -53,11 +53,11 @@ def plugin(make_plugin):
 @pytest.fixture
 def page(plugin, monkeypatch):
     # Off the change-bus scheduler, whose per-client registry would outlive this test's client; one inline run fills the archive list.
-    monkeypatch.setattr('vigil.core.ui.model.schedule_callback', lambda callback, run_now=True: callback())
+    monkeypatch.setattr('x_monitor.core.ui.model.schedule_callback', lambda callback, run_now=True: callback())
 
     @ui.page('/')
     def _page():
-        from vigil.plugins.borg.browser import render_browser
+        from x_monitor.plugins.borg.browser import render_browser
         render_browser(plugin)
 
 
@@ -139,11 +139,11 @@ class TestBrowser:
 
 class TestJobPanel:
     async def test_without_source_paths_it_says_the_other_jobs_still_run(self, user: User, plugin, monkeypatch):
-        monkeypatch.setattr('vigil.core.ui.model.schedule_callback', lambda callback, run_now=True: callback())
+        monkeypatch.setattr('x_monitor.core.ui.model.schedule_callback', lambda callback, run_now=True: callback())
 
         @ui.page('/jobs')
         def _page():
-            from vigil.core.ui.components import render_job_panel
+            from x_monitor.core.ui.components import render_job_panel
             render_job_panel(plugin, plugin.UI_SPEC['job_panel'])
 
         await user.open('/jobs')

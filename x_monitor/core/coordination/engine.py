@@ -1,0 +1,592 @@
+"""Coordination Engine.
+
+The application's central coordinator. It owns the other engines — Settings
+(config loader), Database, Connector (agent / SSH / HTTP / DNS / ICMP),
+Exporter — and the plugin registry, and drives the per-monitor polling loop.
+Plugins stay pure: they declare Commands/ActionPlans/CollectResults and this
+engine (and the sub-engines it owns) performs all IO and persistence.
+
+Collection has two paths. The polling loop runs each monitor's declared
+requests on its own `interval`, as it always has. Alongside it, monitors on an
+agent-backed target can subscribe to event streams the agent watches locally
+and pushes the instant they change; those arrive through _on_agent_event and
+are persisted the same way, without waiting for the next cycle.
+
+The class is named ``XMonitorEngine`` for continuity (``core/contracts.py``'s
+``EngineLike`` and the test suite reference it); "Coordination Engine" is its
+role in the architecture.
+"""
+
+import asyncio
+import logging
+import importlib
+import inspect
+import random
+import sys
+import time
+from dataclasses import replace
+from typing import Any, List, Optional, Dict, Set
+
+from peewee import OperationalError
+
+from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors.types import CollectResult, DispatchResult, Status, unreachable
+from x_monitor.core.coordination.data_view import PluginDataView
+from x_monitor.core.coordination.jobs import JobsGateway
+from x_monitor.core.settings.config_file import ConfigFileManager as XMonitorConfig
+from x_monitor.core.database.database import DatabaseManager as XMonitorDatabase
+from x_monitor.core.exporters import ExporterEngine
+from x_monitor.core.notifications import NotificationEngine
+from x_monitor.core.connectors import ConnectorEngine, ExecContext
+
+STARTUP_JITTER_SECONDS = 3.0
+
+
+def seconds_to_clock_slot(interval: int, offset: int, now: float) -> float:
+    """Seconds from `now` until UTC time is next `offset` past a multiple of `interval`."""
+    return (offset - now) % interval
+
+_PRUNE_CHECK_SECONDS = 60
+
+
+def _defined_in(cls: type, module_path: str) -> bool:
+    """True for a class defined in the plugin module itself or, for a plugin package, in one of its own submodules."""
+    return cls.__module__ == module_path or cls.__module__.startswith(module_path + '.')
+
+
+def _plugin_class(module, module_path: str) -> type:
+    """The Plugin subclass a plugin module defines, ignoring the bases it imports."""
+    candidates = [obj for _, obj in inspect.getmembers(module, inspect.isclass)
+                  if issubclass(obj, Plugin) and _defined_in(obj, module_path)
+                  and not inspect.isabstract(obj)]
+    if not candidates:
+        raise ValueError(f"{module_path} defines no concrete Plugin subclass")
+    if len(candidates) > 1:
+        raise ValueError(
+            f"{module_path} defines more than one Plugin subclass "
+            f"({[c.__name__ for c in candidates]}) — a plugin module must define exactly one")
+    return candidates[0]
+
+
+
+def _settle(plugin: Plugin, results: List[Any], result: CollectResult) -> CollectResult:
+    """A cycle that never reached its host is unavailable, whatever the plugin made of the empty results."""
+    if plugin.AVAILABILITY or not results or not all(map(unreachable, results)):
+        return result
+    if result.status == str(Status.UNAVAILABLE):
+        return result
+    return replace(result, status=str(Status.UNAVAILABLE))
+
+class XMonitorEngine:
+    def __init__(self, config_path: str, db_path_override: Optional[str] = None):
+        self.config_loader = XMonitorConfig(config_path)
+        self.config = self.config_loader.data
+        self.plugins: List[Plugin] = []
+        self.log_retention_days = self.config_loader.log_retention_days
+        self.metric_retention_days = self.config_loader.metric_retention_days
+        self.metric_downsample_days = self.config_loader.metric_downsample_days
+        self._cycle_timings = self.config_loader.cycle_timings
+        # Minus infinity, not 0: time.monotonic() counts from boot, so 0 would hold off the first prune for an hour after a reboot.
+        self._last_prune = float('-inf')
+        self._collecting: Dict[str, bool] = {}
+        self._last_collected: Dict[str, float] = {}
+        # The loop holds only weak references to tasks, so every background
+        # task is anchored here until it finishes.
+        self._tasks: set = set()
+        # Engine-owned per-plugin IO/persistence, keyed by plugin id. Pure
+        # plugins never hold these; the engine wires them in setup_modules and
+        # uses them on the collection/action paths. _exec_contexts holds each plugin's
+        # ExecContext handle (the connection itself lives in self.connectors).
+        self._exec_contexts: Dict[str, "ExecContext"] = {}
+        # Monitors reachable by a pushed event, keyed by the stream id the
+        # agent will send back (which is the plugin's own id).
+        self._event_targets: Dict[str, Plugin] = {}
+        # Of those, the streams that stand in for a poll rather than
+        # supplementing one, so an event on them marks the monitor collected.
+        self._collection_streams: Set[str] = set()
+        if db_path_override:
+            self.db_path = db_path_override
+        else:
+            self.db_path = self.config_loader.database_settings.get('path', 'x-monitor.db')
+        # False until load_state() has restored the store; nothing may write to it before then.
+        self.ready = False
+        self._early_agents: Set[str] = set()
+        try:
+            self.db = XMonitorDatabase(
+                self.db_path,
+                write_batch_seconds=self.config_loader.write_batch_seconds,
+                buffers=self.config_loader.buffer_sizes,
+                hydrate=False,
+            )
+        except OperationalError as e:
+            logging.critical(f"Failed to initialize database: {e}. Exiting.")
+            sys.exit(1)
+
+        self.exporters = ExporterEngine(self.db, self.config_loader.exporters)
+        self.connectors = ConnectorEngine()
+        self.connectors.agents.configure(self.config_loader.agents)
+        self.connectors.agents.set_event_sink(self._on_agent_event)
+        self.connectors.agents.set_connect_sink(self._on_agent_connected)
+        self.notifications = NotificationEngine(
+            self.db, self.config_loader.notifications, self.connectors.agents
+        )
+
+    def _wire_plugin(self, plugin: Plugin, plugin_cfg: Dict) -> None:
+        """Build the engine-owned IO for a plugin and hand it the read-only data
+        view. Keeps pure plugins free of db/network. Persistence needs no
+        per-plugin object: the engine holds the plugin's (target, id, name) and
+        writes via db.apply_result on the collection/action path."""
+        net = self.connectors.exec_context(plugin_cfg, collect_timeout=plugin.timeout)
+        # The transport resolves the effective target host; keep the plugin's
+        # target in sync so its labels/reads match what's collected, unless the
+        # plugin is about some other host than the one it collects on.
+        plugin.target = plugin.display_target or net.target
+        self._exec_contexts[plugin.id] = net
+        plugin.bind(PluginDataView(self.db, plugin.id))
+
+        async def _cancel_exec(command: str, agent: Optional[str] = None, _net=net):
+            from x_monitor.core.connectors.types import ActionPlan
+            plan = ActionPlan(command, agent=agent)
+            await self.connectors.execute(self._action_context(_net, plan), plan)
+
+        plugin.jobs = JobsGateway(self.db, plugin, cancel_exec=_cancel_exec)
+        if net.is_agent:
+            self._wire_subscriptions(plugin, net)
+
+    def _is_event_driven(self, plugin: Plugin) -> bool:
+        """Whether this monitor's agent collects for it, so the engine runs no
+        polling loop. Only ever true on an agent target: over SSH the streams
+        are never registered and the poll stays the only collection path."""
+        net = self._exec_context_for(plugin)
+        if net is None or not net.is_agent:
+            return False
+        # A plugin's broken event_driven() must not stop scheduling; treat it as polled.
+        try:
+            return bool(plugin.event_driven())
+        except Exception as e:
+            logging.error(f"{plugin.name}: event_driven() failed: {e}")
+            return False
+
+    def _wire_subscriptions(self, plugin: Plugin, net: "ExecContext") -> None:
+        """Register a plugin's declared event streams with its agent, so the
+        agent starts watching them the moment it connects. Streams are keyed by
+        the plugin id, which is how an inbound event finds its way back here."""
+        # A plugin's broken subscriptions() must not stop the engine wiring the rest.
+        try:
+            specs = plugin.subscriptions()
+        except Exception as e:
+            logging.error(f"{plugin.name}: subscriptions() failed: {e}")
+            return
+        if not specs:
+            return
+        for spec in specs:
+            net.conn.register_stream(spec)
+            self._event_targets[spec.id] = plugin
+            if spec.kind == 'sample':
+                self._collection_streams.add(spec.id)
+        logging.info(
+            f"{plugin.name}: subscribed to {len(specs)} agent event stream(s) "
+            f"on {net.conn.agent_id!r}"
+        )
+
+    def _on_agent_event(self, agent_id: str, stream_id: str,
+                        timestamp: float, payload: Dict) -> None:
+        """Apply one pushed event. Runs on the agent's socket task, off the
+        polling schedule entirely — this is the path that makes detection
+        latency independent of a monitor's `interval`.
+
+        The plugin's parse_event() is pure and the write is the same batched
+        db.apply_result the polling cycle uses, so an event costs one parse and
+        one buffered write with no IO of its own."""
+        # The agent pushes again on its next interval, so dropping this loses nothing that hydration would not then overwrite.
+        if not self.ready:
+            return
+        plugin = self._event_targets.get(stream_id)
+        if plugin is None:
+            logging.debug(f"agent {agent_id!r}: event for unknown stream {stream_id!r}")
+            return
+        # A sample stream is this monitor's whole collection path, so its event
+        # is what records the cycle the suppressed polling loop never runs.
+        # Recorded before the parse, matching the poll's own finally: the mark
+        # means a cycle arrived, not that it carried usable data.
+        if stream_id in self._collection_streams:
+            self._last_collected[plugin.id] = time.monotonic()
+        # A plugin's broken parse_event() must not kill the agent's socket task.
+        try:
+            result = plugin.parse_event(stream_id, payload, timestamp)
+        except Exception as e:
+            logging.error(f"{plugin.name}: parse_event failed for {stream_id!r}: {e}")
+            return
+        if result is not None:
+            self._apply(plugin, result)
+
+    def _on_agent_connected(self, agent_id: str) -> None:
+        """Collect every monitor on an agent as soon as that agent dials in.
+
+        Monitors start their schedule when X-Monitor does, but an agent takes a
+        moment to connect, so a monitor's first cycle normally runs before its
+        transport exists and records a failure. Without this the monitor stays
+        wrong until its next tick — a full hour for the hourly SMART and ZFS
+        checks after every restart, which is long enough to be mistaken for a
+        real fault.
+
+        Runs on the agent's socket task, so each cycle is a separate task
+        rather than blocking the handshake. An agent that connects while the
+        store is still loading is collected once it has loaded."""
+        if not self.ready:
+            self._early_agents.add(agent_id)
+            return
+        monitors = [p for p in self._flatten(self.plugins)
+                    if getattr(self._exec_context_for(p), 'conn', None) is not None
+                    and getattr(self._exec_context_for(p).conn, 'agent_id', None) == agent_id]
+        if not monitors:
+            return
+        logging.info(
+            f"agent {agent_id!r} connected: collecting its {len(monitors)} monitor(s) now"
+        )
+        for plugin in monitors:
+            self._spawn(self._collect_on_connect(plugin))
+
+    async def _collect_on_connect(self, plugin: Plugin) -> None:
+        # A failed warm-up cycle is only logged; the monitor's normal schedule retries.
+        try:
+            await self.run_cycle_now(plugin)
+        except Exception as e:
+            logging.error(f"{plugin.name}: collection on agent connect failed: {e}")
+
+    def _apply(self, plugin: Plugin, result) -> None:
+        """Persist a plugin's CollectResult. The engine owns the write path and
+        supplies the plugin's identity; pure plugins hold no writer."""
+        self.db.apply_result(plugin.target, plugin.id, plugin.name, result)
+
+    def _exec_context_for(self, plugin: Plugin):
+        return self._exec_contexts.get(plugin.id)
+
+    async def _run_io(self, fn):
+        """Run a plugin's io_call()/IoActionPlan closure off the event loop
+        (or await it if it's a coroutine function). Engine-owned so pure
+        plugins never do their own thread offloading."""
+        if inspect.iscoroutinefunction(fn):
+            return await fn()
+        return await asyncio.to_thread(fn)
+
+    def _apply_ssh_defaults(self, plugin_cfg: Dict) -> Dict:
+        defaults = self.config_loader.ssh_defaults
+        if not defaults or 'ssh_config' not in plugin_cfg:
+            return plugin_cfg
+
+        merged = dict(plugin_cfg)
+        merged['ssh_config'] = {**defaults, **plugin_cfg['ssh_config']}
+        return merged
+
+    def setup_modules(self, plugins_cfg: Optional[List[Dict]] = None,
+                      inherited_agent: Optional[str] = None) -> List[Plugin]:
+        current_level_plugins = []
+        target_cfg = plugins_cfg if plugins_cfg is not None else self.config_loader.plugins
+
+        for plugin_cfg in target_cfg:
+            name = plugin_cfg.get('name')
+            p_type = plugin_cfg.get('type')
+            plugin_cfg = self._apply_ssh_defaults(plugin_cfg)
+            if inherited_agent and not plugin_cfg.get('agent'):
+                plugin_cfg = {**plugin_cfg, 'agent': inherited_agent}
+            try:
+                module_path = f"x_monitor.plugins.{p_type}"
+                module = importlib.import_module(module_path)
+
+                plugin_instance = _plugin_class(module, module_path)(name, plugin_cfg)
+                plugin_instance.engine = self
+                self._wire_plugin(plugin_instance, plugin_cfg)
+
+                if 'children' in plugin_cfg:
+                    plugin_instance.children = self.setup_modules(
+                        plugin_cfg['children'],
+                        inherited_agent=plugin_cfg.get('agent'),
+                    )
+
+                current_level_plugins.append(plugin_instance)
+                logging.info(f"Loaded plugin '{name}' of type '{p_type}'")
+            # One bad plugin config or module must not stop the rest from loading.
+            except Exception as e:
+                logging.error(f"Failed to load plugin '{name}' ({p_type}) — this monitor will not run: {e}")
+
+        if plugins_cfg is None:
+            self.plugins = current_level_plugins
+            logging.info(f"Plugin registry built with {len(self.plugins)} root-level monitors.")
+            self._warn_on_duplicate_ids()
+            self._wire_self_monitor()
+
+        return current_level_plugins
+
+    def _warn_on_duplicate_ids(self):
+        seen = {}
+        duplicates = {}
+        stack = list(self.plugins)
+        while stack:
+            p = stack.pop()
+            stack.extend(p.children)
+            if p.id in seen:
+                duplicates.setdefault(p.id, [seen[p.id]]).append(p.name)
+            else:
+                seen[p.id] = p.name
+
+        for dup_id, names in duplicates.items():
+            logging.error(
+                f"Duplicate monitor id {dup_id!r} used by {len(names)} monitors "
+                f"({', '.join(sorted(set(names)))}). Their status, metrics and logs "
+                f"will overwrite each other — give each an explicit unique `id`."
+            )
+            self.db.insert_event(
+                "ERROR",
+                f"[x_monitor_core] Duplicate monitor id {dup_id!r} used by: "
+                f"{', '.join(sorted(set(names)))}",
+                "x_monitor_core",
+            )
+
+    def _wire_self_monitor(self):
+        try:
+            from x_monitor.plugins.x_monitor_self import XMonitorSelfPlugin
+        except ImportError as e:
+            logging.debug(f"Self-monitoring plugin unavailable: {e}")
+            return
+        XMonitorSelfPlugin.engine = self
+
+    def _start_exporters(self):
+        self.exporters.start()
+
+    @staticmethod
+    def _flatten(plugins: List[Plugin]):
+        for p in plugins:
+            yield p
+            yield from XMonitorEngine._flatten(p.children)
+
+    async def _run_cycle(self, plugin: Plugin) -> bool:
+        """The collection loop: all async/IO lives here; the plugin's
+        requests()/parse_results() (and io_call() for the sequential-local-IO
+        case) are pure and touched only from here.
+
+        A plugin declares a heterogeneous request list (SSH Commands, HTTP,
+        DNS, ICMP); the Connector Engine routes and executes them, and the
+        plugin's pure parse_results() turns the results into a CollectResult
+        the Database Engine persists. The rare plugin with genuinely
+        sequential/conditional local IO uses io_call() instead."""
+        started = time.perf_counter()
+        io_fn = plugin.io_call()
+        if io_fn is not None:
+            io_result = await self._run_io(io_fn)
+            collected = time.perf_counter()
+            result = plugin.parse_results([io_result])
+            did_io = True
+        else:
+            requests = plugin.requests()
+            net = self._exec_context_for(plugin)
+            results = await self.connectors.dispatch(net, requests) if requests else []
+            collected = time.perf_counter()
+            result = _settle(plugin, results, plugin.parse_results(results))
+            did_io = bool(requests)
+        parsed = time.perf_counter()
+        self._apply(plugin, result)
+        if did_io and self._cycle_timings:
+            self._record_cycle_timing(plugin, started, collected, parsed)
+        return True
+
+    def _record_cycle_timing(self, plugin: Plugin, started: float,
+                             collected: float, parsed: float) -> None:
+        """Record where a cycle's wall clock went, split so that transport cost
+        and parse cost are separable rather than one opaque total."""
+        self.db.insert_metric(plugin.target, plugin.id,
+                              "cycle_collect_seconds", collected - started)
+        self.db.insert_metric(plugin.target, plugin.id,
+                              "cycle_parse_seconds", parsed - collected)
+
+    async def run_cycle_now(self, plugin: Plugin) -> bool:
+        """Single-flight wrapper for out-of-band (dashboard-poll-triggered)
+        collection, sharing the same reentrancy guard as the scheduler."""
+        if self._collecting.get(plugin.id):
+            logging.debug(f"{plugin.name}: previous collection still running, skipping poll-triggered cycle")
+            return False
+        self._collecting[plugin.id] = True
+        try:
+            return await self._run_cycle(plugin)
+        finally:
+            self._last_collected[plugin.id] = time.monotonic()
+            self._collecting[plugin.id] = False
+
+    def last_collected(self, plugin_id: str) -> float:
+        """Monotonic time of a monitor's last finished cycle, 0.0 if none yet."""
+        return self._last_collected.get(plugin_id, 0.0)
+
+    async def dispatch_action(self, plugin: Plugin, action_id: str, **kwargs) -> DispatchResult:
+        """Returns (success, metadata). metadata is the applied CollectResult's
+        .metadata dict when one was applied (e.g. carrying 'content' for
+        read-style dialog actions), else None. Plain bool outcomes (the
+        common write/dispatch case) return (bool, None)."""
+        from x_monitor.core.connectors.types import (
+            CollectResult, HttpRequest, DnsQuery, PingRequest, IoActionPlan,
+        )
+
+        net = self._exec_context_for(plugin)
+
+        def _finish(outcome):
+            if isinstance(outcome, CollectResult):
+                self._apply(plugin, outcome)
+                return outcome.success, (outcome.metadata or None)
+            return bool(outcome), None
+
+        plan = plugin.plan_action(action_id, **kwargs)
+        if plan is None:
+            return False, None
+        if isinstance(plan, CollectResult):
+            self._apply(plugin, plan)
+            return plan.success, (plan.metadata or None)
+        if isinstance(plan, IoActionPlan):
+            io_result = await self._run_io(plan.call)
+            return _finish(plugin.interpret_action(action_id, io_result, **kwargs))
+        if isinstance(plan, (HttpRequest, DnsQuery, PingRequest)):
+            result = (await self.connectors.dispatch(net, [plan]))[0]
+            return _finish(plugin.interpret_action(action_id, result, **kwargs))
+        # Default: an ActionPlan — a short SSH command.
+        result = await self.connectors.execute(self._action_context(net, plan), plan)
+        return _finish(plugin.interpret_action(action_id, result, **kwargs))
+
+    def _action_context(self, net, plan):
+        """The connection an ActionPlan runs over: the monitor's own target, or
+        another agent's host when the plan names one."""
+        if not plan.agent:
+            return net
+        return ExecContext(conn=self.connectors.agents.require(plan.agent),
+                           collect_timeout=net.collect_timeout)
+
+    def set_setting(self, key: str, value: str) -> None:
+        """UI-triggered setting write (e.g. a group's expand/collapse state)
+        the Database Engine persists. Pure plugins read settings via their
+        data view and route the occasional write back through the engine."""
+        self.db.set_setting(key, value)
+
+    def apply(self, plugin: Plugin, result) -> None:
+        """Persist a CollectResult a plugin produced outside the collection
+        cycle (e.g. push.record_push from the REST endpoint). The plugin holds
+        no writer of its own; the engine owns the write path."""
+        self._apply(plugin, result)
+
+    async def http_fetch(self, request):
+        """Run one HttpRequest through the shared HttpConnector. For the rare
+        plugin whose HTTP is genuinely sequential/dependent (a login POST for a
+        session token, then a data GET using it) — expressed as an async
+        io_call() closure that awaits this. The flat requests() list can't
+        express request-to-request dependencies; this keeps that IO on the
+        engine-owned connector instead of a plugin opening its own session."""
+        return await self.connectors.http.fetch(request)
+
+    async def _monitor_loop(self, plugin: Plugin):
+        offset = getattr(plugin, "offset", None)
+        if offset is None:
+            await asyncio.sleep(random.uniform(0, STARTUP_JITTER_SECONDS))
+        else:
+            await asyncio.sleep(seconds_to_clock_slot(plugin.interval, offset, time.time()))
+        next_due = time.monotonic()
+        while True:
+            # A failing plugin cycle must not kill its polling loop; the next tick retries.
+            try:
+                await self.run_cycle_now(plugin)
+            except Exception as e:
+                logging.error(f"Plugin execution error ({plugin.name}): {e}")
+            # A clock-pinned monitor re-reads the wall clock each cycle, so a suspend or a slow cycle never shifts its slot.
+            if offset is not None:
+                wait = seconds_to_clock_slot(plugin.interval, offset, time.time())
+                await asyncio.sleep(wait if wait >= 1 else wait + plugin.interval)
+                continue
+            # interval is the period, not the gap: sleep to the next due time
+            # so a slow cycle does not stretch the schedule, and re-anchor
+            # rather than burst when a cycle overruns the whole period.
+            next_due += plugin.interval
+            now = time.monotonic()
+            if next_due <= now:
+                next_due = now + plugin.interval
+            await asyncio.sleep(next_due - now)
+
+    async def _prune_loop(self):
+        while True:
+            self._maybe_prune_logs()
+            await asyncio.sleep(_PRUNE_CHECK_SECONDS)
+
+    def _spawn(self, coro) -> "asyncio.Task":
+        """Create a background task anchored in self._tasks for its lifetime."""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
+    def shutdown(self) -> None:
+        """Stop background tasks, close every transport, and flush pending
+        writes to SQLite; registered as the UI server's shutdown hook."""
+        for task in list(self._tasks):
+            task.cancel()
+        self.notifications.stop()
+        self.connectors.close()
+        self.db.stop_downsampling()
+        self.db.flush()
+        logging.info("X-Monitor Engine shut down cleanly.")
+
+    def load_state(self) -> None:
+        """Restores the store from the database and records the restart; blocking, so run() calls it off the event loop."""
+        started = time.monotonic()
+        self.db.hydrate()
+        self.db.insert_event("INFO", "X-Monitor Engine initialized.", "x_monitor_core")
+        orphaned = self.db.reconcile_orphaned_jobs()
+        if orphaned:
+            logging.warning(f"Marked {orphaned} orphaned job(s) as failed after restart")
+        logging.info(f"Saved state loaded in {time.monotonic() - started:.1f}s")
+
+    async def run(self):
+        if not self.ready:
+            await asyncio.get_running_loop().run_in_executor(None, self.load_state)
+            self.ready = True
+            for agent_id in sorted(self._early_agents):
+                self._on_agent_connected(agent_id)
+            self._early_agents.clear()
+        logging.info("X-Monitor Engine started...")
+
+        self.db.insert_event("INFO", "X-Monitor Engine started polling loop.", "x_monitor_core")
+
+        self._start_exporters()
+        # Broken notification settings must not stop monitoring.
+        try:
+            self.notifications.start(self.plugins)
+        except Exception as e:
+            logging.error(f"Failed to start notifications — none will be sent: {e}")
+
+        monitors = list(self._flatten(self.plugins))
+        polled = [p for p in monitors if not self._is_event_driven(p)]
+        pushed = len(monitors) - len(polled)
+        logging.info(
+            f"Starting {len(polled)} independent monitor schedule(s); "
+            f"{pushed} collect on their agent."
+        )
+        for plugin in polled:
+            self._spawn(self._monitor_loop(plugin))
+
+        self._spawn(self._prune_loop())
+
+    def _maybe_prune_logs(self, interval: float = 3600.0):
+        # Nothing to prune if both retention windows are disabled (0/negative).
+        if (self.log_retention_days <= 0 and self.metric_retention_days <= 0
+                and self.metric_downsample_days <= 0):
+            return
+        now = time.monotonic()
+        if now - self._last_prune < interval:
+            return
+        self._last_prune = now
+        # A failed prune must not kill the prune loop; the next hourly pass retries.
+        try:
+            # Logs and jobs share the log-retention window; metrics and status
+            # history use their own (metric_retention_days, which defaults to
+            # log_retention_days when unset). Each prune_* is a no-op when its
+            # window is <= 0, so the two schedules are independent.
+            self.db.prune_logs(self.log_retention_days)
+            self.db.prune_jobs(self.log_retention_days)
+            self.db.prune_metrics(self.metric_retention_days)
+            self.db.prune_status(self.metric_retention_days)
+            self.db.downsample_metrics(self.metric_downsample_days)
+        except Exception as e:
+            logging.error(f"Retention prune failed: {e}")

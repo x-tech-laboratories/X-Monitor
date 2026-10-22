@@ -12,7 +12,7 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
-from vigil.core.ui.views.plugin_detail import render_plugin_detail
+from x_monitor.core.ui.views.plugin_detail import render_plugin_detail
 
 pytest_plugins = ['nicegui.testing.user_plugin']
 pytestmark = pytest.mark.nicegui_main_file(None)
@@ -101,14 +101,14 @@ class TestNotifyClient:
             ui.notify('lost')
 
     async def test_reaches_the_viewer_from_a_dead_slot(self, user: User, page):
-        from vigil.core.ui.components import notify_client
+        from x_monitor.core.ui.components import notify_client
         await user.open('/')
         with _orphaned_slot(user.client):
             notify_client(user.client, 'still delivered')
         await user.should_see('still delivered')
 
     async def test_a_deleted_client_gets_nothing(self, user: User, page):
-        from vigil.core.ui.components import notify_client
+        from x_monitor.core.ui.components import notify_client
         await user.open('/')
         client = user.client
         client.delete()

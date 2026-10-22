@@ -1,15 +1,15 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.mosquitto import (
+from x_monitor.plugins.mosquitto import (
     Mosquitto,
     _TIMED_OUT,
     _MISMATCH,
     _auth_flags,
     _build_probe_script,
 )
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -17,9 +17,9 @@ BASE_CFG = {
     "id":   "test-mosquitto",
     "host": "127.0.0.1",
     "port": 1883,
-    "username": "vigil",
+    "username": "x-monitor",
     "password": "hunter2",
-    "probe_topic": "vigil/probe/test-mosquitto",
+    "probe_topic": "x_monitor/probe/test-mosquitto",
     "probe_timeout": 5,
     "ssh_config": {"host": "test.host"},
 }
@@ -30,7 +30,7 @@ def plugin(make_plugin):
     return make_plugin(Mosquitto, BASE_CFG)
 
 
-def _ok(nonce="vigil-probe-abc123"):
+def _ok(nonce="x-monitor-probe-abc123"):
     return CmdResult(0, nonce, "")
 
 
@@ -59,35 +59,35 @@ class TestAuthFlags:
         assert _auth_flags(None, None, None) == ''
 
     def test_username_with_password(self):
-        flags = _auth_flags("vigil", None, "hunter2")
-        assert "-u vigil" in flags
+        flags = _auth_flags("x-monitor", None, "hunter2")
+        assert "-u x-monitor" in flags
         assert "-P hunter2" in flags
 
     def test_username_with_password_command_uses_shell_var(self):
-        flags = _auth_flags("vigil", "cat /run/secrets/mosquitto_vigil", None)
-        assert "-u vigil" in flags
+        flags = _auth_flags("x-monitor", "cat /run/secrets/mosquitto_x_monitor", None)
+        assert "-u x-monitor" in flags
         assert '-P "$__pw"' in flags
 
     def test_username_only(self):
-        flags = _auth_flags("vigil", None, None)
-        assert flags == "-u vigil"
+        flags = _auth_flags("x-monitor", None, None)
+        assert flags == "-u x-monitor"
 
 
 class TestBuildProbeScript:
     def test_includes_topic(self):
         script = _build_probe_script(
-            "127.0.0.1", 1883, "vigil/probe/x", 5, "vigil", None, "hunter2")
-        assert "vigil/probe/x" in script
+            "127.0.0.1", 1883, "x_monitor/probe/x", 5, "x-monitor", None, "hunter2")
+        assert "x_monitor/probe/x" in script
 
     def test_password_command_runs_on_remote_host(self):
         script = _build_probe_script(
-            "127.0.0.1", 1883, "vigil/probe/x", 5, "vigil",
-            "cat /run/secrets/mosquitto_vigil", None)
-        assert "cat /run/secrets/mosquitto_vigil" in script
+            "127.0.0.1", 1883, "x_monitor/probe/x", 5, "x-monitor",
+            "cat /run/secrets/mosquitto_x_monitor", None)
+        assert "cat /run/secrets/mosquitto_x_monitor" in script
 
     def test_uses_pub_and_sub(self):
         script = _build_probe_script(
-            "127.0.0.1", 1883, "vigil/probe/x", 5, None, None, None)
+            "127.0.0.1", 1883, "x_monitor/probe/x", 5, None, None, None)
         assert "mosquitto_pub" in script
         assert "mosquitto_sub" in script
 

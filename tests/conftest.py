@@ -36,7 +36,7 @@ class _PluginStore:
 
 @pytest.fixture(autouse=True)
 def _synchronous_db_writes():
-    from vigil.core.database.database import _writer
+    from x_monitor.core.database.database import _writer
     prev = _writer.synchronous
     _writer.synchronous = True
     yield
@@ -45,7 +45,7 @@ def _synchronous_db_writes():
 
 @pytest.fixture
 def db_manager(tmp_path):
-    from vigil.core.database.database import DatabaseManager, db
+    from x_monitor.core.database.database import DatabaseManager, db
     if not db.is_closed():
         db.close()
     manager = DatabaseManager(str(tmp_path / "test.db"))
@@ -57,9 +57,9 @@ def db_manager(tmp_path):
 class _FakeEngine:
     """Stands in for the Coordination Engine in plugin tests. Exposes the
     narrow engine surface pure plugins call back into (apply/set_setting).
-    Mirrors VigilEngine's implementations so a plugin behaves identically
+    Mirrors XMonitorEngine's implementations so a plugin behaves identically
     here and in the real app; job control rides plugin.jobs, wired in
-    make_plugin the way VigilEngine._wire_plugin does."""
+    make_plugin the way XMonitorEngine._wire_plugin does."""
 
     def __init__(self, db, plugin, connectors=None):
         self.db = db
@@ -88,8 +88,8 @@ class _FakeEngine:
 @pytest.fixture
 def make_plugin(db_manager):
     def factory(cls, extra_config=None):
-        from vigil.core.connectors.engine import ConnectorEngine
-        from vigil.core.coordination.data_view import PluginDataView
+        from x_monitor.core.connectors.engine import ConnectorEngine
+        from x_monitor.core.coordination.data_view import PluginDataView
 
         cfg = {
             "name": "test-plugin",
@@ -104,9 +104,9 @@ def make_plugin(db_manager):
         plugin = cls(cfg["name"], cfg)
 
         # Engine-owned IO/persistence, built and attached the way
-        # VigilEngine._wire_plugin does — but with the SSH transport mocked.
+        # XMonitorEngine._wire_plugin does — but with the SSH transport mocked.
         connectors = ConnectorEngine()
-        with patch("vigil.core.connectors.engine.SSHConnection") as MockSSH:
+        with patch("x_monitor.core.connectors.engine.SSHConnection") as MockSSH:
             mock_conn = MagicMock()
             mock_conn.host = cfg.get("ssh_config", {}).get("host", "test.host")
             mock_conn.execute = AsyncMock(return_value=(0, "", ""))
@@ -119,7 +119,7 @@ def make_plugin(db_manager):
         plugin.bind(PluginDataView(db_manager, plugin.id))
         plugin.engine = _FakeEngine(db_manager, plugin, connectors=connectors)
 
-        from vigil.core.coordination.jobs import JobsGateway
+        from x_monitor.core.coordination.jobs import JobsGateway
 
         async def _cancel_exec(command, agent=None):
             await connectors.execute_raw(net, command)
@@ -134,10 +134,10 @@ def make_plugin(db_manager):
 def run_cycle():
     """Drives a Plugin's commands()/parse() through a fake command
     runner and applies the result via plugin.storage, mirroring
-    VigilEngine._run_cycle without needing a real ConnectorEngine/event
+    XMonitorEngine._run_cycle without needing a real ConnectorEngine/event
     loop scheduler. commands()/parse() are pure/synchronous, so no awaiting
     is needed here. `fake_run` maps Command -> CmdResult; defaults to (0, "", "")."""
-    from vigil.core.connectors.types import CmdResult
+    from x_monitor.core.connectors.types import CmdResult
 
     def factory(plugin, fake_run=None):
         commands = plugin.commands()
@@ -155,7 +155,7 @@ def run_cycle():
 @pytest.fixture
 def run_requests():
     """Drives a Plugin's declarative requests()/parse_results() through a fake
-    connector and applies the result, mirroring VigilEngine._run_cycle for
+    connector and applies the result, mirroring XMonitorEngine._run_cycle for
     plugins that talk HTTP/DNS/ICMP. requests()/parse_results() are pure, so no
     event loop or real ConnectorEngine is needed. `fake_run` maps each Request
     to a Result (HttpResult/DnsResult/PingResult); with no requests it drives

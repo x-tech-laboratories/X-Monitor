@@ -3,9 +3,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import vigil.core.ui.model as model
-from vigil.core.state.changes import ChangeBus
-from vigil.core.ui.model import (
+import x_monitor.core.ui.model as model
+from x_monitor.core.state.changes import ChangeBus
+from x_monitor.core.ui.model import (
     schedule_callback, _CallbackTick, _PageScheduler, _is_detached, _schedulers,
 )
 

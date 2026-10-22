@@ -3,9 +3,9 @@ import time
 
 import pytest
 
-from vigil.plugins.nix_gc import NixGc
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.nix_gc import NixGc
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -301,7 +301,7 @@ class TestProfiles:
 
 async def _launch(plugin, pid=4242):
     """Drive plan_action -> ActionPlan (launch) -> interpret_action, mirroring
-    VigilEngine.dispatch_action for a launched detached job."""
+    XMonitorEngine.dispatch_action for a launched detached job."""
     plan = plugin.plan_action("collect")
     if plan is None:
         return None
@@ -316,10 +316,10 @@ async def _launch(plugin, pid=4242):
 def _poll(size, exit_code, alive, out):
     """Build the raw stdout one poll_command produces on the target."""
     return CmdResult(0, (
-        f"===VIGIL_SIZE===\n{size}\n"
-        f"===VIGIL_EXIT===\n{exit_code if exit_code is not None else ''}\n"
-        f"===VIGIL_ALIVE===\n{1 if alive else 0}\n"
-        f"===VIGIL_OUT===\n{out}"
+        f"===XMONITOR_SIZE===\n{size}\n"
+        f"===XMONITOR_EXIT===\n{exit_code if exit_code is not None else ''}\n"
+        f"===XMONITOR_ALIVE===\n{1 if alive else 0}\n"
+        f"===XMONITOR_OUT===\n{out}"
     ), "")
 
 

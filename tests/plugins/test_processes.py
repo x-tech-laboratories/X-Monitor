@@ -1,10 +1,10 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.processes import Processes, _parse_ps_output
-from vigil.plugins.base.plugin_helpers import level_for
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.processes import Processes, _parse_ps_output
+from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {

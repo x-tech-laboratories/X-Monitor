@@ -3,9 +3,9 @@ import time
 
 import pytest
 
-from vigil.plugins.freshrss import Freshrss, _parse_response, _fever_api_key
-from vigil.core.connectors.types import HttpRequest, HttpResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.freshrss import Freshrss, _parse_response, _fever_api_key
+from x_monitor.core.connectors.types import HttpRequest, HttpResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {

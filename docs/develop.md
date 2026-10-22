@@ -1,14 +1,14 @@
 # Development Notes
 
-Architectural decisions and non-obvious rationale for Vigil, organized by topic.
+Architectural decisions and non-obvious rationale for X-Monitor, organized by topic.
 Code comments stay short (≤1 sentence); anything that needs more explanation
 lives here. This documents the architecture as it *is* — read it before changing
 the engine, the plugin contract, or the UI refresh model.
 
 ## Single process, one event loop
 
-Vigil runs as one OS process. `main()` (`vigil/__main__.py`) builds one
-`VigilEngine` (the Coordination Engine, `core/coordination/engine.py`), calls
+X-Monitor runs as one OS process. `main()` (`x_monitor/__main__.py`) builds one
+`XMonitorEngine` (the Coordination Engine, `core/coordination/engine.py`), calls
 `setup_modules()` to load plugins, then hands the engine to `init_gui()`
 (`core/ui/main_dashboard.py`). The per-monitor polling loop and the NiceGUI web
 dashboard share the same asyncio event loop and the same live `Plugin`
@@ -24,7 +24,7 @@ read path) and read exactly once, at startup, to restore the store.
 
 ## Engine model
 
-`core/` is organized as named engines the Coordination Engine (`VigilEngine`)
+`core/` is organized as named engines the Coordination Engine (`XMonitorEngine`)
 owns and wires together:
 
 - **Settings Engine** (`core/settings/`) — `ConfigFileManager` loads and types
@@ -48,7 +48,7 @@ owns and wires together:
 - **Exporter Engine** (`core/exporters/`) — Prometheus pull render + InfluxDB
   push task.
 
-`EngineLike` (`core/contracts.py`) is the narrow slice of `VigilEngine` that the
+`EngineLike` (`core/contracts.py`) is the narrow slice of `XMonitorEngine` that the
 UI and plugins actually call, so those modules — and test doubles — depend on a
 small contract rather than the concrete class.
 
@@ -181,7 +181,7 @@ once, loudly.
 ## Agent transport
 
 `core/connectors/agent_connector.py` is the server half of the agent link; the
-daemon itself is the separate `vigil_agent` package.
+daemon itself is the separate `x_monitor_agent` package.
 
 The whole design rests on one decision: `AgentConnection.execute()` has the same
 signature and the same `(exit_code, stdout, stderr)` failure mapping as
@@ -209,7 +209,7 @@ analogue of `MaxSessions` and no semaphore. The agent dispatches each `exec`
 into its own task, so a 30-second `borg` check cannot delay a 1-second sample on
 the same connection.
 
-**Process groups.** `vigil_agent/executor.py` runs each command with
+**Process groups.** `x_monitor_agent/executor.py` runs each command with
 `start_new_session=True` and kills the whole process group on timeout. This
 closes a real gap in the SSH path, where killing the remote command left
 anything it had spawned running on the target.
@@ -218,7 +218,7 @@ anything it had spawned running on the target.
 plugin id; the engine registers them on the agent's connection and the endpoint
 sends the full set in the welcome frame (full set, never a delta, so a
 reconnecting agent converges without the server tracking what it knows). The
-agent runs one supervised coroutine per stream from `vigil_agent/watchers.py`
+agent runs one supervised coroutine per stream from `x_monitor_agent/watchers.py`
 and pushes an `event` frame the moment something happens. Two economies apply
 on the agent side: a generic sample stream carries `max_quiet` (five
 intervals), so unchanged results are suppressed but one frame always lands per
@@ -227,12 +227,12 @@ window — a quiet monitor keeps advancing and can never read as stale — and
 unit-filtered journal streams (plus one `--dmesg` follower), routing each line
 to its stream in Python, so N service monitors cost two processes rather than
 N+1.
-`VigilEngine._on_agent_event` routes it back by stream id to the plugin's pure
+`XMonitorEngine._on_agent_event` routes it back by stream id to the plugin's pure
 `parse_event()` and persists the result through the same batched
 `db.apply_result` the polling cycle uses — no IO on the event path.
 
 When an agent finishes its handshake the engine collects every monitor bound to
-it immediately (`_on_agent_connected`). Monitors start their schedule when Vigil
+it immediately (`_on_agent_connected`). Monitors start their schedule when X-Monitor
 does, but the agent takes a moment to dial in, so a monitor's first cycle
 normally runs before its transport exists and records a failure. For a 30s
 monitor that is invisible; for the hourly SMART and ZFS checks it meant an hour
@@ -248,10 +248,10 @@ Two conventions matter here:
 2. **A raising plugin must not take down the socket.** `_on_agent_event`
    catches, logs and continues, because it runs on the agent's receive task.
 
-**Protocol location.** `vigil_agent/protocol.py` is canonical and
-`vigil/core/connectors/agent_protocol.py` re-exports it. It lives in the agent
+**Protocol location.** `x_monitor_agent/protocol.py` is canonical and
+`x_monitor/core/connectors/agent_protocol.py` re-exports it. It lives in the agent
 package because the agent is the constrained side: a monitored host installs
-`vigil-agent` and must not pull in nicegui, peewee and dnspython to do it. One
+`x-monitor-agent` and must not pull in nicegui, peewee and dnspython to do it. One
 definition, not two copies to keep in step.
 
 ## SSH transport
@@ -275,7 +275,7 @@ verified against a real sshd:
    `_TofuClient.validate_host_public_key` fire, reproducing
    `StrictHostKeyChecking=accept-new`: trust and persist a host's key on first
    use, reject any later mismatch.
-3. **Per-host channel limits.** Vigil bounds its own per-host concurrency
+3. **Per-host channel limits.** X-Monitor bounds its own per-host concurrency
    (`_MAX_CONCURRENT_PER_HOST = 8`, a semaphore) below sshd's default
    `MaxSessions` of 10. This ceiling is intrinsic to SSH — a host with many
    monitors either raises `MaxSessions` or moves to the agent transport, which
@@ -293,7 +293,7 @@ owning plugin's normal monitor cycle. The builders/parsers in `ssh_connector.py`
 returns output size, exit code (empty if running), liveness (`kill -0`), and any
 output past the byte offset the last poll consumed (`Job.output_seq`).
 
-Because the job lives on the target it **survives a Vigil restart**:
+Because the job lives on the target it **survives a X-Monitor restart**:
 `reconcile_orphaned_jobs` only fails jobs with no `pid` (crashed before launch);
 any job with a pid is re-adopted by the owning plugin's next poll (pid alive →
 resume; pid/exit gone → finalize).
@@ -304,7 +304,7 @@ immediately, with the row persisted asynchronously under that same id. A
 `JobRecord` is the one mutable record type (successive polls advance `pid`,
 `progress`, `state`, `output_seq` in place); readers take a rendered dict via
 `as_dict()`, so a half-applied update is never observed. Note the durability
-edge this buys: if Vigil dies between launching a job and the next flush, the
+edge this buys: if X-Monitor dies between launching a job and the next flush, the
 job is lost from both memory and disk, and the detached process on the target
 has nothing left to re-adopt it.
 
@@ -519,7 +519,7 @@ loop's job, not the publishing thread's.
 
 ## Bindings
 
-Vigil uses NiceGUI's reactive `.bind_*()` only for `render_status_card`'s label
+X-Monitor uses NiceGUI's reactive `.bind_*()` only for `render_status_card`'s label
 text (`label.text` is a real `BindableProperty` with an on-change push hook).
 Everything else — `ui.table.rows`, `ui.echart.options`, label colors — has no
 such hook (verified against NiceGUI's source), so it refreshes through the
@@ -552,7 +552,7 @@ routes and then the middleware, before the routes it protects — Starlette wrap
 the whole app regardless of registration order, but registering it early keeps
 intent obvious: everything that follows is gated.
 
-**Why a cookie and not Basic.** A Basic prompt is the browser's, not Vigil's:
+**Why a cookie and not Basic.** A Basic prompt is the browser's, not X-Monitor's:
 it cannot be styled, carries no sign-out, and re-sends the password on every
 request. The session cookie is a self-contained `v1.<payload>.<hmac>` token —
 username plus expiry, signed with `auth.session_secret` or a key generated at
@@ -689,7 +689,7 @@ referenced by a bare id and render whole.
 
 ## Plugin config & helpers
 
-A monitor's `type` is the module name under `vigil/plugins/`, and
+A monitor's `type` is the module name under `x_monitor/plugins/`, and
 `setup_modules()` loads the one concrete `Plugin` subclass that module *defines*
 — a class it merely imports (`SignalPlugin`, `Plugin`) is skipped, so a plugin
 module must define exactly one. Selecting by name instead would depend on
@@ -743,7 +743,7 @@ environment). Plugin tests exercise the pure `commands()`/`parse()` or
 `requests()`/`parse_results()` directly through the `run_cycle` / `run_requests`
 / `run_io_cycle` fixtures in `tests/conftest.py`, which drive a plugin with a
 fake connector and apply the resulting `CollectResult` — mirroring
-`VigilEngine._run_cycle` without a real event loop. `_FakeEngine` stands in for
+`XMonitorEngine._run_cycle` without a real event loop. `_FakeEngine` stands in for
 the Coordination Engine, and `plugin.storage` is a thin test-only per-plugin
 adapter over `db.apply_result` (production has no such object).
 

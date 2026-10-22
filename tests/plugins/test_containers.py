@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.containers import Containers
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.containers import Containers
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 def _latest_status(pid="test-ctr"):

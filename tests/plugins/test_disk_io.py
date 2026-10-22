@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.disk_io import DiskIo
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.disk_io import DiskIo
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-disk_io", "id": "test-disk_io", "ssh_config": {"host": "test.host"}}
 
@@ -44,7 +44,7 @@ def plugin(make_plugin):
     return make_plugin(DiskIo, CFG)
 
 
-from vigil.plugins.disk_io import (
+from x_monitor.plugins.disk_io import (
     _parse_diskstats, _is_physical, _auto_detect_device, _format_rate,
     _is_device_path, _resolve_device_path,
 )

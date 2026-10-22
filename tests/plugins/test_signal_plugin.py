@@ -2,7 +2,7 @@ import importlib
 
 import pytest
 
-from vigil.plugins.base.signal_plugin import SignalPlugin, worst_status
+from x_monitor.plugins.base.signal_plugin import SignalPlugin, worst_status
 
 # Every single-signal monitor, as the config's `type` names it.
 SIGNALS = [
@@ -13,8 +13,8 @@ SIGNALS = [
 
 
 def _plugin_class(signal: str) -> type:
-    from vigil.core.coordination.engine import _plugin_class as resolve
-    path = f'vigil.plugins.{signal}'
+    from x_monitor.core.coordination.engine import _plugin_class as resolve
+    path = f'x_monitor.plugins.{signal}'
     return resolve(importlib.import_module(path), path)
 
 
@@ -52,8 +52,8 @@ class TestRendering:
 
     @pytest.fixture
     def no_scheduler(self, monkeypatch):
-        monkeypatch.setattr('vigil.core.ui.model.PluginPage.start', lambda self: None)
-        monkeypatch.setattr('vigil.core.ui.model.schedule_callback',
+        monkeypatch.setattr('x_monitor.core.ui.model.PluginPage.start', lambda self: None)
+        monkeypatch.setattr('x_monitor.core.ui.model.schedule_callback',
                             lambda callback, run_now=True: None)
 
     def test_the_page_builds(self, signal, no_scheduler):

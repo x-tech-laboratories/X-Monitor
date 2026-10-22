@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
-from vigil.core.connectors.types import (
+from x_monitor.core.connectors.types import (
     CmdResult, CollectResult, DnsResult, HttpResult, PingResult, Status, unreachable,
 )
-from vigil.core.coordination.engine import _settle
+from x_monitor.core.coordination.engine import _settle
 
 
 @dataclass

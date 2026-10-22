@@ -6,7 +6,7 @@ self:
   ...
 }:
 let
-  cfg = config.services.vigil;
+  cfg = config.services.x-monitor;
   inherit (lib)
     mkEnableOption
     mkOption
@@ -18,7 +18,7 @@ let
   # Recursively inject the default borg passphrase_file into every `borg`
   # monitor that doesn't already set one, walking the nested plugin tree
   # (borg monitors usually live under group `children`). The file is read by
-  # Vigil at runtime on this host, so the secret never enters the Nix store.
+  # X-Monitor at runtime on this host, so the secret never enters the Nix store.
   injectBorgPassphrase =
     plugins:
     map (
@@ -41,7 +41,7 @@ let
 
   # Merge in dashboard/API auth when both authUsername and authPasswordFile
   # are set. Only the password *path* is written to the generated YAML (which
-  # lands in the Nix store) — Vigil reads the file itself at runtime, so the
+  # lands in the Nix store) — X-Monitor reads the file itself at runtime, so the
   # password never enters the store.
   withAuth =
     if withBorgPassphrase != null && cfg.authUsername != null && cfg.authPasswordFile != null then
@@ -66,29 +66,29 @@ let
     if cfg.configFile != null then
       cfg.configFile
     else if finalSettings != null then
-      (pkgs.formats.yaml { }).generate "vigil.yaml" finalSettings
+      (pkgs.formats.yaml { }).generate "x-monitor.yaml" finalSettings
     else
-      throw "services.vigil: either configFile or settings must be set";
+      throw "services.x-monitor: either configFile or settings must be set";
 
 in
 {
-  options.services.vigil = {
-    enable = mkEnableOption "Vigil system monitor";
+  options.services.x-monitor = {
+    enable = mkEnableOption "X-Monitor system monitor";
 
     package = mkOption {
       type = types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
-      defaultText = literalExpression "vigil (from flake)";
-      description = "The Vigil package to use.";
+      defaultText = literalExpression "x-monitor (from flake)";
+      description = "The X-Monitor package to use.";
     };
 
     configFile = mkOption {
       type = types.nullOr types.path;
       default = null;
-      example = literalExpression "./vigil.yaml";
+      example = literalExpression "./x-monitor.yaml";
       description = ''
-        Path to a pre-written Vigil config.yaml.
-        Mutually exclusive with <option>services.vigil.settings</option>.
+        Path to a pre-written X-Monitor config.yaml.
+        Mutually exclusive with <option>services.x-monitor.settings</option>.
       '';
     };
 
@@ -107,9 +107,9 @@ in
         }
       '';
       description = ''
-        Vigil configuration as a Nix attribute set, serialized to YAML and
+        X-Monitor configuration as a Nix attribute set, serialized to YAML and
         passed to the service. Mutually exclusive with
-        <option>services.vigil.configFile</option>.
+        <option>services.x-monitor.configFile</option>.
       '';
     };
 
@@ -121,20 +121,20 @@ in
 
     dataDir = mkOption {
       type = types.str;
-      default = "/var/lib/vigil";
+      default = "/var/lib/x-monitor";
       description = "Directory for persistent data (SQLite database).";
     };
 
     user = mkOption {
       type = types.str;
-      default = "vigil";
-      description = "User account under which Vigil runs.";
+      default = "x-monitor";
+      description = "User account under which X-Monitor runs.";
     };
 
     group = mkOption {
       type = types.str;
-      default = "vigil";
-      description = "Group under which Vigil runs.";
+      default = "x-monitor";
+      description = "Group under which X-Monitor runs.";
     };
 
     openFirewall = mkOption {
@@ -153,10 +153,10 @@ in
         monitor in <option>settings</option> that does not set its own
         `passphrase_file` or `passphrase`.
 
-        Vigil reads the file at runtime and passes the passphrase to the remote
-        borg command, so the secret lives only on the machine Vigil runs on —
+        X-Monitor reads the file at runtime and passes the passphrase to the remote
+        borg command, so the secret lives only on the machine X-Monitor runs on —
         the monitored hosts need no copy. Point this at a
-        sops-nix/agenix-managed secret readable by the Vigil service user; the
+        sops-nix/agenix-managed secret readable by the X-Monitor service user; the
         value never enters the Nix store.
       '';
     };
@@ -168,7 +168,7 @@ in
       description = ''
         Username required for HTTP Basic Auth on the dashboard and REST API.
         Must be set together with <option>authPasswordFile</option> to enable
-        auth; if only one is set, Vigil logs a warning and leaves the
+        auth; if only one is set, X-Monitor logs a warning and leaves the
         dashboard/API unauthenticated.
       '';
     };
@@ -176,22 +176,22 @@ in
     authPasswordFile = mkOption {
       type = types.nullOr types.path;
       default = null;
-      example = "/run/secrets/vigil_dashboard_password";
+      example = "/run/secrets/x_monitor_dashboard_password";
       description = ''
         Path to a file on this host containing the HTTP Basic Auth password.
-        Vigil reads it at runtime, so the password never enters the Nix
+        X-Monitor reads it at runtime, so the password never enters the Nix
         store — point this at a sops-nix/agenix-managed secret readable by
-        the Vigil service user (<option>user</option>).
+        the X-Monitor service user (<option>user</option>).
       '';
     };
 
     authSessionSecretFile = mkOption {
       type = types.nullOr types.path;
       default = null;
-      example = "/run/secrets/vigil_session_secret";
+      example = "/run/secrets/x_monitor_session_secret";
       description = ''
         Path to a file holding the key that signs dashboard session cookies.
-        Without it Vigil generates a key at every start, so a restart signs
+        Without it X-Monitor generates a key at every start, so a restart signs
         every browser out; with it, sessions survive restarts and redeploys.
         Any random string of 32 or more bytes will do. Read at runtime, so it
         never enters the Nix store.
@@ -203,38 +203,38 @@ in
     assertions = [
       {
         assertion = !(cfg.configFile != null && cfg.settings != null);
-        message = "services.vigil: configFile and settings are mutually exclusive — set only one.";
+        message = "services.x-monitor: configFile and settings are mutually exclusive — set only one.";
       }
     ];
 
-    # Vigil runs as a single process (see vigil/__main__.py): one
+    # X-Monitor runs as a single process (see x_monitor/__main__.py): one
     # asyncio event loop owns both the target-polling schedule and the
     # NiceGUI web dashboard, sharing the SQLite database directly in-process
     # rather than over a loopback API.
-    systemd.services.vigil = {
-      description = "Vigil (network/system monitor + dashboard)";
+    systemd.services.x-monitor = {
+      description = "X-Monitor (network/system monitor + dashboard)";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
       # ping (uptime plugin, run as a local subprocess) must be on PATH.
-      # The system `ssh` client is NOT needed here — Vigil speaks SSH
+      # The system `ssh` client is NOT needed here — X-Monitor speaks SSH
       # natively via asyncssh (see core/connectors/ssh.py) rather
       # than shelling out.
       path = [
         pkgs.iputils
       ];
 
-      # The known_hosts file Vigil's own TOFU host-key trust persists to
+      # The known_hosts file X-Monitor's own TOFU host-key trust persists to
       # (see ssh.py's _TofuClient) lives here — writable, and
       # ProtectHome hides ~/.ssh. Under the service's private /tmp.
-      environment.VIGIL_SSH_CONTROL_DIR = "/tmp/vigil-ssh";
+      environment.XMONITOR_SSH_CONTROL_DIR = "/tmp/x-monitor-ssh";
 
       serviceConfig = {
-        ExecStart = "${cfg.package}/bin/vigil --config ${configFile} --db ${cfg.dataDir}/vigil.db --port ${toString cfg.port}";
+        ExecStart = "${cfg.package}/bin/x-monitor --config ${configFile} --db ${cfg.dataDir}/x-monitor.db --port ${toString cfg.port}";
         User = cfg.user;
         Group = cfg.group;
         WorkingDirectory = cfg.dataDir;
-        StateDirectory = "vigil";
+        StateDirectory = "x-monitor";
         StateDirectoryMode = "0750";
         Restart = "on-failure";
         RestartSec = "5s";
@@ -255,14 +255,14 @@ in
       };
     };
 
-    users.users.vigil = lib.mkIf (cfg.user == "vigil") {
+    users.users.x-monitor = lib.mkIf (cfg.user == "x-monitor") {
       isSystemUser = true;
       group = cfg.group;
       home = cfg.dataDir;
-      description = "Vigil service user";
+      description = "X-Monitor service user";
     };
 
-    users.groups.vigil = lib.mkIf (cfg.group == "vigil") { };
+    users.groups.x-monitor = lib.mkIf (cfg.group == "x-monitor") { };
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
   };

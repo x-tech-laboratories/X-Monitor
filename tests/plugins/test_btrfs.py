@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.btrfs import Btrfs, _sanitize_mount
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.btrfs import Btrfs, _sanitize_mount
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-btrfs", "id": "test-btrfs", "ssh_config": {"host": "test.host"}}
 

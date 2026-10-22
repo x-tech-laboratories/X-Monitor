@@ -1,0 +1,161 @@
+"""Trilium Notes liveness via one authenticated GET of the ETAPI metrics
+endpoint over HTTP from the X-Monitor host. Config: api_url (required,
+X-Monitor-reachable), token / token_command (the ETAPI token), stale_warning
+(hours), api_timeout. Note counts are recorded as metrics and the age of the
+last note modification drives status: older than stale_warning, or missing
+from the response, is warning; an unreachable API, a non-200 reply, or a
+malformed payload (usually a bad token) measured nothing, so it is unavailable."""
+
+import json
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors.types import (
+    CollectResult, HttpRequest, HttpResult, Request, Result,
+)
+from x_monitor.plugins.base.plugin_helpers import resolve_secret
+
+
+def _parse_response(stdout: str) -> Dict[str, Any]:
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"metrics response was not JSON ({e}): {stdout[:200]!r}") from e
+    if not isinstance(data, dict) or 'statistics' not in data:
+        raise ValueError(f"response missing 'statistics' (check the ETAPI token): {stdout[:200]!r}")
+    return data
+
+
+def _age_hours(iso_ts: Optional[str]) -> Optional[float]:
+    if not iso_ts:
+        return None
+    try:
+        ts = datetime.fromisoformat(iso_ts.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds() / 3600.0
+
+
+def _format_age(hours: float) -> str:
+    if hours < 1:
+        return f"{int(hours * 60)}m"
+    if hours < 48:
+        return f"{hours:.1f}h"
+    return f"{hours / 24:.1f}d"
+
+
+def _staleness_verdict(last_modified_age: float, stale_warning: float,
+                       total_notes: float):
+    """The (status, message) pair for a known last-modified age judged against stale_warning."""
+    if last_modified_age >= stale_warning:
+        return 'warning', (
+            f"no note modified in {_format_age(last_modified_age)} "
+            f"(>= {_format_age(stale_warning)} threshold) | "
+            f"{int(total_notes):,} total notes"
+        )
+    return 'online', (
+        f"last modified {_format_age(last_modified_age)} ago | "
+        f"{int(total_notes):,} total notes"
+    )
+
+
+_DEFAULT_LAYOUT = [
+    ['host_card', 'lastmod_card', 'notes_card'],
+    ['chart'],
+    ['events'],
+]
+
+
+class Trilium(Plugin):
+    def __init__(self, name: str, config: Dict[str, Any]):
+        super().__init__(name, config)
+        # X-Monitor fetches this URL directly; it must be X-Monitor-reachable, no default.
+        self.api_url = config.get('api_url')
+        # Resolve the ETAPI token once, on the X-Monitor host, so requests() stays pure.
+        self.token = resolve_secret(config.get('token'), config.get('token_command'))
+        self.stale_warning = float(config.get('stale_warning', 72))
+        self.api_timeout = int(config.get('api_timeout', 10))
+
+    def _lastmod_color(self, v):
+        """Warn once the newest note's age passes the configured staleness limit."""
+        if v is None:
+            return None
+        return 'warning' if v >= self.stale_warning else 'online'
+
+    def requests(self) -> List[Request]:
+        if not self.api_url:
+            return []
+        base = self.api_url.rstrip('/')
+        return [HttpRequest(
+            url=f"{base}/etapi/metrics?format=json", timeout=self.api_timeout,
+            headers={"Authorization": self.token or ""},
+        )]
+
+    def parse_results(self, results: List[Result]) -> CollectResult:
+        """Turns the single ETAPI metrics HTTP result into a CollectResult with
+        note counts and last-modified age, one summary log line, and a status
+        that is warning when no note changed within stale_warning hours (or the
+        timestamp is missing) and unavailable on transport or payload errors."""
+        if not results:
+            return CollectResult.unavailable("No 'api_url' configured")
+
+        result: HttpResult = results[0]
+        if result.error is not None:
+            return CollectResult.unavailable(f"Failed to query Trilium ETAPI: {result.error}")
+        if result.status_code != 200:
+            return CollectResult.unavailable(
+                f"Trilium ETAPI returned HTTP {result.status_code} "
+                f"(check the ETAPI token)")
+
+        try:
+            data = _parse_response(result.text)
+        except ValueError as e:
+            return CollectResult.unavailable(str(e))
+
+        stats = data.get('statistics', {})
+        db = data.get('database', {})
+
+        last_modified_age = _age_hours(stats.get('lastModified'))
+        total_notes = float(db.get('totalNotes', 0) or 0)
+        active_notes = float(db.get('activeNotes', 0) or 0)
+
+        metrics = {'notes_total': total_notes, 'notes_active': active_notes}
+        if last_modified_age is not None:
+            metrics['last_modified_age_hours'] = last_modified_age
+
+        if last_modified_age is None:
+            return CollectResult(
+                metrics=metrics,
+                logs=[("No 'lastModified' timestamp in ETAPI response", "WARNING")],
+                status='warning',
+            )
+
+        level, message = _staleness_verdict(last_modified_age, self.stale_warning, total_notes)
+        log_level = "WARNING" if level == 'warning' else "INFO"
+        return CollectResult(metrics=metrics, logs=[(message, log_level)], status=level)
+
+    @property
+    def UI_SPEC(self):
+        return {
+            'layout': _DEFAULT_LAYOUT,
+            'cards': {
+                'lastmod_card': {
+                    'metric': 'last_modified_age_hours', 'title': 'LAST MODIFIED',
+                    'format': 'trilium_age_ago', 'color': self._lastmod_color,
+                },
+                'notes_card': {'metric': 'notes_total', 'title': 'TOTAL NOTES', 'format': 'count_comma'},
+            },
+            'chart': {'metric': 'last_modified_age_hours', 'title': 'HOURS SINCE LAST MODIFIED'},
+            'events': True,
+        }
+
+
+from x_monitor.core.ui.spec import register_formatter
+
+
+@register_formatter('trilium_age_ago')
+def _lastmod_text(v):
+    return '--' if v is None else f'{_format_age(v)} ago'

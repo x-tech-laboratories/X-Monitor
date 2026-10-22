@@ -1,16 +1,18 @@
-# Vigil
+# X-Monitor
 
-Vigil is a web-based network and systems monitor for Linux systems, homelabs, and small networks. Inspired by Uptime Kuma, Prometheus, Grafana, and Loki, it provides a centralized dashboard to configure and manage diverse infrastructure from a single pane of glass.
+[![AI readiness](https://img.shields.io/endpoint?url=https://x-tech-laboratories.github.io/badges/x-tech-laboratories/X-Monitor.json)](https://x-tech-laboratories.github.io/guidelines/readiness/)
 
-Hosts you control run the **Vigil agent**, which connects outward to Vigil and streams events as they happen. Hosts you can't install software on — routers, switches, NAS firmware, appliances — are still monitored agentlessly over SSH, HTTP, DNS and ICMP. The same monitors run over either.
+X-Monitor is a web-based network and systems monitor for Linux systems, homelabs, and small networks. Inspired by Uptime Kuma, Prometheus, Grafana, and Loki, it provides a centralized dashboard to configure and manage diverse infrastructure from a single pane of glass.
 
-Unlike most network and system monitors, Vigil is designed to be highly extensible and capable of performing actions on monitored targets, not just observing them.
+Hosts you control run the **X-Monitor agent**, which connects outward to X-Monitor and streams events as they happen. Hosts you can't install software on — routers, switches, NAS firmware, appliances — are still monitored agentlessly over SSH, HTTP, DNS and ICMP. The same monitors run over either.
+
+Unlike most network and system monitors, X-Monitor is designed to be highly extensible and capable of performing actions on monitored targets, not just observing them.
 
 ---
 
 ## Features
 
-- **Two Transports, One Plugin Set**: Reach a host through the **Vigil agent** — a small daemon that dials out to Vigil and pushes events the instant they happen — or **agentlessly** over SSH, HTTP, DNS, and ICMP. Every monitor works over either; switching a host is one config key.
+- **Two Transports, One Plugin Set**: Reach a host through the **X-Monitor agent** — a small daemon that dials out to X-Monitor and pushes events the instant they happen — or **agentlessly** over SSH, HTTP, DNS, and ICMP. Every monitor works over either; switching a host is one config key.
 - **Event-Driven Collection**: Agent-backed monitors subscribe to live streams (journal follow, path watches, sub-second local sampling), so detection latency stops being a function of the poll interval.
 - **Web Dashboard**: Real-time interactive visualizations built with NiceGUI and ECharts, featuring latency history, status distribution, and log views.
 - **Notifications**: Notifies you when a monitor starts failing, keeps failing or recovers, with per-monitor rules. Sends to the desktop through the agent, to your phone through ntfy, by email, to any webhook, or to around a hundred services through Apprise, and each notification links straight to the monitor's page. See [docs/notifications.md](docs/notifications.md).
@@ -24,7 +26,7 @@ Unlike most network and system monitors, Vigil is designed to be highly extensib
 
 ## Architecture
 
-Vigil is built around **pure plugins and a Coordination Engine that owns all IO and persistence**. A plugin is constructed with only its `(name, config)`; it declares *what* to collect and *how to interpret* the results as pure functions, and the engine performs every side effect — SSH, HTTP/DNS/ICMP, database writes, thread offloading. This keeps plugins small, side-effect-free, and testable without mocks.
+X-Monitor is built around **pure plugins and a Coordination Engine that owns all IO and persistence**. A plugin is constructed with only its `(name, config)`; it declares *what* to collect and *how to interpret* the results as pure functions, and the engine performs every side effect — SSH, HTTP/DNS/ICMP, database writes, thread offloading. This keeps plugins small, side-effect-free, and testable without mocks.
 
 A plugin's contract is:
 
@@ -38,7 +40,7 @@ The engine executes the declared IO, persists the returned `CollectResult`, and 
 
 ### Data Flow
 
-1. **Initialization**: `vigil/__main__.py` builds one `VigilEngine` (`core/coordination/engine.py`), which loads `config.yaml` and instantiates plugins (`setup_modules`). Group plugins act as containers for nested monitors.
+1. **Initialization**: `x_monitor/__main__.py` builds one `XMonitorEngine` (`core/coordination/engine.py`), which loads `config.yaml` and instantiates plugins (`setup_modules`). Group plugins act as containers for nested monitors.
 2. **Wiring**: for each plugin the engine builds its engine-owned `ExecContext` — an agent connection or a pooled SSH connection, chosen by config — and injects a read-only `PluginDataView` as `plugin.data`.
 3. **Polling**: each monitor runs its own async loop at its own `interval`. Per cycle the engine runs the plugin's declared requests through the **Connector Engine** — which routes each `Command` to that target's agent or its SSH connection — then calls the plugin's pure `parse_results()`.
 3b. **Events**: monitors on an agent-backed target also declare `subscriptions()`. The agent watches those sources locally and pushes a frame the instant one changes; the engine hands it to the plugin's pure `parse_event()` and persists the result immediately, outside the polling schedule.
@@ -49,10 +51,10 @@ The engine executes the declared IO, persists the returned `CollectResult`, and 
 ### Project Structure
 
 ```
-vigil/
+x_monitor/
 ├── __main__.py              # Entry point: build engine, load plugins, start GUI
 ├── core/
-│   ├── coordination/        # VigilEngine (Coordination Engine) + PluginDataView
+│   ├── coordination/        # XMonitorEngine (Coordination Engine) + PluginDataView
 │   ├── connectors/          # All IO: agent + SSH + HTTP/DNS/ICMP sub-connectors, request types
 │   ├── database/            # DatabaseManager (SQLite/Peewee), models, read-result types
 │   ├── settings/            # config.yaml loader + typed schema
@@ -62,7 +64,7 @@ vigil/
     ├── base/                # Plugin ABC + shared config/helper mixins
     └── *.py                 # One module per monitor type (uptime, systemd_service, …)
 
-vigil_agent/                 # The daemon that runs on a monitored host
+x_monitor_agent/                 # The daemon that runs on a monitored host
 ├── protocol.py              # Wire format, shared with the server
 ├── client.py                # Outbound WebSocket, reconnect, frame dispatch
 ├── executor.py              # Local command execution
@@ -89,7 +91,7 @@ See [docs/develop.md](docs/develop.md) for the architectural rationale — the p
 The dashboard is themed with **Halon**: slate plus a single blue, a recessed
 navigation frame, ghost-first controls and hairline structure, in a light and a
 dark scheme that share one token set. Every color lives in
-`vigil/core/ui/static/halon-tokens.css`; the component rules that consume those
+`x_monitor/core/ui/static/halon-tokens.css`; the component rules that consume those
 tokens live beside it in `halon.css`, and no Python module states a color.
 
 The scheme follows the browser's `prefers-color-scheme` unless you pin it:
@@ -104,12 +106,23 @@ table lives in [docs/theme.md](docs/theme.md).
 
 ---
 
+## Moving from Vigil
+
+X-Monitor was called Vigil. Every name changed with it, so an existing install needs these updates:
+
+- The NixOS options are `services.x-monitor` and `services.x-monitor-agent`, and the flake is `github:x-tech-laboratories/X-Monitor`.
+- The commands are `x-monitor` and `x-monitor-agent`, and environment variables start with `XMONITOR_`.
+- The service users are `x-monitor` and `x-monitor-agent`, and data lives in `/var/lib/x-monitor/x-monitor.db`; move `/var/lib/vigil/vigil.db` there to keep your history.
+- The `vigil_self` monitor type is `x_monitor_self`, and the Prometheus metrics are `x_monitor_up` and `x_monitor_metric`.
+
+Agents and servers of either name still authenticate each other, so hosts can be redeployed one at a time.
+
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.9+
-- For agent-backed targets: `vigil-agent` installed on the host, able to reach Vigil's port outbound
+- For agent-backed targets: `x-monitor-agent` installed on the host, able to reach X-Monitor's port outbound
 - For agentless targets: SSH access to the target machine (SSH key auth recommended)
 
 ### Installation
@@ -121,18 +134,18 @@ pip install .
 ### Quick Start
 
 1. Create a `config.yaml` (see [Configuration](#configuration) below).
-2. Start the system: `vigil --config config.yaml`
+2. Start the system: `x-monitor --config config.yaml`
 3. Open your browser to `http://localhost:8080`.
 
 ---
 
 ## Configuration
 
-Vigil uses a YAML file to define the hierarchy of your infrastructure. The YAML config is the **source of truth** for infrastructure definitions; SQLite is used for runtime state and overrides.
+X-Monitor uses a YAML file to define the hierarchy of your infrastructure. The YAML config is the **source of truth** for infrastructure definitions; SQLite is used for runtime state and overrides.
 
 ```yaml
 database:
-  path: "vigil.db"
+  path: "x-monitor.db"
 
 plugins:
   - name: "Internal Network"
@@ -152,7 +165,7 @@ plugins:
         service_name: "nginx.service"
         ssh_config:
           host: "web-01.example.com"
-          user: "vigil"
+          user: "x-monitor"
 ```
 
 Every monitor type, its config keys, and its `ssh_config` / layout options are
@@ -166,15 +179,15 @@ By default the dashboard and REST API are unauthenticated — anyone who can rea
 ```yaml
 auth:
   username: "admin"
-  password_file: "/run/secrets/vigil_dashboard_password"
+  password_file: "/run/secrets/x_monitor_dashboard_password"
   # Optional — sign a session with a fixed key so restarts do not sign everyone
   # out. Without it a key is generated per start.
-  session_secret_file: "/run/secrets/vigil_session_secret"
+  session_secret_file: "/run/secrets/x_monitor_session_secret"
   session_hours: 12      # How long a sign-in lasts (default 12)
   remember_days: 30      # How long "keep me signed in" lasts (default 30)
 ```
 
-An unauthenticated browser is redirected to `/login`, where it exchanges the credentials for a signed, expiring session cookie (`HttpOnly`, `SameSite=Lax`, and `Secure` when Vigil is reached over HTTPS — including behind a reverse proxy that sets `X-Forwarded-Proto`). "Keep me signed in" is what makes the cookie outlive the browser session. The dashboard header gains an account menu with **Sign out**, which drops the session at `/logout`. Repeated failures from one address are throttled after five attempts in five minutes.
+An unauthenticated browser is redirected to `/login`, where it exchanges the credentials for a signed, expiring session cookie (`HttpOnly`, `SameSite=Lax`, and `Secure` when X-Monitor is reached over HTTPS — including behind a reverse proxy that sets `X-Forwarded-Proto`). "Keep me signed in" is what makes the cookie outlive the browser session. The dashboard header gains an account menu with **Sign out**, which drops the session at `/logout`. Repeated failures from one address are throttled after five attempts in five minutes.
 
 Scripts and scrapers cannot follow a form redirect, so `/api/...` and `/metrics` also accept HTTP Basic credentials — the same username and password — and answer `401` rather than redirecting. No `WWW-Authenticate` header is sent, so a browser never sees the native credential dialog. `/api/push/...` stays public; it carries its own per-monitor token.
 
@@ -187,18 +200,18 @@ Every `*_file` value is read once at startup. If only one of `username`/`passwor
 The primary entry point starts both the background engine and the web dashboard:
 
 ```bash
-vigil --config config.yaml
+x-monitor --config config.yaml
 ```
 
 To run just the dashboard against an existing database:
 
 ```bash
-vigil-gui --db vigil.db --port 8080
+x-monitor-gui --db x-monitor.db --port 8080
 ```
 
 ### Nix Integration
 
-Vigil supports Flakes for reproducible environments:
+X-Monitor supports Flakes for reproducible environments:
 
 ```bash
 # Enter dev shell
@@ -213,7 +226,7 @@ nix run . -- --config config.yaml
 ## Documentation
 
 - [Plugin reference](docs/plugins.md) — every monitor type, its config keys, metrics, actions, and layout options
-- [Agent guide](docs/agent.md) — installing `vigil-agent`, server-side declaration, event streams, agent vs SSH
+- [Agent guide](docs/agent.md) — installing `x-monitor-agent`, server-side declaration, event streams, agent vs SSH
 - [Integrations](docs/integrations.md) — the events feed, REST API, Prometheus endpoint, and InfluxDB export
 - [Theme tokens](docs/theme.md) — per-token color overrides for the Halon theme
 - [Roadmap](docs/roadmap.md) — what's done and what's planned
@@ -224,7 +237,7 @@ nix run . -- --config config.yaml
 ## Design Principles
 
 1. **Simplicity First**: Configuration should be intuitive.
-2. **No Remote Agent**: All logic stays on the Vigil server; remote hosts only need SSH.
+2. **No Remote Agent**: All logic stays on the X-Monitor server; remote hosts only need SSH.
 3. **Pure Plugins**: Each plugin owns its domain logic (what to collect, how to interpret it, what actions it offers) as pure functions; the engine owns all IO and persistence.
 4. **Hierarchical Organization**: Supports nested groups for organizing monitors by location, service, or environment.
 5. **Fail-Safe Control**: Control actions must be logged and confirmable.

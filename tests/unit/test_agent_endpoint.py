@@ -11,11 +11,11 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from vigil.core.connectors.agent_connector import AgentRegistry
-from vigil.core.ui.agent_endpoint import register_agent_endpoint
-from vigil_agent import keys, protocol as proto
-from vigil_agent.client import AgentClient
-from vigil_agent.protocol import StreamSpec
+from x_monitor.core.connectors.agent_connector import AgentRegistry
+from x_monitor.core.ui.agent_endpoint import register_agent_endpoint
+from x_monitor_agent import keys, protocol as proto
+from x_monitor_agent.client import AgentClient
+from x_monitor_agent.protocol import StreamSpec
 
 pytest.importorskip("uvicorn")
 pytest.importorskip("fastapi")
@@ -231,16 +231,16 @@ class TestCollectOnConnect:
 
     async def test_the_engine_recollects_that_agents_monitors(self, make_plugin, db_manager):
         """The engine hook picks exactly the monitors bound to that agent."""
-        from vigil.core.connectors.agent_connector import AgentConnection
-        from vigil.core.connectors.engine import ExecContext
-        from vigil.core.coordination.engine import VigilEngine
-        from vigil.plugins.uptime import Uptime
+        from x_monitor.core.connectors.agent_connector import AgentConnection
+        from x_monitor.core.connectors.engine import ExecContext
+        from x_monitor.core.coordination.engine import XMonitorEngine
+        from x_monitor.plugins.uptime import Uptime
 
         mine = make_plugin(Uptime)
         theirs = make_plugin(Uptime)
         theirs.id = 'other-plugin'
 
-        engine = object.__new__(VigilEngine)
+        engine = object.__new__(XMonitorEngine)
         engine.ready = True
         engine.plugins = [mine, theirs]
         engine._tasks = set()

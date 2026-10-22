@@ -1,10 +1,10 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.disk_space import DiskSpace
-from vigil.plugins.base.plugin_helpers import format_bytes
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.disk_space import DiskSpace
+from x_monitor.plugins.base.plugin_helpers import format_bytes
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
