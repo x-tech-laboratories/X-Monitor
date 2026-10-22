@@ -811,7 +811,7 @@ def toggle_position(toggle: dict, value) -> Optional[bool]:
 
 
 def render_job_panel(plugin, spec: dict):
-    """Render the run/cancel controls, progress line and history table for a plugin's jobs."""
+    """Render the progress line and history table for a plugin's jobs, with run/cancel controls when the spec names a run action."""
     from x_monitor.core.ui.spec import ENABLED_PREDICATES, resolve
     from x_monitor.core.ui.theme import STATUS_COLORS
     from x_monitor.plugins.base.plugin_helpers import format_duration
@@ -820,19 +820,21 @@ def render_job_panel(plugin, spec: dict):
     enabled_name = spec.get('enabled_if')
     enabled_predicate = (resolve(ENABLED_PREDICATES, enabled_name) or (lambda p: True)) if enabled_name else (lambda p: True)
 
+    run_btn = cancel_btn = None
     with table_block():
         with table_heading(spec.get('title', 'Jobs')):
-            with ui.row().classes('halon-table-actions'):
-                run_btn = action_button(
-                    spec.get('run_label', 'Run'), icon=spec.get('run_icon', 'play_arrow'),
-                    weight='filled',
-                    on_click=lambda: asyncio.create_task(_start(plugin, spec)),
-                )
-                cancel_btn = action_button(
-                    spec.get('cancel_label', 'Cancel'), icon=spec.get('cancel_icon', 'stop'),
-                    danger=True,
-                    on_click=lambda: asyncio.create_task(_cancel(plugin)),
-                )
+            if spec.get('run_action_id'):
+                with ui.row().classes('halon-table-actions'):
+                    run_btn = action_button(
+                        spec.get('run_label', 'Run'), icon=spec.get('run_icon', 'play_arrow'),
+                        weight='filled',
+                        on_click=lambda: asyncio.create_task(_start(plugin, spec)),
+                    )
+                    cancel_btn = action_button(
+                        spec.get('cancel_label', 'Cancel'), icon=spec.get('cancel_icon', 'stop'),
+                        danger=True,
+                        on_click=lambda: asyncio.create_task(_cancel(plugin)),
+                    )
 
         with ui.row() as progress_row:
             progress_label = ui.label('').classes('halon-caption font-mono')
@@ -854,8 +856,9 @@ def render_job_panel(plugin, spec: dict):
         def update():
             running = plugin.jobs.is_running()
             enabled = enabled_predicate(plugin)
-            run_btn.set_enabled(enabled and not running)
-            cancel_btn.set_visibility(running)
+            if run_btn is not None:
+                run_btn.set_enabled(enabled and not running)
+                cancel_btn.set_visibility(running)
 
             if running:
                 job = plugin.data.job(plugin.jobs.current_id())

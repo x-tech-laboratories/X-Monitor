@@ -67,21 +67,57 @@ async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
         render_mute_button(engine, plugin)
 
         info = await plugin.present()
-        for action in info.get('actions', []):
+        actions = info.get('actions', [])
+        for action in actions:
             if action.get('kind') == 'toggle':
                 _render_toggle(plugin, action, client)
-                continue
+            else:
+                _render_action(plugin, action, client)
+        if getattr(plugin, 'jobs', None) is not None and any(action.get('job') for action in actions):
+            _render_cancel(plugin, client)
 
-            async def do_action(aid=action['action_id'], confirm=action.get('confirm')):
-                if confirm and not await confirmed(confirm):
-                    return
-                success, _ = await plugin.run_action(aid)
-                notify_client(client, 'Action completed successfully' if success else 'Action failed',
-                              type='positive' if success else 'negative')
 
-            action_button(action['name'], on_click=do_action,
-                          icon=action.get('icon', 'play_arrow'),
-                          danger=action.get('variant') == 'danger')
+def _render_action(plugin: Any, action: ActionButtonSpec, client: Any):
+    """An action button that follows plugin.action_state: hidden, greyed out, normal, or filled while it runs."""
+    def state() -> str:
+        return plugin.action_state(action) if hasattr(plugin, 'action_state') else 'normal'
+
+    async def clicked():
+        # A filled button is already running, so a second click would only be refused.
+        if state() != 'normal':
+            return
+        if action.get('confirm') and not await confirmed(action['confirm']):
+            return
+        success, _ = await plugin.run_action(action['action_id'])
+        notify_client(client, 'Action completed successfully' if success else 'Action failed',
+                      type='positive' if success else 'negative')
+
+    def sync():
+        current = state()
+        button.set_visibility(current != 'hidden')
+        button.set_enabled(current != 'disabled')
+        filled = current == 'accent'
+        button.classes(add='halon-button-filled' if filled else 'halon-button',
+                       remove='halon-button' if filled else 'halon-button-filled')
+
+    button = action_button(action['name'], on_click=clicked, icon=action.get('icon', 'play_arrow'),
+                           danger=action.get('variant') == 'danger')
+    on_data_event(sync)
+
+
+def _render_cancel(plugin: Any, client: Any):
+    """A Cancel button for the plugin's running job, shown only while one runs."""
+    async def clicked():
+        if await plugin.jobs.cancel():
+            notify_client(client, 'Cancellation requested', type='warning')
+        else:
+            notify_client(client, 'No job is running', type='info')
+
+    def sync():
+        button.set_visibility(plugin.jobs.is_running())
+
+    button = action_button('Cancel', on_click=clicked, icon='stop', danger=True)
+    on_data_event(sync)
 
 
 def action_names(actions: List[ActionButtonSpec]) -> Dict[str, str]:
