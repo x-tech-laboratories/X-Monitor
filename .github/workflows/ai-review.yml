@@ -19,7 +19,7 @@ jobs:
         if: env.HAS_KEY != 'true'
         run: echo "ANTHROPIC_API_KEY is not available; skipping AI review."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: env.HAS_KEY == 'true'
         with:
           fetch-depth: 1
