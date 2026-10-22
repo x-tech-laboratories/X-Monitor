@@ -8,7 +8,7 @@ import requests
 
 from x_monitor.core.contracts import MetricsSource
 
-_STATUS_VALUE = {'online': 1.0, 'warning': 0.5, 'failed': 0.0, 'unavailable': -1.0, 'offline': -1.0}
+_STATUS_VALUE = {'online': 1.0, 'info': 0.75, 'warning': 0.5, 'failed': 0.0, 'unavailable': -1.0, 'offline': -1.0}
 
 
 def _escape_tag(value: str) -> str:

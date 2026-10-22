@@ -6,10 +6,10 @@ stall_warning (minutes, null to turn it off), pull_errors_warning (default 1,
 null to turn it off), api_timeout. An errored or invalid folder — including
 one sitting idle while still needing data — is failed; pull errors at or above
 pull_errors_warning, folders syncing or scanning past stall_warning, and
-expected devices disconnected are warning; an API that did not answer, or
-answered with an error or something unparseable, is unavailable. The local
-device, which the config lists but the connections map never does, is not an
-expected device."""
+expected devices disconnected are warning; a folder still syncing toward up to
+date is info; an API that did not answer, or answered with an error or
+something unparseable, is unavailable. The local device, which the config
+lists but the connections map never does, is not an expected device."""
 
 import json
 import time
@@ -161,6 +161,11 @@ def _sync_percent(status: Dict[str, Any]) -> int:
     return max(0, min(100, int(in_sync_bytes / global_bytes * 100)))
 
 
+def _is_syncing(status: Dict[str, Any]) -> bool:
+    """Whether a folder is pulling data it still needs (syncing, sync-preparing or sync-waiting)."""
+    return str(status.get('state', '')).startswith('sync')
+
+
 def _folder_tile(status: Dict[str, Any], errored: bool, stalled: bool,
                  paused: bool) -> Dict[str, str]:
     """One folder's tile state (idle, syncing, error, paused or stalled), its caption and its status color."""
@@ -185,11 +190,12 @@ def _folder_tile(status: Dict[str, Any], errored: bool, stalled: bool,
         return {'state': tile_state, 'caption': caption, 'status': 'warning'}
     if state == 'syncing':
         return {'state': 'syncing', 'caption': f"syncing {_sync_percent(status)}%",
-                'status': 'online'}
+                'status': 'info'}
     if state == 'idle':
         return {'state': 'idle', 'caption': 'up to date', 'status': 'online'}
     # Scanning and Syncthing's other passing states read as syncing under their own name.
-    return {'state': 'syncing', 'caption': state.replace('-', ' '), 'status': 'online'}
+    return {'state': 'syncing', 'caption': state.replace('-', ' '),
+            'status': 'info' if _is_syncing(status) else 'online'}
 
 
 def _folder_items(config: Dict[str, Any], folder_states: Dict[str, Dict[str, Any]],
@@ -206,11 +212,15 @@ def _folder_items(config: Dict[str, Any], folder_states: Dict[str, Dict[str, Any
 
 
 def _accumulate_problems(errored_folders: List[str], stalled_folders: List[str],
-                         disconnected: List[str], total_pull_errors: int,
+                         syncing_folders: List[str], disconnected: List[str],
+                         total_pull_errors: int,
                          stall_warning_secs: Optional[float],
                          pull_errors_warning: Optional[float] = 1) -> StatusAccumulator:
-    """Fold errored/stalled folders, pull errors and disconnected devices into one worst-of status."""
+    """Fold errored/stalled/syncing folders, pull errors and disconnected devices into one worst-of status."""
     acc = StatusAccumulator()
+    if syncing_folders:
+        acc.escalate('info',
+                     f"{len(syncing_folders)} folder(s) syncing: {', '.join(syncing_folders[:3])}")
     if errored_folders:
         acc.escalate('failed',
                      f"{len(errored_folders)} folder(s) errored: {', '.join(errored_folders[:3])}")
@@ -275,7 +285,7 @@ class Syncthing(Plugin):
         """Turns the [config, connections, *per-folder status] HTTP results into a
         CollectResult with folder/device/need-bytes metrics, one summary log line,
         and a worst-of status (errored folders failed; pull errors, stalls, and
-        disconnected devices warning; an API error unavailable)."""
+        disconnected devices warning; folders still syncing info; an API error unavailable)."""
         if not results:
             return CollectResult.unavailable("No 'api_url' configured")
 
@@ -299,7 +309,7 @@ class Syncthing(Plugin):
             # just learned the folder IDs, per-folder status lags one cycle.
             return CollectResult(
                 logs=[(f"Discovered {len(watched_ids)} folder(s), fetching status next cycle", "INFO")],
-                status='warning',
+                status='info',
             )
 
         try:
@@ -321,7 +331,9 @@ class Syncthing(Plugin):
                                 total_need_bytes, total_pull_errors,
                                 len(expected_devices), len(disconnected))
 
-        acc = _accumulate_problems(errored_folders, stalled_folders, disconnected,
+        syncing_folders = [folder_id for folder_id, status in folder_states.items()
+                           if _is_syncing(status) and folder_id not in stalled_folders]
+        acc = _accumulate_problems(errored_folders, stalled_folders, syncing_folders, disconnected,
                                    total_pull_errors, self.stall_warning_secs,
                                    self.pull_errors_warning)
 

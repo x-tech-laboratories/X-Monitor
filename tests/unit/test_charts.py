@@ -68,6 +68,9 @@ class TestUpShare:
     def test_cells_with_no_data_do_not_count_against_uptime(self):
         assert charts.up_share(['unavailable', 'online', 'failed', 'online']) == pytest.approx(200 / 3)
 
+    def test_an_info_cell_counts_as_up(self):
+        assert charts.up_share(['info', 'online']) == 100.0
+
     def test_no_measured_cells_has_no_share(self):
         assert charts.up_share(['unavailable', 'unavailable']) is None
 

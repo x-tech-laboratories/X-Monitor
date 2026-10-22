@@ -45,6 +45,7 @@ plugins:
           - {name: "Pi-hole", id: "heimdall-pihole", type: "pihole", api_url: "http://127.0.0.1:9", interval: 3, <<: *ssh}
           - {name: "Unbound", id: "heimdall-unbound", type: "unbound", interval: 5, <<: *ssh}
           - {name: "Containers", id: "heimdall-containers", type: "containers", interval: 5, <<: *ssh}
+          - {name: "Syncthing", id: "heimdall-syncthing", type: "syncthing", api_url: "http://127.0.0.1:9", api_key: "demo", interval: 3}
           - {name: "Calibre Web", id: "heimdall-calibre", type: "http", url: "http://127.0.0.1:9/opds", interval: 3}
       - name: "Backups"
         id: "heimdall-backups"

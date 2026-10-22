@@ -31,13 +31,17 @@ class TestSamples:
                 metrics, status, *_ = reading(stand_in(kind), tick, seed=101)
                 assert metrics, kind
                 assert all(isinstance(v, float) for v in metrics.values()), kind
-                assert status in ('online', 'warning', 'failed'), kind
+                assert status in ('online', 'info', 'warning', 'failed'), kind
 
     def test_the_pool_and_disk_tiles_get_their_snapshot_lists(self, sample):
         *_, pools = sample.zfs(stand_in('zfs'), 0, seed=1)
         *_, disks = sample.smart(stand_in('smart'), 0, seed=1)
         assert {pool['label'] for pool in pools} == {'storage', 'backup'}
         assert all({'label', 'health', 'temperature', 'power_on_hours'} <= set(disk) for disk in disks)
+
+    def test_a_syncthing_folder_syncs_now_and_then_as_info(self, sample):
+        states = {sample.syncthing(stand_in('syncthing'), tick, seed=3)[1] for tick in range(40)}
+        assert states == {'online', 'info'}
 
     def test_a_flaky_monitor_goes_down_now_and_then(self, sample):
         states = {sample.uptime(stand_in('uptime'), tick, seed=3)[1] for tick in range(40)}

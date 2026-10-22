@@ -29,10 +29,10 @@ UP_METRICS = {
     'push': 'reported_up',
 }
 
-STATUS_ORDER = ('online', 'warning', 'failed', 'unavailable')
+STATUS_ORDER = ('online', 'info', 'warning', 'failed', 'unavailable')
 
 # Worst first, so a host takes the most severe state among its monitors.
-STATUS_SEVERITY = ('failed', 'warning', 'unavailable', 'online')
+STATUS_SEVERITY = ('failed', 'warning', 'unavailable', 'info', 'online')
 
 # A backup meter is full at twice its monitor's max age, so the max age sits at its middle.
 BACKUP_SCALE = 2.0

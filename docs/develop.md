@@ -635,7 +635,7 @@ status history on disk, so the strips cover the last 60 readings rather than a f
 ## Overview charts: a donut for status, a treemap for type
 
 The overview's two cards look alike but carry different data, and only one of
-them suits a donut. Status has four fixed slices, so part-to-whole reads at a
+them suits a donut. Status has five fixed slices, so part-to-whole reads at a
 glance. Type does not: a modest config already declares ~25 monitor types, most
 of them once, which is the case a pie handles worst — two dozen near-identical
 slivers, a legend taller than the plot, and ECharts' nine-hue default palette
@@ -644,7 +644,7 @@ cycling, so the tenth type is painted the same blue as the first.
 The type card is a treemap instead. Tile area is the monitor count and the label
 inside each tile carries identity, which frees color to mean something: each
 tile takes the *worst* status among its monitors (`_worst_status`, severity
-`failed > warning > unavailable > online`), drawn from the four reserved status
+`failed > warning > unavailable > info > online`), drawn from the five reserved status
 tokens. So the chart costs no categorical palette at any type count, and one
 failed unit inside an otherwise healthy type is visible without opening it.
 Clicking a tile still filters the monitor table exactly as the donut slice did.

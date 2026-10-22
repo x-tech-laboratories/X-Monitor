@@ -183,10 +183,24 @@ class TestSyncthingCollection:
         ]): next(_it))
         assert _latest_status() == "unavailable"
 
+    async def test_a_folder_still_syncing_is_info(self, plugin, run_requests):
+        _collect_twice(plugin, run_requests, folder_statuses={
+            "docs": _folder_status(state="syncing", need_files=3, need_bytes=500),
+            "photos": _folder_status(),
+        })
+        assert _latest_status() == "info"
+
+    async def test_a_scanning_folder_stays_online(self, plugin, run_requests):
+        _collect_twice(plugin, run_requests, folder_statuses={
+            "docs": _folder_status(state="scanning"),
+            "photos": _folder_status(),
+        })
+        assert _latest_status() == "online"
+
     async def test_first_cycle_discovers_folders(self, plugin, run_requests):
         result = run_requests(plugin, lambda r, _it=iter([
             _ok(_CONFIG), _ok(_connections())]): next(_it))
-        assert result.status == "warning"
+        assert result.status == "info"
         assert plugin._cached_folder_ids == ["docs", "photos"]
 
     async def test_folder_filter_excludes_others(self, make_plugin, run_requests):
@@ -226,7 +240,7 @@ class TestFolderSnapshot:
         docs = _tiles(plugin)["docs"]
         assert docs["state"] == "syncing"
         assert docs["caption"] == "syncing 82%"
-        assert docs["status"] == "online"
+        assert docs["status"] == "info"
 
     async def test_folder_syncing_past_the_stall_warning_is_stalled(self, make_plugin, run_requests):
         p = make_plugin(Syncthing, {**BASE_CFG, "stall_warning": 0})
@@ -292,5 +306,5 @@ class TestOptionalLimits:
             "docs": {**_folder_status(state="syncing", need_bytes=500), "globalBytes": 1000},
             "photos": _folder_status(),
         })
-        assert _latest_status() == "online"
+        assert _latest_status() == "info"
         assert _latest_metric("folders_stalled") == 0

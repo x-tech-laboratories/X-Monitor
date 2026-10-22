@@ -996,6 +996,7 @@ a, .q-link { color: var(--accent); }
 
 .halon-badge-accent { background-color: var(--accent); color: var(--text-on-fill); }
 .halon-badge-success { background-color: var(--status-success); color: var(--text-on-fill); }
+.halon-badge-info { background-color: var(--status-info); color: var(--text-on-fill); }
 .halon-badge-danger { background-color: var(--status-danger); color: var(--text-on-fill); }
 /* Warning is light in both schemes and takes near-black text (§3.5). */
 .halon-badge-warning { background-color: var(--status-warning); color: var(--text-on-light); }

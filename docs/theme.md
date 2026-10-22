@@ -17,6 +17,7 @@ them is yours to audit — the shipped values are contrast-audited in both.
 | `text`             | `--text-body`           | Body text                                 |
 | `text_muted`       | `--text-secondary`      | Labels, captions, icons                   |
 | `status_online`    | `--status-success`      | A monitor that is up                      |
+| `status_info`      | `--status-info`         | A monitor that is healthy but busy, e.g. syncing |
 | `status_warning`   | `--status-warning-text` | A monitor in warning                      |
 | `status_failed`    | `--status-danger`       | A monitor that has failed                 |
 | `status_unavailable` | `--text-tertiary`     | A monitor that could not measure          |

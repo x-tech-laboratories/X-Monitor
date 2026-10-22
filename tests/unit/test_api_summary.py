@@ -54,6 +54,13 @@ class TestSummaryCounts:
         body = client(plugins, statuses).get('/api/summary').json()
         assert body['unhealthy'] == 2
 
+    def test_info_counts_as_healthy(self, client):
+        plugins = [_plugin('a'), _plugin('b'), _plugin('c')]
+        statuses = {'a': 'online', 'b': 'info', 'c': 'warning'}
+        body = client(plugins, statuses).get('/api/summary').json()
+        assert body['info'] == 1
+        assert body['unhealthy'] == 1
+
     def test_an_unknown_status_still_counts_toward_the_total(self, client):
         body = client([_plugin('a')], {'a': 'weird'}).get('/api/summary').json()
         assert body['total'] == 1

@@ -52,14 +52,14 @@ def register_api(app: Any, engine: EngineLike) -> None:
     def summary():
         """Counts of leaf monitors by status, for a dashboard tile that cannot aggregate a list itself."""
         statuses = db.latest_statuses()
-        counts = {'online': 0, 'warning': 0, 'failed': 0, 'offline': 0, 'unavailable': 0}
+        counts = {'online': 0, 'info': 0, 'warning': 0, 'failed': 0, 'offline': 0, 'unavailable': 0}
         for p in all_monitors(engine):
             if p.children:
                 continue
             state = statuses.get(p.id, 'unavailable')
             counts[state] = counts.get(state, 0) + 1
         total = sum(counts.values())
-        return JSONResponse({'total': total, **counts, 'unhealthy': total - counts['online']})
+        return JSONResponse({'total': total, **counts, 'unhealthy': total - counts['online'] - counts['info']})
 
     @app.get('/api/backups')
     def backups():
@@ -73,7 +73,7 @@ def register_api(app: Any, engine: EngineLike) -> None:
             rows.append({'id': p.id, 'name': p.name, 'target': getattr(p, 'target', None),
                          'status': statuses.get(p.id, 'unavailable'), **summarize()})
         rows.sort(key=lambda r: -(r['newest_archive_age'] if r['newest_archive_age'] is not None else float('inf')))
-        healthy = sum(1 for r in rows if r['status'] == 'online')
+        healthy = sum(1 for r in rows if r['status'] in ('online', 'info'))
         return JSONResponse({'total': len(rows), 'healthy': healthy, 'unhealthy': len(rows) - healthy,
                              'repositories': rows})
 
