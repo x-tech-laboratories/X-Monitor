@@ -25,7 +25,8 @@ from x_monitor.plugins.base.plugin_helpers import level_for
 # Sample readings
 # ============================================================================
 
-Reading = Tuple[Dict[str, float], str]
+# Metrics and a status, and for a monitor whose tiles read one, its snapshot list.
+Reading = Tuple[Any, ...]
 
 
 def wave(tick: int, seed: int, base: float, swing: float, noise: float = 0.0) -> float:
@@ -109,13 +110,18 @@ def filesystems(plugin, tick, seed) -> Reading:
 def zfs(plugin, tick, seed) -> Reading:
     """Two healthy pools, one of them nearly full."""
     usage = {'storage': wave(tick, seed, 79, 4, 1), 'backup': 42.0}
+    pools = [{'label': name, 'health': 'ONLINE', 'usage': value} for name, value in usage.items()]
     return ({'pools_total': 2.0, 'pools_ok': 2.0, 'pools_degraded': 0.0, 'zfs_usage_max': max(usage.values()),
-             **{f'pool_usage_{name}': value for name, value in usage.items()}}, thresholds(plugin, max(usage.values())))
+             **{f'pool_usage_{name}': value for name, value in usage.items()}},
+            thresholds(plugin, max(usage.values())), pools)
 
 
 def smart(plugin, tick, seed) -> Reading:
     """Three disks, all passing."""
-    return {'disks_total': 3.0, 'disks_ok': 3.0, 'disks_failed': 0.0, 'disks_unknown': 0.0}, 'online'
+    disks = [{'label': name, 'health': 'PASSED', 'temperature': wave(tick, seed + index, temp, 2, 1),
+              'power_on_hours': hours + tick / 720}
+             for index, (name, temp, hours) in enumerate([('sda', 36, 21402), ('sdb', 37, 21398), ('nvme0n1', 41, 8120)])]
+    return {'disks_total': 3.0, 'disks_ok': 3.0, 'disks_failed': 0.0, 'disks_unknown': 0.0}, 'online', disks
 
 
 def uptime(plugin, tick, seed) -> Reading:
@@ -217,8 +223,9 @@ class SampleEngine(XMonitorEngine):
             self._apply(plugin, CollectResult(status='unavailable'))
             return True
         seed = sum(map(ord, plugin.id))
-        metrics, status = sample(plugin, tick, seed)
-        self._apply(plugin, CollectResult(metrics=metrics, status=status))
+        metrics, status, *snapshot = sample(plugin, tick, seed)
+        self._apply(plugin, CollectResult(metrics=metrics, status=status,
+                                          snapshot=snapshot[0] if snapshot else None))
         return True
 
 

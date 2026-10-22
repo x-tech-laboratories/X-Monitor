@@ -27,10 +27,16 @@ class TestSamples:
     def test_every_sampled_type_yields_metrics_and_a_status(self, sample):
         for kind, reading in sample.SAMPLES.items():
             for tick in range(0, 80, 7):
-                metrics, status = reading(stand_in(kind), tick, seed=101)
+                metrics, status, *_ = reading(stand_in(kind), tick, seed=101)
                 assert metrics, kind
                 assert all(isinstance(v, float) for v in metrics.values()), kind
                 assert status in ('online', 'warning', 'failed'), kind
+
+    def test_the_pool_and_disk_tiles_get_their_snapshot_lists(self, sample):
+        *_, pools = sample.zfs(stand_in('zfs'), 0, seed=1)
+        *_, disks = sample.smart(stand_in('smart'), 0, seed=1)
+        assert {pool['label'] for pool in pools} == {'storage', 'backup'}
+        assert all({'label', 'health', 'temperature', 'power_on_hours'} <= set(disk) for disk in disks)
 
     def test_a_flaky_monitor_goes_down_now_and_then(self, sample):
         states = {sample.uptime(stand_in('uptime'), tick, seed=3)[1] for tick in range(40)}
