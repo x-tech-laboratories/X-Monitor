@@ -193,6 +193,21 @@ def containers(plugin, tick, seed) -> Reading:
             'warning' if stopped else 'online')
 
 
+def syncthing(plugin, tick, seed) -> Reading:
+    """Three folders, one of which pulls a batch of changes now and then, which reads as info."""
+    percent = (tick + seed) % 30 * 10
+    syncing = percent < 100
+    folders = [{'id': 'docs', 'label': 'Documents', 'state': 'idle', 'caption': 'up to date', 'status': 'online'},
+               {'id': 'photos', 'label': 'Photos', 'state': 'syncing' if syncing else 'idle',
+                'caption': f'syncing {percent}%' if syncing else 'up to date',
+                'status': 'info' if syncing else 'online'},
+               {'id': 'music', 'label': 'Music', 'state': 'idle', 'caption': 'up to date', 'status': 'online'}]
+    need = (100 - percent) * 4e6 if syncing else 0.0
+    return ({'folders_total': 3.0, 'folders_errored': 0.0, 'folders_stalled': 0.0, 'need_bytes': need,
+             'pull_errors': 0.0, 'devices_expected': 2.0, 'devices_disconnected': 0.0},
+            'info' if syncing else 'online', folders)
+
+
 def borg(plugin, tick, seed) -> Reading:
     """A repository backed up recently, or for one in five, missed past its max age."""
     # One repository in five has missed its window, so the backups panel shows a late one.
@@ -222,7 +237,7 @@ SAMPLES: Dict[str, Callable[[Any, int, int], Reading]] = {
     'throughput': throughput, 'connections': connections, 'processes': processes, 'disk_io': disk_io,
     'disk_space': disk_space, 'filesystems': filesystems, 'zfs': zfs, 'smart': smart,
     'uptime': uptime, 'http': http, 'ports': ports, 'pihole': pihole, 'unbound': unbound,
-    'containers': containers, 'borg': borg, 'nixos_upgrade': nixos_upgrade, 'vuln_scan': vuln_scan,
+    'containers': containers, 'syncthing': syncthing, 'borg': borg, 'nixos_upgrade': nixos_upgrade, 'vuln_scan': vuln_scan,
 }
 
 

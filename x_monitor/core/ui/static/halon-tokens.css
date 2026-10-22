@@ -102,6 +102,7 @@
 
     /* Status */
     --status-success: #047857;
+    --status-info: #0369a1;
     --status-warning: #f59e0b;
     --status-warning-text: #c2410c;
     --status-danger: #dc2626;
@@ -155,6 +156,7 @@
         --series-3: #94a3b8;
 
         --status-success: #10b981;
+        --status-info: #38bdf8;
         --status-warning-text: #f59e0b;
         --status-danger: #f87171;
         --badge-experimental: #a78bfa;
@@ -195,6 +197,7 @@
     --series-3: #94a3b8;
 
     --status-success: #10b981;
+    --status-info: #38bdf8;
     --status-warning-text: #f59e0b;
     --status-danger: #f87171;
     --badge-experimental: #a78bfa;

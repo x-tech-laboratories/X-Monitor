@@ -5,7 +5,7 @@ from x_monitor.core.contracts import MetricsSource
 
 _INVALID = re.compile(r'[^a-zA-Z0-9_:]')
 
-_STATUS_VALUE = {'online': 1.0, 'warning': 0.5, 'failed': 0.0, 'unavailable': -1.0, 'offline': -1.0}
+_STATUS_VALUE = {'online': 1.0, 'info': 0.75, 'warning': 0.5, 'failed': 0.0, 'unavailable': -1.0, 'offline': -1.0}
 
 
 def _sanitize_name(name: str) -> str:

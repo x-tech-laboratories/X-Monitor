@@ -18,7 +18,7 @@ from x_monitor.core.notifications.mail import AppriseChannel, SmtpChannel
 from x_monitor.core.notifications.maintenance import Window, parse_windows
 from x_monitor.core.notifications.oncall import OpsgenieChannel, PagerDutyChannel
 from x_monitor.core.notifications.rules import (
-    FLAPPING, PROBLEM, RECOVERED, SETTLED, Alert, Tracker, resolve_rules,
+    FLAPPING, HEALTHY_STATUSES, PROBLEM, RECOVERED, SETTLED, Alert, Tracker, resolve_rules,
 )
 from x_monitor.core.coordination.monitor_graph import iter_monitors, parent_ids
 from x_monitor.core.state import changes
@@ -216,10 +216,10 @@ class NotificationEngine:
         name = getattr(plugin, 'name', plugin_id)
         status = alert.status
         if alert.kind == RECOVERED and alert.settled:
-            title = f"{name} stopped flapping and recovered" if status == 'online' else f"{name} stopped flapping and is {status}"
+            title = f"{name} stopped flapping and recovered" if status in HEALTHY_STATUSES else f"{name} stopped flapping and is {status}"
             detail = ""
         elif alert.kind == RECOVERED:
-            title = f"{name} recovered" if status == 'online' else f"{name} is {status}"
+            title = f"{name} recovered" if status in HEALTHY_STATUSES else f"{name} is {status}"
             detail = f"Was down for {format_duration(int(now - alert.since))}"
         elif alert.kind == FLAPPING:
             window = format_duration(self._tracker.rules[plugin_id].flap_window)

@@ -25,7 +25,7 @@ curl "http://localhost:8080/api/events?level=ERROR&limit=50"
 
 ## Prometheus
 
-A Prometheus exposition endpoint is always available at `GET /metrics` (pull) — no configuration required. It exports `x_monitor_up` (per-monitor status: `1` online, `0.5` warning, `0` failed, `-1` unavailable) and `x_monitor_metric` (every collected metric, labeled by monitor/target/metric). Point a Prometheus scrape config at it:
+A Prometheus exposition endpoint is always available at `GET /metrics` (pull) — no configuration required. It exports `x_monitor_up` (per-monitor status: `1` online, `0.75` info, `0.5` warning, `0` failed, `-1` unavailable) and `x_monitor_metric` (every collected metric, labeled by monitor/target/metric). Point a Prometheus scrape config at it:
 
 ```yaml
 scrape_configs:

@@ -80,7 +80,7 @@ def up_share(states: Sequence[str]) -> Optional[float]:
     measured = [s for s in states if s != 'unavailable']
     if not measured:
         return None
-    return 100.0 * sum(s == 'online' for s in measured) / len(measured)
+    return 100.0 * sum(s in ('online', 'info') for s in measured) / len(measured)
 
 
 def strip_cell_color(state: str) -> str:

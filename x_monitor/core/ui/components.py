@@ -191,7 +191,7 @@ LEVEL_CELL_SLOT = '''
 '''
 
 # The badge each monitor state is drawn with; a state with no fill of its own stays neutral.
-STATUS_BADGES = {'online': 'halon-badge-success', 'failed': 'halon-badge-danger', 'warning': 'halon-badge-warning'}
+STATUS_BADGES = {'online': 'halon-badge-success', 'info': 'halon-badge-info', 'failed': 'halon-badge-danger', 'warning': 'halon-badge-warning'}
 
 STATUS_CELL_SLOT = '''
     <q-td :props="props">
