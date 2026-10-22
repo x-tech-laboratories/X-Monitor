@@ -19,8 +19,8 @@ from cryptography.hazmat.primitives.serialization import load_ssh_private_key, l
 
 NONCE_BYTES = 32
 
-# Keeps the project's former name, because changing it locks out every agent not yet redeployed.
-_DOMAIN = b"vigil-agent-auth-v1\0"
+# Changing this locks out every agent that is not redeployed with the server.
+_DOMAIN = b"x-monitor-agent-auth-v1\0"
 
 
 def new_nonce() -> str:

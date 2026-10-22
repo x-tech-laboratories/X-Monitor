@@ -125,3 +125,14 @@ class TestSignature:
         key = Ed25519PrivateKey.generate()
         assert not keys.verify(key.public_key(), 'node-a', keys.new_nonce(), 'not base64!')
         assert not keys.verify(None, 'node-a', keys.new_nonce(), 'AAAA')
+
+    def test_the_signed_message_is_bound_to_the_x_monitor_name(self):
+        import base64
+
+        from x_monitor_agent import keys
+
+        key = Ed25519PrivateKey.generate()
+        nonce = keys.new_nonce()
+        message = b"x-monitor-agent-auth-v1\0node-a\0" + base64.b64decode(nonce)
+        signature = base64.b64encode(key.sign(message)).decode('ascii')
+        assert keys.verify(key.public_key(), 'node-a', nonce, signature)

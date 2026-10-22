@@ -115,7 +115,7 @@ X-Monitor was called Vigil. Every name changed with it, so an existing install n
 - The service users are `x-monitor` and `x-monitor-agent`, and data lives in `/var/lib/x-monitor/x-monitor.db`; move `/var/lib/vigil/vigil.db` there to keep your history.
 - The `vigil_self` monitor type is `x_monitor_self`, and the Prometheus metrics are `x_monitor_up` and `x_monitor_metric`.
 
-Agents and servers of either name still authenticate each other, so hosts can be redeployed one at a time.
+Agents sign their login with the X-Monitor name, so a Vigil agent cannot log in to an X-Monitor server or the reverse; redeploy every host together.
 
 ## Getting Started
 
