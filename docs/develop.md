@@ -137,7 +137,11 @@ unchecked at the boundary (bad data fails at first use, not at load).
   buttons rendered regardless of `UI_SPEC`. An entry with `kind: 'toggle'` is a
   toggle button: it is pressed while the latest value of its `metric` is above
   0.5, runs `on_action_id` or `off_action_id` when clicked, then polls so it
-  shows the state the target reports. An optional `icon` sets its glyph.
+  shows the state the target reports. An optional `icon` sets its glyph, and
+  an optional `confirm` text asks the user before the action runs. A
+  monitor's `actions` config adds its own entries after the plugin's, through
+  `Plugin.all_actions()`; the engine runs those before `plan_action` is asked
+  (`plugins/base/custom_actions.py`).
 
 Other typed boundaries: `core/ui/spec_types.py` (`UISpec` and its nested card /
 table / dialog / job-panel shapes that `generic_render` interprets),

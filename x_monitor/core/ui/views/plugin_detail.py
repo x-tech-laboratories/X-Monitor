@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from nicegui import ui
 from x_monitor.core.contracts import ActionButtonSpec, EngineLike
-from ..components import action_button, notify_client, on_data_event, page_header, set_pressed, toggle_button
+from ..components import action_button, confirmed, notify_client, on_data_event, page_header, set_pressed, toggle_button
 from .notifications import render_mute_button
 
 
@@ -25,7 +25,7 @@ def _render_schedule(plugin: Any):
     entries = getattr(plugin, 'scheduled_actions', [])
     if not entries:
         return
-    names = action_names(plugin.get_actions())
+    names = action_names(plugin.all_actions())
     for entry in entries:
         upcoming = entry.cron.next_after(datetime.now())
         when = f"next {upcoming:%a %d %b %H:%M}" if upcoming else 'never'
@@ -72,7 +72,9 @@ async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
                 _render_toggle(plugin, action, client)
                 continue
 
-            async def do_action(aid=action['action_id']):
+            async def do_action(aid=action['action_id'], confirm=action.get('confirm')):
+                if confirm and not await confirmed(confirm):
+                    return
                 success, _ = await plugin.run_action(aid)
                 notify_client(client, 'Action completed successfully' if success else 'Action failed',
                               type='positive' if success else 'negative')

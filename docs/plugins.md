@@ -8,6 +8,7 @@ config examples. For what X-Monitor is and how to run it, see the
 
 - [Summary](#summary) — the one-line table of every plugin type
 - [Scheduled actions](#scheduled-actions) — run any monitor's action on a cron schedule
+- [Custom actions](#custom-actions) — add your own command buttons to any monitor
 - Plugin types:
   [`uptime`](#uptime) ·
   [`push`](#push) ·
@@ -103,6 +104,7 @@ All plugin types share these common fields:
 | `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 | `schedule` | Actions to run on a cron schedule — see [Scheduled actions](#scheduled-actions) (default: none) |
+| `actions` | Your own command buttons on the monitor's page — see [Custom actions](#custom-actions) (default: none) |
 
 ### Scheduled actions
 
@@ -126,6 +128,40 @@ Any action a monitor offers can run on its own at set times, the way cron runs a
 The expression has the usual five fields (minute, hour, day of month, month, day of week) in the X-Monitor host's local time, with `*`, ranges, lists, `/` steps, month and day names, and the aliases `@hourly`, `@daily`, `@weekly`, `@monthly` and `@yearly`. As in cron, an expression restricting both the day of month and the day of week runs on either.
 
 A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a backup that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
+
+### Custom actions
+
+Every monitor, whatever its type, accepts an `actions` list of your own commands. Each one becomes a button in the monitor's page header, next to the plugin's own actions.
+
+```yaml
+- name: Nginx
+  type: systemd_service
+  service_name: nginx
+  actions:
+    - name: Clear Cache
+      command: rm -rf /var/cache/nginx/*
+    - name: Reboot Host
+      command: systemctl reboot
+      icon: power_settings_new
+      danger: true
+      confirm: Reboot this host?
+  schedule:
+    - action: custom:clear_cache    # a custom action's id is `custom:` plus its id
+      cron: "@weekly"
+```
+
+| Option    | Description |
+|-----------|-------------|
+| `name`    | Button label (required) |
+| `command` | Shell command to run (required) |
+| `id`      | Id used by `schedule`, made from `name` when omitted: lower case with other characters as `_` |
+| `icon`    | Material icon name (default: `terminal`) |
+| `confirm` | Question asked before it runs; the command runs only on a yes |
+| `danger`  | Shows the button in the danger colour (default: `false`) |
+| `timeout` | How long the command may run, as seconds or a duration such as `2m` |
+| `agent`   | Run on this agent instead of the monitor's own host |
+
+The command runs where the monitor's own commands run: over its agent, or over SSH to its host. It succeeds on exit code 0, and each run is logged on the monitor with the start of its output, or of its error when it fails. Custom ids start with `custom:`, so they never clash with the plugin's own actions, and [`schedule`](#scheduled-actions) can run them like any other action.
 
 ---
 
