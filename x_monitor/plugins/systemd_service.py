@@ -10,7 +10,8 @@ is failed, and a unit whose state could not be queried is unavailable. A
 reboot clears systemd's unit timestamps, so when they are empty the last run
 is taken from the unit's journal instead of being reported as never ran.
 Both modes record whether the unit starts on boot, which drives the
-Start on Boot switch."""
+Start on Boot switch; continuous mode also has a Running switch that starts
+and stops the unit."""
 
 import os
 import shlex
@@ -229,15 +230,20 @@ class SystemdService(Plugin):
         return None, line
 
     def get_actions(self) -> List[Dict[str, str]]:
-        return [
-            {'name': 'Restart Service', 'action_id': 'restart_service', 'variant': 'primary', 'icon': 'play_arrow'},
-            {'name': 'Stop Service',    'action_id': 'stop_service',    'variant': 'danger',  'icon': 'stop'},
-            {'name': 'Start on Boot', 'kind': 'toggle', 'metric': 'enabled',
-             'on_action_id': 'enable_service', 'off_action_id': 'disable_service'},
-        ]
+        actions = [{'name': 'Restart Service', 'action_id': 'restart_service', 'variant': 'primary', 'icon': 'play_arrow'}]
+        # Starting a oneshot unit blocks until its run ends, so only a continuous unit gets a Running switch.
+        if self.max_age is None:
+            actions.append({'name': 'Running', 'kind': 'toggle', 'metric': 'active',
+                            'on_action_id': 'start_service', 'off_action_id': 'stop_service'})
+        else:
+            actions.append({'name': 'Stop Service', 'action_id': 'stop_service', 'variant': 'danger', 'icon': 'stop'})
+        actions.append({'name': 'Start on Boot', 'kind': 'toggle', 'metric': 'enabled',
+                        'on_action_id': 'enable_service', 'off_action_id': 'disable_service'})
+        return actions
 
     def plan_action(self, action_id: str, **kwargs) -> Optional[Union[ActionPlan, CollectResult]]:
         command_map = {
+            'start_service': 'start',
             'restart_service': 'restart',
             'stop_service': 'stop',
             'enable_service': 'enable',
@@ -283,6 +289,7 @@ class SystemdService(Plugin):
 
         if result.exit_code != 0:
             command_map = {
+                'start_service': 'start',
                 'restart_service': 'restart',
                 'stop_service': 'stop',
                 'enable_service': 'enable',

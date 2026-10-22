@@ -1,5 +1,5 @@
 """Libvirt VM states via `virsh list --all` over SSH — sampled locally by the
-agent on agent-backed hosts — with start/shutdown actions for expected VMs.
+agent on agent-backed hosts — with a running switch for each expected VM.
 Config: uri (the libvirt connection), expect_running, offline_warning. Any VM
 named in expect_running that is not running makes the status failed; VMs in
 other unexpected states are warning when offline_warning is on, while cleanly
@@ -21,6 +21,11 @@ _DEFAULT_LAYOUT = [
     ['vms'],
     ['events'],
 ]
+
+
+def _running_metric(name: str) -> str:
+    """The metric that is 1 while the expected VM `name` runs, which its switch shows."""
+    return f'vm_running_{name}'
 
 
 def _shquote(s: str) -> str:
@@ -95,6 +100,7 @@ class Vms(Plugin):
             'vms_total': float(total),
             'vms_running': float(len(running)),
             'vms_stopped': float(len(stopped) + len(benign)),
+            **{_running_metric(name): 1.0 if name in running else 0.0 for name in self.expect_running},
         }
 
         if total == 0:
@@ -123,13 +129,9 @@ class Vms(Plugin):
         )
 
     def get_actions(self) -> List[Dict[str, str]]:
-        actions = []
-        for name in sorted(self.expect_running):
-            actions.append({'name': f'Start {name}', 'action_id': f'start:{name}',
-                            'variant': 'primary', 'icon': 'play_arrow'})
-            actions.append({'name': f'Shutdown {name}', 'action_id': f'shutdown:{name}',
-                            'variant': 'danger', 'icon': 'stop'})
-        return actions
+        return [{'name': name, 'kind': 'toggle', 'metric': _running_metric(name),
+                 'on_action_id': f'start:{name}', 'off_action_id': f'shutdown:{name}'}
+                for name in sorted(self.expect_running)]
 
     def plan_action(self, action_id: str, **kwargs) -> Optional[Union[ActionPlan, CollectResult]]:
         if ':' not in action_id:

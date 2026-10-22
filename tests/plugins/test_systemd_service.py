@@ -309,16 +309,28 @@ class TestActions:
     async def test_unknown_action_returns_false(self, plugin):
         assert plugin.plan_action("nuke") is None
 
-    def test_get_actions_includes_restart_and_stop(self, plugin):
-        ids = {a.get("action_id") for a in plugin.get_actions()}
-        assert "restart_service" in ids
-        assert "stop_service" in ids
+    def test_continuous_unit_gets_restart_and_two_switches(self, plugin):
+        assert plugin.get_actions() == [
+            {"name": "Restart Service", "action_id": "restart_service", "variant": "primary", "icon": "play_arrow"},
+            {"name": "Running", "kind": "toggle", "metric": "active",
+             "on_action_id": "start_service", "off_action_id": "stop_service"},
+            {"name": "Start on Boot", "kind": "toggle", "metric": "enabled",
+             "on_action_id": "enable_service", "off_action_id": "disable_service"},
+        ]
 
-    def test_boot_is_one_toggle_over_enable_and_disable(self, plugin):
-        toggles = [a for a in plugin.get_actions() if a.get("kind") == "toggle"]
-        assert toggles == [{"name": "Start on Boot", "kind": "toggle", "metric": "enabled",
-                            "on_action_id": "enable_service", "off_action_id": "disable_service"}]
-        assert not {"enable_service", "disable_service"} & {a.get("action_id") for a in plugin.get_actions()}
+    def test_oneshot_unit_keeps_its_stop_button(self, make_plugin):
+        plugin = make_plugin(SystemdService, ONESHOT_CFG)
+        assert [a.get("action_id") or a["name"] for a in plugin.get_actions()] == \
+            ["restart_service", "stop_service", "Start on Boot"]
+
+    async def test_start_success(self, plugin):
+        plan = plugin.plan_action("start_service")
+        assert plan.command == "sudo systemctl start nginx.service"
+        assert plugin.interpret_action("start_service", CmdResult(0, "", "")) is True
+
+    async def test_start_failure_names_start(self, plugin):
+        result = plugin.interpret_action("start_service", CmdResult(1, "", "boom"))
+        assert "systemctl start failed" in result.logs[0][0]
 
     def test_boot_state_is_queried(self, plugin):
         assert plugin.commands()[-1].text == "systemctl is-enabled nginx.service"
