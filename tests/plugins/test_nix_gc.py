@@ -408,6 +408,15 @@ class TestJobPolling:
 
 
 class TestUiSpec:
+    async def test_collect_fills_while_its_job_runs(self, plugin):
+        action = plugin.get_actions()[0]
+        assert plugin.action_state(action) == 'normal'
+        await _launch(plugin)
+        assert plugin.action_state(action) == 'accent'
+
+    def test_job_controls_live_in_the_header_only(self, plugin):
+        assert 'run_action_id' not in plugin.UI_SPEC['job_panel']
+
     def test_every_laid_out_widget_has_a_definition(self, plugin):
         spec = plugin.UI_SPEC
         defined = set(spec['cards']) | set(spec['tables']) | {'host_card', 'chart', 'events'}
