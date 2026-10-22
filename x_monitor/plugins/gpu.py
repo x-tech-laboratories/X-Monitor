@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 from x_monitor.plugins.base.signal_plugin import SignalPlugin, worst_status as _worst
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from
 
 
 def _parse_gpu_table(stdout: str):
@@ -66,12 +66,12 @@ class Gpu(SignalPlugin):
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.util_warning   = float(config.get('util_warning',   85))
-        self.util_threshold = float(config.get('util_threshold', 95))
-        self.mem_warning    = float(config.get('mem_warning',    85))
-        self.mem_threshold  = float(config.get('mem_threshold',  95))
-        self.temp_warning   = float(config.get('temp_warning',   80))
-        self.temp_threshold = float(config.get('temp_threshold', 90))
+        self.util_warning   = limit_from(config, 'util_warning',   85)
+        self.util_threshold = limit_from(config, 'util_threshold', 95)
+        self.mem_warning    = limit_from(config, 'mem_warning',    85)
+        self.mem_threshold  = limit_from(config, 'mem_threshold',  95)
+        self.temp_warning   = limit_from(config, 'temp_warning',   80)
+        self.temp_threshold = limit_from(config, 'temp_threshold', 90)
         self.timeout_trip     = int(config.get('timeout_trip',      2))
         self.suspend_seconds  = float(config.get('suspend_seconds', 1800.0))
         self._consecutive_timeouts = 0

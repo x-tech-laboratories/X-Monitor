@@ -142,6 +142,37 @@ class TestCollection:
 
 
 @pytest.mark.asyncio
+class TestOptionalLimits:
+    async def test_charge_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Power, dict(CFG, charge_threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _unplugged(LAPTOP.replace("CAPACITY=100", "CAPACITY=0")), ""))
+        assert _latest_status() == "warning"
+
+    async def test_charge_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Power, dict(CFG, charge_warning=None))
+        run_cycle(p, lambda c: CmdResult(0, _unplugged(LAPTOP.replace("CAPACITY=100", "CAPACITY=15")), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _unplugged(LAPTOP.replace("CAPACITY=100", "CAPACITY=8")), ""))
+        assert _latest_status() == "failed"
+
+    async def test_capacity_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Power, dict(CFG, capacity_warning=70, capacity_threshold=None))
+        result = run_cycle(p, lambda c: CmdResult(0, LAPTOP, ""))
+        assert _latest_status() == "warning"
+        assert result.settings["power:test-power:health"] == "Worn"
+
+    async def test_capacity_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Power, dict(CFG, capacity_warning=None))
+        result = run_cycle(p, lambda c: CmdResult(0, LAPTOP, ""))
+        assert _latest_status() == "online"
+        assert result.settings["power:test-power:health"] == "Good"
+
+    async def test_the_meter_tick_falls_back_to_the_charge_threshold(self, make_plugin):
+        p = make_plugin(Power, dict(CFG, charge_warning=None))
+        assert p.UI_SPEC['cards']['batteries']['repeat']['bar_marker'] == 10
+
+
+@pytest.mark.asyncio
 class TestCards:
     async def test_the_charge_card_colors_low_charge_only_on_battery(self, plugin, run_cycle):
         run_cycle(plugin, lambda c: CmdResult(0, LAPTOP, ""))

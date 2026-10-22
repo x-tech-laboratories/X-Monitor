@@ -80,3 +80,22 @@ class TestUiSpec:
         assert repeat['bar_max'] == 100.0
         assert repeat['bar_marker'] == pytest.approx(70.0)
         assert repeat['item_color_by'] == plugin._item_level
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Temperature, dict(CFG, warning=70, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _sensors(150_000), ""))
+        assert _latest_status() == "warning"
+        assert p.UI_SPEC['cards']['temp_card']['max'] == 100.0
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Temperature, dict(CFG, warning=None, threshold=80))
+        run_cycle(p, lambda c: CmdResult(0, _sensors(79_000), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _sensors(81_000), ""))
+        assert _latest_status() == "failed"
+
+    def test_without_a_warning_the_meters_have_no_tick(self, make_plugin):
+        p = make_plugin(Temperature, dict(CFG, warning=None))
+        assert p.UI_SPEC['cards']['sensors']['repeat']['bar_marker'] is None

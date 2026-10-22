@@ -185,3 +185,23 @@ class TestUiSpec:
         cards = plugin.UI_SPEC['cards']
         assert not {'btrfs_ok_card', 'btrfs_usage_card'} & set(cards)
         assert plugin.card_row() == ['btrfs_total_card', 'btrfs_degraded_card']
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Btrfs, dict(CFG, threshold=None))
+        _run(p, run_cycle, _probe({"/": _healthy(100)}))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Btrfs, dict(CFG, warning=None, unallocated_warning=None))
+        _run(p, run_cycle, _probe({"/": _healthy(89, unallocated=0)}))
+        assert _latest_status() == "online"
+        _run(p, run_cycle, _probe({"/": _healthy(90)}))
+        assert _latest_status() == "failed"
+
+    async def test_device_errors_still_fail_with_no_limits(self, make_plugin, run_cycle):
+        p = make_plugin(Btrfs, dict(CFG, warning=None, threshold=None))
+        size, used, unallocated, _ = _healthy(5)
+        _run(p, run_cycle, _probe({"/": (size, used, unallocated, {"read_io_errs": 1})}))
+        assert _latest_status() == "failed"

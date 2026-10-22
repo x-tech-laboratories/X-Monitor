@@ -175,3 +175,23 @@ class TestUiSpec:
         assert {'refresh_card', 'feeds_card', 'stale_card'} <= set(spec['cards'])
         assert spec['cards']['stale_card']['color'] == 'nonzero_warning'
         assert spec['chart']['metric'] == 'refresh_age_hours'
+
+
+class TestOptionalLimits:
+    async def test_feed_warning_only_never_fails(self, make_plugin, run_requests):
+        p = make_plugin(Freshrss, {**BASE_CFG, "feed_stale_threshold": None})
+        _respond(p, run_requests, feeds=[_feed(hours_ago=1.0), _feed(hours_ago=500.0)])
+        assert _latest_status() == "warning"
+
+    async def test_feed_failure_only_never_warns(self, make_plugin, run_requests):
+        p = make_plugin(Freshrss, {**BASE_CFG, "feed_stale_warning": None})
+        _respond(p, run_requests, feeds=[_feed(hours_ago=1.0), _feed(hours_ago=60.0)])
+        assert _latest_status() == "online"
+        _respond(p, run_requests, feeds=[_feed(hours_ago=1.0), _feed(hours_ago=200.0)])
+        assert _latest_status() == "failed"
+
+    async def test_null_refresh_warning_never_warns(self, make_plugin, run_requests):
+        p = make_plugin(Freshrss, {**BASE_CFG, "refresh_stale_warning": None})
+        _respond(p, run_requests, feeds=[_feed(hours_ago=10.0)], refresh_hours_ago=10.0)
+        assert _latest_status() == "online"
+        assert p.UI_SPEC['cards']['refresh_card']['color'](10.0) == "online"

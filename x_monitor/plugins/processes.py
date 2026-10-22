@@ -3,9 +3,9 @@ hosts — shown as a tree under their parents with per-row kill actions (SIGTERM
 or SIGKILL). Each row's CPU and MEM add up its whole branch, and its own share
 sits beside them. Config: max_processes, require_sudo, cpu_warning,
 cpu_threshold. The tree keeps the max_processes busiest processes and every
-ancestor of each, while the totals still count every process. When both CPU
-bounds are set, the busiest process's own CPU share ranks against
-cpu_warning/cpu_threshold for warning/failed; otherwise the monitor only
+ancestor of each, while the totals still count every process. The busiest
+process's own CPU share ranks against cpu_warning for warning and
+cpu_threshold for failed, each optional; with neither the monitor only
 reports. A failed or unparseable collection measured nothing and is
 unavailable."""
 
@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional, Union
 
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import ActionPlan, CmdResult, CollectResult, Command, Status
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from
 
 _SEVERITY = {'online': 0, 'warning': 1, 'failed': 2}
 
@@ -107,13 +107,13 @@ class Processes(Plugin):
         super().__init__(name, config)
         self.max_processes = int(config.get('max_processes', 20))
         self.require_sudo  = bool(config.get('require_sudo', False))
-        self.cpu_warning   = float(config['cpu_warning'])   if 'cpu_warning'   in config else None
-        self.cpu_threshold = float(config['cpu_threshold'])  if 'cpu_threshold'  in config else None
+        self.cpu_warning   = limit_from(config, 'cpu_warning')
+        self.cpu_threshold = limit_from(config, 'cpu_threshold')
 
     @property
     def _ranks_cpu(self) -> bool:
-        """Whether both CPU thresholds are configured, without which nothing is colored."""
-        return self.cpu_warning is not None and self.cpu_threshold is not None
+        """Whether either CPU limit is configured, without which nothing is colored."""
+        return self.cpu_warning is not None or self.cpu_threshold is not None
 
     def _row_cpu_level(self, row):
         """Color one process row by its own CPU share against the configured thresholds."""
@@ -138,10 +138,7 @@ class Processes(Plugin):
         process_count = len(processes)
         top_cpu = max((p['cpu'] for p in processes), default=0.0)
 
-        if self.cpu_warning is not None and self.cpu_threshold is not None:
-            overall = level_for(top_cpu, self.cpu_warning, self.cpu_threshold)
-        else:
-            overall = 'online'
+        overall = level_for(top_cpu, self.cpu_warning, self.cpu_threshold)
 
         log_level = Status(overall).log_level
         return CollectResult(

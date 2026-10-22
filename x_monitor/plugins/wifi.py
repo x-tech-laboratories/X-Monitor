@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from x_monitor.plugins.base.signal_plugin import SignalPlugin
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
+from x_monitor.plugins.base.plugin_helpers import floor_level_for, limit_from
 
 
 def _parse_wireless(stdout: str) -> Dict[str, Tuple[float, float]]:
@@ -34,13 +35,13 @@ def _strongest_interface(stats: Dict[str, Tuple[float, float]]) -> Optional[str]
 
 class Wifi(SignalPlugin):
     """WiFi link quality and signal strength from /proc/net/wireless. Its
-    thresholds are floors — lower is worse — so it does not use level_for."""
+    limits are floors, where lower is worse, and either may be null to turn that level off."""
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
         self.interface: Optional[str] = config.get('interface')
-        self.quality_warning   = float(config.get('quality_warning',   40))
-        self.quality_threshold = float(config.get('quality_threshold', 20))
+        self.quality_warning   = limit_from(config, 'quality_warning',   40)
+        self.quality_threshold = limit_from(config, 'quality_threshold', 20)
 
     @property
     def setting_key(self) -> str:
@@ -50,11 +51,7 @@ class Wifi(SignalPlugin):
     QUALITY_MAX = 70.0
 
     def _level_for_quality(self, quality: float) -> str:
-        if quality <= self.quality_threshold:
-            return 'failed'
-        if quality <= self.quality_warning:
-            return 'warning'
-        return 'online'
+        return floor_level_for(quality, self.quality_warning, self.quality_threshold)
 
     def _quality_color(self, quality: Optional[float]) -> Optional[str]:
         return None if quality is None else self._level_for_quality(quality)

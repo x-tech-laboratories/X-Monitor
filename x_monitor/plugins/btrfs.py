@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from x_monitor.plugins.base.signal_plugin import SignalPlugin, worst_status as _worst
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import format_bytes, level_for
+from x_monitor.plugins.base.plugin_helpers import format_bytes, level_for, limit_from, limits_text
 
 
 # One mountpoint per filesystem — the shortest, so a container with subvolumes
@@ -108,15 +108,19 @@ class Btrfs(SignalPlugin):
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.warning = float(config.get('warning', 80))
-        self.threshold = float(config.get('threshold', 90))
+        self.warning = limit_from(config, 'warning', 80)
+        self.threshold = limit_from(config, 'threshold', 90)
         self.filesystems = list(config.get('filesystems') or [])
-        self.unallocated_warning = int(config.get('unallocated_warning', _GIB))
+        self.unallocated_warning = limit_from(config, 'unallocated_warning', _GIB)
 
     SAMPLED = True
 
     def commands(self) -> List[Command]:
         return [Command(_PROBE)]
+
+    def _short_of_unallocated(self, unallocated: float) -> bool:
+        """Whether a filesystem has less unallocated space than the warning floor, which null turns off."""
+        return self.unallocated_warning is not None and unallocated < self.unallocated_warning
 
     def _level_for(self, fs: _Filesystem) -> str:
         """One filesystem's verdict: errors outrank fullness, and a container
@@ -124,7 +128,7 @@ class Btrfs(SignalPlugin):
         if fs.error_count:
             return 'failed'
         level = level_for(fs.usage_pct, self.warning, self.threshold)
-        if fs.unallocated < self.unallocated_warning:
+        if self._short_of_unallocated(fs.unallocated):
             return _worst([level, 'warning'])
         return level
 
@@ -159,10 +163,10 @@ class Btrfs(SignalPlugin):
             metrics[f'fs_unallocated_{fs.key}'] = float(fs.unallocated)
 
             detail = (f"{fs.usage_pct:.0f}% used of {format_bytes(fs.size, 'B')} "
-                      f"(warn {self.warning:g}% / fail {self.threshold:g}%)")
+                      f"({limits_text(self.warning, self.threshold, '%')})")
             if fs.error_count:
                 detail += f", device errors: {fs.error_summary}"
-            elif fs.unallocated < self.unallocated_warning:
+            elif self._short_of_unallocated(fs.unallocated):
                 detail += (f", only {format_bytes(fs.unallocated, 'B')} unallocated — "
                            f"btrfs cannot make a new chunk and writes may fail with ENOSPC")
             logs.append((f"{fs.mountpoint}: {detail}", Status(level).log_level))
@@ -182,7 +186,7 @@ class Btrfs(SignalPlugin):
             return 'failed'
         level = level_for(item.get('usage_pct') or 0.0, self.warning, self.threshold)
         unallocated = item.get('unallocated')
-        if unallocated is not None and unallocated < self.unallocated_warning:
+        if unallocated is not None and self._short_of_unallocated(unallocated):
             return _worst([level, 'warning'])
         return level
 
@@ -219,7 +223,7 @@ class Btrfs(SignalPlugin):
                     'label_transform': 'slashes',
                     'container': 'bars',
                     'bar_value': 'usage_pct',
-                    'bar_marker': self.warning,
+                    'bar_marker': self.warning if self.warning is not None else self.threshold,
                     'empty_text': 'No btrfs filesystems found',
                 },
             },

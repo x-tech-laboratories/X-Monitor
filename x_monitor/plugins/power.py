@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from x_monitor.plugins.base.signal_plugin import SignalPlugin, worst_status
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import floor_level_for, limit_from
 
 # Kernel health values that mean the battery is failing rather than just outside its comfort zone.
 _FAILED_HEALTH = {'Dead', 'Overheat', 'Over voltage', 'Over current',
@@ -88,20 +88,20 @@ class Power(SignalPlugin):
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
         self.battery: Optional[str] = config.get('battery')
-        self.charge_warning     = float(config.get('charge_warning',     20))
-        self.charge_threshold   = float(config.get('charge_threshold',   10))
-        self.capacity_warning   = float(config.get('capacity_warning',   60))
-        self.capacity_threshold = float(config.get('capacity_threshold', 40))
+        self.charge_warning     = limit_from(config, 'charge_warning',     20)
+        self.charge_threshold   = limit_from(config, 'charge_threshold',   10)
+        self.capacity_warning   = limit_from(config, 'capacity_warning',   60)
+        self.capacity_threshold = limit_from(config, 'capacity_threshold', 40)
 
     @property
     def _setting_prefix(self) -> str:
         return f"power:{self.id}"
 
-    def _floor_level(self, value: Optional[float], warning: float, threshold: float) -> str:
-        """Level for a reading where lower is worse."""
+    def _floor_level(self, value: Optional[float], warning: Optional[float], threshold: Optional[float]) -> str:
+        """Level for a reading where lower is worse, where a None limit never fires."""
         if value is None:
             return 'online'
-        return level_for(-value, -warning, -threshold)
+        return floor_level_for(value, warning, threshold)
 
     def _health(self, kernel_health: Optional[str], capacity_pct: Optional[float]) -> tuple:
         """One overall verdict and its level: the kernel's own complaint if it has one, else how worn the cells are."""
@@ -213,7 +213,7 @@ class Power(SignalPlugin):
                     'item_format': 'percent0',
                     'label_transform': 'spaces_upper',
                     'container': 'bars',
-                    'bar_marker': self.charge_warning,
+                    'bar_marker': self.charge_warning if self.charge_warning is not None else self.charge_threshold,
                     'empty_text': 'No battery found',
                 },
             },

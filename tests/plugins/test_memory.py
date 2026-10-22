@@ -70,3 +70,17 @@ class TestUiSpec:
 
     def test_the_used_card_sits_beside_the_gauge(self, plugin):
         assert plugin.UI_SPEC['layout'][0] == ['host_card', 'mem_pct_card', 'mem_used_card']
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Memory, dict(CFG, warning=75, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _meminfo(0), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Memory, dict(CFG, warning=None, threshold=90))
+        run_cycle(p, lambda c: CmdResult(0, _meminfo(2_400_000), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _meminfo(400_000), ""))
+        assert _latest_status() == "failed"

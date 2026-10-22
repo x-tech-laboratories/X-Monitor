@@ -2,16 +2,16 @@
 agent on agent-backed hosts — combining unbound-control statistics with a
 live dig probe against the resolver itself. Config: control_cmd, query_host,
 query_port, query_domain, query_timeout, servfail_warning /
-servfail_threshold (percent), min_queries. A failed probe lookup or a
+servfail_threshold (percent, either null to turn it off), min_queries. A failed probe lookup or a
 SERVFAIL rate at servfail_threshold is failed; a rate at servfail_warning is
 warning, with rates only judged once min_queries have been answered. A script
 that exits non-zero or prints unparseable output is unavailable."""
 
 import shlex
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from x_monitor.plugins.base.plugin_base import Plugin
-from x_monitor.plugins.base.plugin_helpers import SCRIPT_SEP, StatusAccumulator
+from x_monitor.plugins.base.plugin_helpers import SCRIPT_SEP, StatusAccumulator, level_for, limit_from
 from x_monitor.core.connectors.types import CmdResult, Command, CollectResult
 
 _RESOLVE_OK_MARKERS = ("NOERROR",)
@@ -75,17 +75,19 @@ def _stats_metrics(stats: Dict[str, float], resolved: bool) -> Dict[str, float]:
 
 def _accumulate_resolver_problems(resolved: bool, total_answered: float,
                                   servfail_rate: float, query_domain: str,
-                                  servfail_warning: float, servfail_threshold: float,
+                                  servfail_warning: Optional[float],
+                                  servfail_threshold: Optional[float],
                                   min_queries: int) -> StatusAccumulator:
     """Judge the probe outcome and SERVFAIL rate against the thresholds."""
     acc = StatusAccumulator()
     if not resolved:
         acc.escalate('failed', f"probe lookup of {query_domain} did not resolve")
     if total_answered >= min_queries:
-        if servfail_rate >= servfail_threshold:
+        level = level_for(servfail_rate, servfail_warning, servfail_threshold)
+        if level == 'failed':
             acc.escalate('failed',
                          f"SERVFAIL rate {servfail_rate:.1f}% >= {servfail_threshold}%")
-        elif servfail_rate >= servfail_warning:
+        elif level == 'warning':
             acc.escalate('warning',
                          f"SERVFAIL rate {servfail_rate:.1f}% >= {servfail_warning}%")
     return acc
@@ -107,8 +109,8 @@ class Unbound(Plugin):
         self.query_port = int(config.get('query_port', 53))
         self.query_domain = config.get('query_domain', 'cloudflare.com')
         self.query_timeout = int(config.get('query_timeout', 5))
-        self.servfail_warning = float(config.get('servfail_warning', 5))
-        self.servfail_threshold = float(config.get('servfail_threshold', 20))
+        self.servfail_warning = limit_from(config, 'servfail_warning', 5)
+        self.servfail_threshold = limit_from(config, 'servfail_threshold', 20)
         self.min_queries = int(config.get('min_queries', 20))
 
         from x_monitor.core.ui.spec import threshold_color

@@ -74,3 +74,18 @@ class TestUiSpec:
 
     def test_the_history_chart_stays(self, plugin):
         assert plugin.UI_SPEC['charts']['cpu_chart']['metric'] == 'cpu_pct'
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Cpu, dict(CFG, warning=70, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _proc_stat(idle_delta=0), ""))
+        assert _latest_status() == "warning"
+        assert p.UI_SPEC['cards']['cpu_card']['color'] == {'warning': 70.0, 'threshold': None}
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Cpu, dict(CFG, warning=None, threshold=85))
+        run_cycle(p, lambda c: CmdResult(0, _proc_stat(idle_delta=200), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _proc_stat(idle_delta=100), ""))
+        assert _latest_status() == "failed"

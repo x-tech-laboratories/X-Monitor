@@ -1,7 +1,7 @@
 """Space, inodes, and read-only state of every real filesystem on the target,
 from one combined df/proc-mounts command over SSH — sampled locally by the
 agent on agent-backed hosts. Config: warning / threshold (space percent),
-inode_warning / inode_threshold, readonly_is_failure, exclude_mounts (mountpoints
+inode_warning / inode_threshold (each null to turn that level off), readonly_is_failure, exclude_mounts (mountpoints
 left out along with everything mounted beneath them). The worst filesystem
 sets the status: space or inode use past the warning level is warning and
 past the threshold is failed, while a read-only mount is failed (warning when
@@ -12,7 +12,7 @@ unavailable."""
 from typing import Dict, Any, List
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
-from x_monitor.plugins.base.plugin_helpers import StatusAccumulator, format_bytes
+from x_monitor.plugins.base.plugin_helpers import StatusAccumulator, format_bytes, level_for, limit_from, limits_text
 
 _EXCLUDE_TYPES = ['tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'proc', 'sysfs',
                   'cgroup', 'cgroup2', 'devpts', 'mqueue', 'debugfs',
@@ -139,10 +139,10 @@ _DEFAULT_LAYOUT = [
 class Filesystems(Plugin):
     def __init__(self, name: str, config: Dict[str, Any]):
         super().__init__(name, config)
-        self.warning   = int(config.get('warning',   80))
-        self.threshold = int(config.get('threshold', 90))
-        self.inode_warning   = int(config.get('inode_warning',   85))
-        self.inode_threshold = int(config.get('inode_threshold', 95))
+        self.warning   = limit_from(config, 'warning',   80)
+        self.threshold = limit_from(config, 'threshold', 90)
+        self.inode_warning   = limit_from(config, 'inode_warning',   85)
+        self.inode_threshold = limit_from(config, 'inode_threshold', 95)
         self.readonly_is_failure = bool(config.get('readonly_is_failure', True))
         self.exclude_mounts = [m.rstrip('/') or '/' for m in config.get('exclude_mounts', [])]
 
@@ -151,18 +151,10 @@ class Filesystems(Plugin):
         return any(mountpoint == m or mountpoint.startswith(m.rstrip('/') + '/') for m in self.exclude_mounts)
 
     def _inode_level_for(self, pct: float) -> str:
-        if pct >= self.inode_threshold:
-            return 'failed'
-        if pct >= self.inode_warning:
-            return 'warning'
-        return 'online'
+        return level_for(pct, self.inode_warning, self.inode_threshold)
 
     def _level_for(self, pct: float) -> str:
-        if pct >= self.threshold:
-            return 'failed'
-        if pct >= self.warning:
-            return 'warning'
-        return 'online'
+        return level_for(pct, self.warning, self.threshold)
 
     SAMPLED = True
 
@@ -195,7 +187,7 @@ class Filesystems(Plugin):
         metrics['readonly_count'] = float(len(ro_mounts))
 
         summary = (f"{len(filesystems)} filesystem(s), worst {worst:.0f}% "
-                   f"(warn {self.warning}% / fail {self.threshold}%)")
+                   f"({limits_text(self.warning, self.threshold, '%')})")
         if inode_pct:
             summary += f", worst inodes {worst_inode:.0f}%"
         if ro_mounts:
@@ -243,7 +235,7 @@ class Filesystems(Plugin):
                         'label_transform': 'slashes',
                         'container': 'bars',
                         'bar_value': 'used_pct',
-                        'bar_marker': self.warning,
+                        'bar_marker': self.warning if self.warning is not None else self.threshold,
                         'empty_text': 'No filesystems found',
                     },
                 },

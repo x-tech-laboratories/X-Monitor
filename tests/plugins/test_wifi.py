@@ -90,6 +90,24 @@ class TestCollection:
         assert _latest_metric("link_quality") is None
 
 
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Wifi, dict(CFG, quality_threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _make_wireless({"wlan0": (0, -95)}), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Wifi, dict(CFG, quality_warning=None))
+        run_cycle(p, lambda c: CmdResult(0, _make_wireless({"wlan0": (30, -75)}), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _make_wireless({"wlan0": (20, -85)}), ""))
+        assert _latest_status() == "failed"
+
+    async def test_the_gauge_colour_follows_the_limits_that_are_on(self, make_plugin):
+        p = make_plugin(Wifi, dict(CFG, quality_warning=None, quality_threshold=None))
+        assert p._quality_color(0.0) == "online"
+
+
 class TestUiSpec:
     def test_link_quality_is_a_gauge_with_the_floor_coloring(self, plugin):
         card = plugin.UI_SPEC['cards']['quality_card']

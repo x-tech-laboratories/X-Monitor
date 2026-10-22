@@ -101,3 +101,17 @@ class TestUiSpec:
         assert list(charts) == ['conn_total_chart']
         assert charts['conn_total_chart']['style'] == 'stack'
         assert [s['metric'] for s in charts['conn_total_chart']['series']] == self.STATES
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Connections, dict(CFG, warning=2, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01"] * 50), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Connections, dict(CFG, warning=None, threshold=3))
+        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01", "01"]), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01", "01", "01"]), ""))
+        assert _latest_status() == "failed"

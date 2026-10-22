@@ -179,3 +179,25 @@ class TestDeviceBars:
         assert format_item({"age_hours": 0.2}) == "12 min"
         assert format_item({"age_hours": 8.44}) == "8.4 h"
         assert format_item({"age_hours": None}) == "never"
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_requests):
+        p = make_plugin(Traccar, {**BASE_CFG, "stale_threshold": None})
+        _run(p, run_requests, [_device(hours_ago=500.0)])
+        assert _latest_status() == "warning"
+        assert p.data.latest_snapshot()[0]["state"] == "warning"
+        assert p.UI_SPEC['cards']['device_bars']['repeat']['bar_max'] == 48.0
+
+    async def test_failure_only_never_warns(self, make_plugin, run_requests):
+        p = make_plugin(Traccar, {**BASE_CFG, "stale_warning": None})
+        _run(p, run_requests, [_device(hours_ago=30.0)])
+        assert _latest_status() == "online"
+        _run(p, run_requests, [_device(hours_ago=100.0)])
+        assert _latest_status() == "failed"
+
+    async def test_both_off_stays_online_and_bars_keep_a_scale(self, make_plugin, run_requests):
+        p = make_plugin(Traccar, {**BASE_CFG, "stale_warning": None, "stale_threshold": None})
+        _run(p, run_requests, [_device(hours_ago=500.0)])
+        assert _latest_status() == "online"
+        assert p.UI_SPEC['cards']['device_bars']['repeat']['bar_max'] == 168.0

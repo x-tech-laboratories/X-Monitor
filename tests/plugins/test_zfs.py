@@ -155,3 +155,26 @@ class TestPoolTiles:
     def test_the_tile_color_follows_health_then_usage(self, plugin, health, usage, state):
         repeat = plugin.UI_SPEC['cards']['zfs_pool_tiles']['repeat']
         assert repeat['item_color_by']({'health': health, 'usage': float(usage)}) == state
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Zfs, dict(CFG, threshold=None))
+        _run(p, run_cycle, _make_zpool({"tank": ("ONLINE", 100)}))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Zfs, dict(CFG, warning=None))
+        _run(p, run_cycle, _make_zpool({"tank": ("ONLINE", 89)}))
+        assert _latest_status() == "online"
+        _run(p, run_cycle, _make_zpool({"tank": ("ONLINE", 90)}))
+        assert _latest_status() == "failed"
+
+    async def test_an_unhealthy_pool_still_fails_with_no_limits(self, make_plugin, run_cycle):
+        p = make_plugin(Zfs, dict(CFG, warning=None, threshold=None))
+        _run(p, run_cycle, _make_zpool({"tank": ("DEGRADED", 10)}))
+        assert _latest_status() == "failed"
+
+    async def test_the_meter_tick_falls_back_to_the_threshold(self, make_plugin):
+        p = make_plugin(Zfs, dict(CFG, warning=None))
+        assert p.UI_SPEC['cards']['zfs_pools']['repeat']['bar_marker'] == 90
