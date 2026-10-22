@@ -1124,6 +1124,27 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 
 **Maintenance.** Check, Compact and Prune run as detached jobs, one job at a time per monitor (see [Job control](develop.md#job-control)). Prune applies the `keep_*` policy for real, so use Prune Preview first to see what it would drop. Compact is what actually frees the space afterwards (borg 1.2 or later). An archive row can show what changed since the previous archive (`borg diff`), or delete the archive. **Prune, delete and Break Lock are off unless `allow_delete: true`**, and each one asks for confirmation.
 
+**Running backups on a schedule.** With a `schedule` (see [Scheduled actions](#scheduled-actions)) this monitor can take over from borgmatic or Vorta. `prune_after_backup` and `compact_after_backup` make each real backup prune by the `keep_*` policy and then compact, the way borgmatic runs `create prune compact`; each step runs only while the ones before it succeeded or ended with a borg warning, and the job exits with the worst status. A dry run never prunes.
+
+Before any job starts, X-Monitor checks whether it should run at all. For an `ssh://` repository it reads the server's SSH banner, and while one of the `skip_while_active` units is running it waits too. A job that would not get through is skipped, not failed: it logs why, records no job, and the next scheduled run tries again. The `max_age` check still fails the monitor if the backups stay away too long.
+
+Jobs can be made to stay out of the way. `job_nice` and `job_io_idle` run them at a lower CPU priority and in the idle I/O class, which needs no extra rights. `inhibit_sleep` holds off suspend and shutdown until the job ends; the account running it needs polkit's `org.freedesktop.login1.inhibit-block-sleep` and `inhibit-block-shutdown` rights. `job_lock` names a lock file, and monitors that share it run their jobs one after another instead of at once, such as one host backing up to several repositories.
+
+**Checks of each kind.** The Check action takes a `kind`: `all` (the default), `repository`, `archives`, `data` (every chunk re-read), or `extract`, which dry-runs an extract of the newest archive. Schedule each kind on its own cadence with `args`. `check_kinds` sets how old the last success of each may be, judged from X-Monitor's own Check jobs: a `data` check renews `repository` and `archives` too, and `all` renews both. A failed or overdue kind fails the monitor, alongside any `check_units`.
+
+```yaml
+schedule:
+  - action: run_backup
+    cron: "0 */3 * * *"
+  - action: check_repo
+    cron: "0 4 * * sun"
+    args: {kind: archives}
+  - action: check_repo
+    cron: "0 5 1 * *"
+    args: {kind: data}
+check_kinds: {repository: 8d, archives: 8d, data: 32d}
+```
+
 **Purging excluded files.** New exclude patterns only keep files out of new archives. Purge Excluded rewrites the existing archives with `borg recreate` so they drop whatever the backup set's `exclude*` options now leave out, then compacts to free the space. It first deletes any `<archive>.recreate` left by an interrupted run, since borg refuses to start while one exists. Purge Preview is a dry run that lists the top-most path of each dropped tree, archive by archive. Both run as detached jobs and hold the repository lock for their whole run, and on a large remote repository that can take hours. Running the purge again with the same patterns rewrites every archive again, so it is a button, not a schedule. **Both are off unless `allow_purge: true`.**
 
 | Option | Description |
@@ -1146,7 +1167,14 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 | `restore_dir` | Where restores land (default: `/var/tmp/x-monitor-restore`) |
 | `browse_limit` | Most entries shown per folder or diff (default: `2000`) |
 | `allow_delete` | Allow Prune, deleting archives and Break Lock (default: `false`) |
-| `check_verify_data` | Make the Check job read every chunk (`--verify-data`), which is much slower (default: `false`) |
+| `check_verify_data` | Make the Check job read every chunk (`--verify-data`) when no `kind` is given, which is much slower (default: `false`) |
+| `check_kinds` | How old the last successful Check of each kind may be, as `{repository, archives, data, extract: age}` (default: none) |
+| `prune_after_backup` / `compact_after_backup` | Prune by the `keep_*` policy, then compact, after each real backup (defaults: `false`) |
+| `skip_when_unreachable` | Skip a job while an `ssh://` repository's server does not answer SSH (default: `true`) |
+| `skip_while_active` | systemd units that make a job skip while one of them is running (default: none) |
+| `job_nice` / `job_io_idle` | Run jobs at this niceness / in the idle I/O class (defaults: unchanged) |
+| `inhibit_sleep` | Hold off suspend and shutdown while a job runs (default: `false`) |
+| `job_lock` | Lock file that makes jobs of every monitor sharing it run one at a time (default: none) |
 | `allow_purge` | Allow Purge Preview and Purge Excluded (default: `false`) |
 | `purge_match` | Archives a purge rewrites (default: every archive in the repo) |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
@@ -1155,7 +1183,7 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 
 **Actions**: Run Backup, Dry Run, Verify Restore, Prune Preview, Check, Compact, Prune, Purge Preview, Purge Excluded, Break Lock; per archive: Changes, Restore, Delete; the browser's Restore selected
 
-**Status**: `failed` when borg reports an error, the repo has no archives, the newest one is older than `max_age`, the restore canary does not match, or a check unit failed or is older than `check_max_age`; `unavailable` when the host, the borg binary or the repo cannot be reached, a lock was not released in time, or the output could not be read.
+**Status**: `failed` when borg reports an error, the repo has no archives, the newest one is older than `max_age`, the restore canary does not match, a check unit failed or is older than `check_max_age`, or a kind in `check_kinds` failed or is older than its age; `unavailable` when the host, the borg binary or the repo cannot be reached, a lock was not released in time, or the output could not be read.
 
 > Prune, delete, Purge Excluded and Break Lock act on the repository itself. Break Lock is only safe when no borg process is using the repo, since breaking a live lock can corrupt it, so X-Monitor refuses it while one of its own jobs is running. Delete only accepts an archive the monitor has listed.
 
