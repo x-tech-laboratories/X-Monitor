@@ -16,15 +16,15 @@ _EVENT_LIMIT = 500
 
 
 def _render_filter_bar():
-    """Renders the level/target/search filters above the table and returns them."""
-    with table_heading():
+    """Renders the level/target/search filters above the table and returns them with their heading line."""
+    with table_heading() as heading:
         level_sel = ui.select(
             {None: 'All levels', 'ERROR': 'Error', 'WARNING': 'Warning', 'INFO': 'Info'},
             value=None,
         ).props('outlined dense options-dense').classes('w-40')
         target_in = ui.input(placeholder='Filter by target').props('outlined dense clearable').classes('w-56')
         search_in = ui.input(placeholder='Search messages').props('outlined dense clearable').classes('flex-1')
-    return level_sel, target_in, search_in
+    return heading, level_sel, target_in, search_in
 
 
 def render_events(engine: EngineLike, switch_view: Callable):
@@ -34,10 +34,9 @@ def render_events(engine: EngineLike, switch_view: Callable):
     ev_filter = {'level': None, 'target': None, 'search': None}
 
     with table_block():
-        level_sel, target_in, search_in = _render_filter_bar()
+        heading, level_sel, target_in, search_in = _render_filter_bar()
         with table_wrap():
-            # The filter bar above already narrows this table, so it needs no filter box of its own.
-            events_table = data_table(columns=_EVENT_COLUMNS, filter_input=False, row_key='timestamp',
+            events_table = data_table(columns=_EVENT_COLUMNS, filter_into=heading, row_key='timestamp',
                                       pagination=25).classes('w-full').props('flat color=secondary')
             events_table.add_slot('body-cell-level', LEVEL_CELL_SLOT)
 
