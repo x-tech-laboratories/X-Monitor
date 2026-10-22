@@ -387,3 +387,60 @@ class TestUiSpec:
             ('cameras_armed', 'online'), ('cameras_disarmed', 'neutral')]
         assert 'disarmed_card' not in spec['cards']
         assert all('disarmed_card' not in row for row in spec['layout'])
+
+
+class TestCameraSnapshot:
+    async def test_each_watched_camera_is_one_item_with_its_fps_against_its_target(
+            self, plugin, run_requests):
+        run_requests(plugin, _responder(
+            stats=_stats(cameras={"front_door": _camera_stats(camera_fps=4.9),
+                                  "yard": _camera_stats(camera_fps=5.0)}),
+            config=_config(cameras={"front_door": _camera_config(fps=10),
+                                    "yard": _camera_config(fps=5)})))
+        items = plugin.data.latest_snapshot()
+        assert [item["label"] for item in items] == ["front_door", "yard"]
+        front_door = items[0]
+        assert front_door["fps"] == 4.9
+        assert front_door["target_fps"] == 10.0
+        assert front_door["fps_pct"] == pytest.approx(49.0)
+        assert front_door["state"] == "degraded"
+        assert items[1]["state"] == "healthy"
+
+    async def test_camera_without_a_configured_fps_is_measured_against_five(
+            self, plugin, run_requests):
+        run_requests(plugin, _responder(
+            config=_config(cameras={"front_door": {"enabled": True}})))
+        item = plugin.data.latest_snapshot()[0]
+        assert item["target_fps"] is None
+        assert item["fps_pct"] == pytest.approx(100.0)
+
+    async def test_unwatched_cameras_are_left_out(self, make_plugin, run_requests):
+        p = make_plugin(Frigate, {**BASE_CFG, "cameras": ["yard"]})
+        run_requests(p, _responder(
+            stats=_stats(cameras={"front_door": _camera_stats(), "yard": _camera_stats()}),
+            config=_config(cameras={"front_door": _camera_config(), "yard": _camera_config()})))
+        assert [item["label"] for item in p.data.latest_snapshot()] == ["yard"]
+
+
+class TestCameraBars:
+    async def test_camera_bars_meter_each_camera_against_its_target(self, plugin):
+        spec = plugin.UI_SPEC
+        repeat = spec['cards']['camera_bars']['repeat']
+        assert repeat['source'] == 'snapshot'
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_value'] == 'fps_pct'
+        assert repeat['bar_max'] == 100
+        assert repeat['bar_marker'] == pytest.approx(80.0)
+        assert any('camera_bars' in row for row in spec['layout'])
+
+    async def test_camera_value_reads_in_fps_and_disarmed_says_so(self, plugin):
+        format_item = plugin.UI_SPEC['cards']['camera_bars']['repeat']['item_format_fn']
+        assert format_item({"fps": 4.94, "state": "healthy"}) == "4.9 fps"
+        assert format_item({"fps": 0.0, "state": "disarmed"}) == "disarmed"
+
+    async def test_camera_color_warns_when_slow_and_fails_when_stalled(self, plugin):
+        color_item = plugin.UI_SPEC['cards']['camera_bars']['repeat']['item_color_by']
+        assert color_item({"state": "healthy"}) == "online"
+        assert color_item({"state": "degraded"}) == "warning"
+        assert color_item({"state": "stalled"}) == "failed"
+        assert color_item({"state": "disarmed"}) is None
