@@ -48,7 +48,7 @@ class DdnsUpdater(Plugin):
         self._update_url_file = config.get('update_url_file')
         self._update_url_command = config.get('update_url_command')
         self.target = self.domain or self.name
-        # None means no update has been tried yet, since the monotonic clock starts near zero at boot.
+        # None means no attempt yet, since the monotonic clock starts near zero at boot.
         self._last_update_attempt: Optional[float] = None
         self._session = requests.Session()
 

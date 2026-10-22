@@ -24,13 +24,13 @@ class TestLaunch:
         proc = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True,
                               env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin:/run/current-system/sw/bin"})
         assert jobs.parse_launch(proc.stdout) is not None
-        workdir = tmp_path / ".cache" / "x-monitor" / "jobs" / "real-1"
+        workdir = tmp_path / ".cache" / "x_monitor" / "jobs" / "real-1"
         assert _wait_for(workdir / "exit"), "the detached command never finished"
         assert (workdir / "out").read_text() == "ran\n"
         assert (workdir / "exit").read_text().strip() == "3"
 
     def test_launch_command_detaches_and_echoes_pid(self):
-        cmd = jobs.launch_command("borg create repo::x /data", "$HOME/.cache/x-monitor/jobs/tok")
+        cmd = jobs.launch_command("borg create repo::x /data", "$HOME/.cache/x_monitor/jobs/tok")
         assert "setsid" in cmd
         assert "borg create repo::x /data" in cmd
         assert 'echo $!' in cmd            # prints the remote pid
@@ -62,7 +62,7 @@ class TestPoll:
         )
 
     def test_poll_command_uses_offset_and_pid(self):
-        cmd = jobs.poll_command("$HOME/.cache/x-monitor/jobs/tok", 4242, offset=100)
+        cmd = jobs.poll_command("$HOME/.cache/x_monitor/jobs/tok", 4242, offset=100)
         assert "kill -0 4242" in cmd
         assert "tail -c +101" in cmd       # offset+1 (tail -c is 1-indexed)
         assert "wc -c" in cmd

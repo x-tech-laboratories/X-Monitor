@@ -57,12 +57,12 @@ class TestDriftAndUpdate:
         assert _latest_status("test-ddns") == "online"
         assert _latest_metric("test-ddns", "in_sync") == pytest.approx(0.0)
 
-    async def test_first_update_soon_after_boot_is_not_throttled(self, make_plugin, run_io_cycle):
+    async def test_first_drift_updates_soon_after_boot(self, make_plugin, run_io_cycle):
         p = make_plugin(DdnsUpdater, _cfg())
-        with patch.object(p, '_fetch_public_ip', return_value="5.6.7.8"), \
+        with patch('x_monitor.plugins.ddns_updater.time.monotonic', return_value=10.0), \
+             patch.object(p, '_fetch_public_ip', return_value="5.6.7.8"), \
              patch.object(p, '_resolve_public_record', return_value="1.2.3.4"), \
-             patch.object(p, '_push_update', return_value=(True, "Update accepted: good")) as push, \
-             patch('x_monitor.plugins.ddns_updater.time.monotonic', return_value=10.0):
+             patch.object(p, '_push_update', return_value=(True, "Update accepted: good")) as push:
             run_io_cycle(p)
         push.assert_called_once()
 
