@@ -32,10 +32,10 @@ def _child_cell_style(child_config: Dict[str, Any], default_min_width: str) -> s
     return style
 
 
-def _chevron_style(text_secondary: str, is_open: bool) -> str:
-    """Pure: the expand-chevron style string, rotated 180 degrees when the card is open."""
-    angle = '180deg' if is_open else '0deg'
-    return f'color: {text_secondary}; transition: transform 0.2s; transform: rotate({angle})'
+def _set_open(chevron: Any, is_open: bool) -> None:
+    """Turn a panel's chevron to point down while the panel is open."""
+    chevron.classes(add='halon-chevron--open' if is_open else None,
+                    remove=None if is_open else 'halon-chevron--open')
 
 
 def spec_with_titles(spec: Optional[UISpec], titles: Dict[str, str]) -> Optional[UISpec]:
@@ -155,12 +155,12 @@ class Group(Plugin):
 
         if status_labels:
             async def _refresh_statuses():
-                from x_monitor.core.ui.theme import STATUS_COLORS
+                from x_monitor.core.ui.components import show_state
                 live = await offload(self.data.latest_statuses)()
                 for child_id, label in status_labels:
                     state = live.get(child_id, 'unavailable')
                     label.text = state.upper()
-                    label.style(f'color: {STATUS_COLORS.get(state, STATUS_COLORS["unavailable"])}')
+                    show_state(label, state)
             on_data_event(_refresh_statuses)
 
         for ref in grid.unclaimed():
@@ -174,12 +174,11 @@ class Group(Plugin):
 
     def _status_card(self, child: Any, statuses: Dict[str, str], cfg: dict):
         """The group's own status card for a child, since not every plugin declares one."""
-        from x_monitor.core.ui.components import info_card
-        from x_monitor.core.ui.theme import STATUS_COLORS
+        from x_monitor.core.ui.components import info_card, show_state
 
         state = statuses.get(child.id, 'unavailable')
         label = info_card(cfg.get('title') or child.name.upper(), state.upper())
-        label.style(f'color: {STATUS_COLORS.get(state, STATUS_COLORS["unavailable"])}')
+        show_state(label, state)
         return label
 
     # ------------------------------------------------------------------
@@ -192,7 +191,7 @@ class Group(Plugin):
 
         min_card_width = self.config.get('grid_min_width', '320px')
         with ui.element('div').style(
-            f'display: flex; flex-wrap: wrap; align-items: stretch; gap: 0.75rem; width: 100%;'
+            'display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-5); width: 100%;'
         ):
             statuses = self.data.latest_statuses()
             for child in self.children:
@@ -211,7 +210,7 @@ class Group(Plugin):
         with ui.element('div').style(_child_cell_style(child.config, min_card_width)):
             with card('w-full h-full overflow-hidden', padding=False):
                 header_row, chevron = self._card_header(child, child_color, is_open)
-                body = ui.column().classes('w-full halon-card-body').style('min-width: 0')
+                body = ui.column().classes('halon-panel-body').style('min-width: 0')
                 body.set_visibility(is_open)
                 if is_open:
                     with body:
@@ -220,33 +219,26 @@ class Group(Plugin):
             header_row.on('click', self._make_toggle(child, body, chevron, rendered=is_open))
 
     def _card_header(self, child: Any, child_color: str, is_open: bool):
-        """The clickable card header row: status dot, child name, and expand chevron."""
+        """The clickable card header row: expand chevron, status dot and child name."""
         from nicegui import ui
-        from x_monitor.core.ui.theme import TEXT_SECONDARY
 
         with ui.row().classes(
-            'w-full items-center gap-3 halon-panel-header halon-row-hover '
-            'cursor-pointer select-none'
+            'w-full no-wrap halon-panel-header halon-row-hover cursor-pointer select-none'
         ) as header_row:
-            ui.element('div').style(
-                f'width: 8px; height: 8px; border-radius: 50%; '
-                f'background: {child_color}; flex-shrink: 0'
-            )
+            chevron = ui.icon('chevron_right').classes('halon-chevron')
+            _set_open(chevron, is_open)
+            ui.element('div').classes('halon-status-dot').style(f'background: {child_color}')
             ui.label(child_label(self, child)).classes('halon-title-row flex-1')
-            chevron = ui.icon('expand_more', size='sm').style(
-                _chevron_style(TEXT_SECONDARY, is_open))
         return header_row, chevron
 
     def _make_toggle(self, child: Any, body: Any, chevron: Any, rendered: bool):
         """The click handler that flips a card open or shut, persists the state, and renders the child's UI the first time it opens."""
-        from x_monitor.core.ui.theme import TEXT_SECONDARY
-
         def _toggle(e=None):
             nonlocal rendered
             self._expanded[child.id] = not self._expanded.get(child.id, False)
             open_now = self._expanded[child.id]
             body.set_visibility(open_now)
-            chevron.style(_chevron_style(TEXT_SECONDARY, open_now))
+            _set_open(chevron, open_now)
             self._save_expanded()
             if open_now and not rendered:
                 with body:

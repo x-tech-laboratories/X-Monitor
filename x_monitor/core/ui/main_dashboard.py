@@ -8,6 +8,7 @@ from nicegui import app, ui
 from x_monitor.core.contracts import EngineLike
 from x_monitor.core.coordination.monitor_graph import find_monitor
 from . import theme
+from .components import icon_button
 from .auth import LOGOUT_PATH, AuthConfig
 from .sidebar import render_sidebar
 from .views import render_overview, render_events, render_plugin_detail
@@ -74,12 +75,9 @@ def _register_endpoints(engine: EngineLike) -> Optional[AuthConfig]:
 
 def _render_account_menu(auth_config: AuthConfig):
     """Renders the signed-in account menu and its sign-out item."""
-    with ui.button(icon='account_circle', color=None).props('flat dense round'):
-        ui.tooltip(f"Signed in as {auth_config.username}")
+    with icon_button('account_circle', f"Signed in as {auth_config.username}"):
         with ui.menu():
-            ui.label(auth_config.username).classes('px-4 py-2 text-xs').style(
-                f'color: {theme.TEXT_SECONDARY}'
-            )
+            ui.label(auth_config.username).classes('halon-caption halon-menu-caption')
             ui.separator()
             ui.menu_item('Sign out', on_click=lambda: ui.navigate.to(LOGOUT_PATH))
 
@@ -87,15 +85,14 @@ def _render_account_menu(auth_config: AuthConfig):
 def _render_header(engine: EngineLike, left_drawer_toggle: Callable,
                    auth_config: Optional[AuthConfig]):
     """Renders the top bar: drawer toggle, brand, notifications and the account menu."""
-    with ui.header().classes('items-center gap-2'):
-        ui.button(on_click=left_drawer_toggle, icon='menu', color=None).props('flat dense round')
-        ui.image('/icon.svg').style('width: 18px; height: 18px;')
+    with ui.header().classes('items-center'):
+        icon_button('menu', 'Toggle sidebar', on_click=left_drawer_toggle)
+        ui.image('/icon.svg').style('width: 16px; height: 16px; margin: 0 var(--space-2)')
         ui.label('X-Monitor').classes('halon-brand')
         ui.space()
         if engine.notifications.channels:
-            with ui.button(on_click=lambda: open_notifications_dialog(engine), icon='notifications',
-                           color=None).props('flat dense round'):
-                ui.tooltip('Notifications')
+            icon_button('notifications', 'Notifications',
+                        on_click=lambda: open_notifications_dialog(engine))
         if auth_config is not None:
             _render_account_menu(auth_config)
 
@@ -121,9 +118,9 @@ def _render_index(engine: EngineLike, auth_config: Optional[AuthConfig] = None,
 
     _render_header(engine, lambda: left_drawer.toggle(), auth_config)
     left_drawer, sync_nav = render_sidebar(engine, switch_view)
-    state.sync_nav = lambda: sync_nav(state.current_view)
+    state.sync_nav = lambda: sync_nav(state.current_view, state.selected_plugin)
 
-    main_container = ui.column().classes('w-full halon-page bg-transparent').style('min-width: 0; flex: 1 1 0;')
+    main_container = ui.column().classes('halon-page')
 
     def render_main():
         try:

@@ -34,19 +34,90 @@ VALUE_CLASS = 'halon-value'
 SECTION_CLASS = 'halon-title-section'
 HOVER_CLASS = 'halon-row-hover cursor-pointer'
 
-def card(classes: str = '', padding: bool = True):
-    """A raised panel: the surface content sits on, delimited by the card
-    hairline rather than by a shadow-heavy elevation."""
-    p = 'halon-card' if padding else 'halon-card halon-card--flush'
-    return ui.card().classes(f'{p} {classes}')
+
+def card(classes: str = '', padding: bool = True, title: Optional[str] = None):
+    """A flat panel on the content pane, delimited by a hairline and never a
+    shadow. A title becomes the panel's header strip; a flush panel holds a
+    table or a toolbar edge to edge."""
+    flush = '' if padding else ' halon-card--flush'
+    panel = ui.card().classes(f'halon-card{flush} {classes}')
+    if title is not None:
+        with panel:
+            card_header(title)
+    return panel
+
+
+def card_header(title: str):
+    """The caps header strip across the top of a panel; add actions inside it with `with`."""
+    with ui.row().classes('halon-card-header') as header:
+        ui.label(title).classes('halon-card-title')
+    return header
+
+
+def table_block(classes: str = 'w-full'):
+    """The column a table lives in: its heading line, anything between, then the bordered table."""
+    return ui.column().classes(f'halon-table-block {classes}')
+
+
+def table_heading(title: Optional[str] = None):
+    """A table's title line, above and outside its border; add filters or actions inside it with `with`."""
+    with ui.row().classes('halon-table-heading') as heading:
+        if title:
+            ui.label(title).classes('halon-table-title')
+    return heading
+
+
+def table_wrap():
+    """The hairline frame that holds only the table: its header row, its rows, and its pager."""
+    return ui.element('div').classes('halon-table-wrap')
+
+
+def show_state(label, state: str, text: Optional[str] = None) -> None:
+    """Mark a card value with its status: a state word becomes a badge, a measured number takes the status color."""
+    text = label.text if text is None else text
+    label.classes(remove=' '.join(['halon-badge', *STATUS_BADGES.values()]))
+    if any(char.isdigit() for char in text):
+        label.style(f"color: {STATUS_COLORS.get(state, STATUS_COLORS['unavailable'])}")
+    else:
+        label.style(remove='color: inherit')
+        label.classes(add=f"halon-badge {STATUS_BADGES.get(state, '')}")
+
 
 def info_card(title: str, value: str = '--', value_classes: str = VALUE_CLASS, card_classes: str = 'flex-1 min-w-[9rem]'):
-    """Render a small labeled-value card and return the value label for later binding."""
-    with card(f'h-24 overflow-hidden items-center justify-center gap-1 {card_classes}'):
+    """Render a small labeled-value panel and return the value label for later binding."""
+    with card(f'halon-stat {card_classes}'):
         ui.label(title).classes(LABEL_CLASS)
         # A value is a heading, and headings are never accent-colored (§6.8);
         # only a status rule may recolor one, and then to a status token.
-        return ui.label(value).classes(f'{value_classes} w-full text-center break-words')
+        return ui.label(value).classes(f'{value_classes} w-full')
+
+
+def page_header(title: str, lede: Optional[str] = None):
+    """The view's title and optional one-line lede, returned as (heading column, actions row) for callers to add to."""
+    with ui.row().classes('halon-page-header no-wrap'):
+        with ui.column().classes('gap-0 min-w-0') as heading:
+            ui.label(title).classes('halon-title-page break-words')
+            if lede:
+                ui.label(lede).classes('halon-lede')
+        actions = ui.row().classes('halon-page-actions')
+    return heading, actions
+
+
+def dialog_card(title: str, width: str = '36rem'):
+    """A dialog's frame: title bar, body and a footer for its buttons, returned as (body, footer)."""
+    with ui.card().classes('halon-dialog').style(f'width: {width}'):
+        ui.label(title).classes('halon-dialog-title')
+        body = ui.column().classes('halon-dialog-body')
+        footer = ui.row().classes('halon-dialog-footer')
+    return body, footer
+
+
+def labeled_input(label: str, **kwargs):
+    """A text input with its label stacked above it, since a 32px control has no room for a floating one."""
+    with ui.column().classes('halon-field'):
+        ui.label(label).classes('halon-field-label')
+        return ui.input(**kwargs).props('outlined dense').classes('w-full')
+
 
 def action_button(text: str, on_click=None, icon: str = 'play_arrow',
                   weight: str = 'default', danger: bool = False):
@@ -60,9 +131,38 @@ def action_button(text: str, on_click=None, icon: str = 'play_arrow',
     # !important cascade layer outranks any author rule (§8, framework layer).
     return ui.button(text, icon=icon, on_click=on_click, color=None).props('no-caps').classes(classes)
 
+
+def icon_button(icon: str, tooltip: str, on_click=None):
+    """A square flat button holding only a glyph, with its name as a tooltip."""
+    with ui.button(icon=icon, on_click=on_click, color=None).props('flat no-caps').classes('halon-icon-button') as button:
+        ui.tooltip(tooltip)
+    return button
+
+
 def section_title(text: str, classes: str = ''):
-    """Render a section heading in the shared title style."""
-    return ui.label(text).classes(f'{SECTION_CLASS} mb-6 {classes}')
+    """Render a heading over a block of panels."""
+    return ui.label(text).classes(f'{SECTION_CLASS} {classes}')
+
+# Every feed table shows its level as a badge: errors and warnings filled with their status, the rest neutral.
+LEVEL_CELL_SLOT = '''
+    <q-td :props="props">
+        <span class="halon-badge"
+              :class="{ 'halon-badge-danger': props.row.level === 'ERROR',
+                        'halon-badge-warning': props.row.level === 'WARNING' }">
+            {{ props.row.level.charAt(0) + props.row.level.slice(1).toLowerCase() }}
+        </span>
+    </q-td>
+'''
+
+# The badge each monitor state is drawn with; a state with no fill of its own stays neutral.
+STATUS_BADGES = {'online': 'halon-badge-success', 'failed': 'halon-badge-danger', 'warning': 'halon-badge-warning'}
+
+STATUS_CELL_SLOT = '''
+    <q-td :props="props">
+        <span class="halon-badge" :class="props.row.status_badge">{{ props.row.status }}</span>
+    </q-td>
+'''
+
 
 def feed_columns(target_label: Optional[str] = None, sortable: tuple = (),
                  message_classes: str = '') -> list:
@@ -84,29 +184,24 @@ def feed_columns(target_label: Optional[str] = None, sortable: tuple = (),
 def _feed_table(page, read, title: str, full_height: bool):
     """A time/level/message table over any store read; the log and event
     tables differ only in what they read."""
-    card_classes = 'w-full overflow-hidden flex-grow' if full_height else ''
+    with table_block():
+        heading = table_heading(title)
+        with table_wrap():
+            columns = feed_columns(
+                sortable=('timestamp',),
+                message_classes='halon-cell-wrap font-mono' if full_height else 'halon-cell-wrap')
+            table = data_table(columns=columns, filter_into=heading).classes('w-full').props('flat')
+            table.add_slot('body-cell-level', LEVEL_CELL_SLOT)
+            if full_height:
+                table.props('virtual-scroll')
 
-    with card(card_classes, padding=not full_height):
-        if full_height:
-            ui.label(title).classes('halon-card-header w-full')
-        else:
-            ui.label(title).classes(f'{LABEL_CLASS} mb-2')
+    async def update():
+        refresh_rows(table, await offload(read)())
 
-        columns = feed_columns(
-            sortable=('timestamp',),
-            message_classes='text-wrap font-mono' if full_height else '')
-        table_classes = 'w-full border-none' + (' h-[600px]' if full_height else '')
-        table = data_table(columns=columns).classes(table_classes)
-        if full_height:
-            table.props('virtual-scroll')
+    page.on_refresh(update)
+    return table
 
-        async def update():
-            refresh_rows(table, await offload(read)())
-
-        page.on_refresh(update)
-        return table
-
-def log_table(page, target: str, filter_prefix: str = '', title: str = 'Recent Logs',
+def log_table(page, target: str, filter_prefix: str = '', title: str = 'Recent logs',
              limit: int = 15, full_height: bool = False):
     """Render a feed table over the target's recent log lines."""
     return _feed_table(
@@ -114,7 +209,7 @@ def log_table(page, target: str, filter_prefix: str = '', title: str = 'Recent L
         title, full_height)
 
 def event_table(page, plugin_name: str, plugin_id: str = '', target: str = '',
-                title: str = 'Recent Events', limit: int = 100,
+                title: str = 'Recent events', limit: int = 100,
                 full_height: bool = False):
     """Render a feed table over the plugin's recent events."""
     prefix = f"[{plugin_name}] "
@@ -127,8 +222,7 @@ def history_chart(page, title: str, plugin_id: str, metric_name: str, limit: int
     """Render a line chart of one metric's recent history, repainted on push and scheme flips."""
     from x_monitor.core.ui import theme
 
-    with card('w-full h-80 mb-4'):
-        ui.label(title).classes(f'{LABEL_CLASS} mb-1')
+    with card('w-full', title=title):
         chart = ui.echart({
             'tooltip': {'trigger': 'axis'},
             'grid': {'left': 4, 'right': 8, 'top': 8, 'bottom': 4, 'containLabel': True},
@@ -145,6 +239,7 @@ def history_chart(page, title: str, plugin_id: str, metric_name: str, limit: int
         def _repaint(colors):
             # ECharts paints to a canvas and cannot resolve the tokens, so the
             # axes and the line are recolored whenever the client's scheme flips.
+            chart.options['textStyle'] = {'fontFamily': colors['font']}
             chart.options['series'][0]['color'] = colors['accent']
             for axis in ('xAxis', 'yAxis'):
                 chart.options[axis]['axisLine'] = {'lineStyle': {'color': colors['border']}}
@@ -289,9 +384,9 @@ def render_repeat_card(plugin, page, repeat_spec: dict):
     empty_text = repeat_spec.get('empty_text', 'No data')
 
     wrap_style = (
-        'display: flex; flex-wrap: wrap; gap: 0.5rem; width: 100%'
+        'display: flex; flex-wrap: wrap; gap: var(--space-4); width: 100%'
         if container_kind == 'chips' else
-        'display: flex; flex-wrap: wrap; gap: 0.75rem; width: 100%'
+        'display: flex; flex-wrap: wrap; gap: var(--space-5); width: 100%'
     )
     container = ui.element('div').style(wrap_style)
 
@@ -331,7 +426,7 @@ def render_buttons(plugin, button_specs: list):
     # client is captured here and re-entered before anything is rendered.
     client = context.client
 
-    with ui.row().classes('gap-2 items-center'):
+    with ui.row().classes('items-center').style('gap: var(--space-4)'):
         for spec in button_specs:
             predicate_name = spec.get('visible_if')
             if predicate_name:
@@ -372,10 +467,12 @@ def notify_client(client, message: str, **kwargs) -> None:
 
 async def confirmed(text: str) -> bool:
     """Asks the user to confirm `text` and resolves True only on an explicit yes."""
-    with ui.dialog() as dialog, card('w-full'):
-        ui.label(text).classes('mb-4').style('white-space: pre-wrap;')
-        with ui.row().classes('justify-end gap-2'):
-            action_button('Cancel', on_click=lambda: dialog.submit(False), icon=None, weight='flat')
+    with ui.dialog() as dialog:
+        body, footer = dialog_card('Please confirm', width='28rem')
+        with body:
+            ui.label(text).style('white-space: pre-wrap;')
+        with footer:
+            action_button('Cancel', on_click=lambda: dialog.submit(False), icon=None)
             action_button('Confirm', on_click=lambda: dialog.submit(True), icon=None, weight='filled', danger=True)
     return bool(await dialog)
 
@@ -412,13 +509,15 @@ async def open_dialog_impl(plugin, dialog_name: str, row: Optional[dict] = None)
         if not ok:
             ui.notify(content or 'Action failed', type='negative')
             return
-        with ui.dialog() as dialog, card('w-full'):
-            ui.label(title).classes('halon-title-section mb-4')
-            if spec.get('render') == 'textarea_readonly':
-                ui.textarea(content).props('readonly autogrow outlined').classes('w-full')
-            else:
-                ui.label(content).classes('font-mono halon-caption').style('white-space: pre-wrap;')
-            action_button('Close', on_click=dialog.close, icon=None, weight='flat')
+        with ui.dialog() as dialog:
+            body, footer = dialog_card(title, width='48rem')
+            with body:
+                if spec.get('render') == 'textarea_readonly':
+                    ui.textarea(value=content).props('readonly autogrow outlined').classes('w-full font-mono')
+                else:
+                    ui.label(content).classes('font-mono halon-caption').style('white-space: pre-wrap;')
+            with footer:
+                action_button('Close', on_click=dialog.close, icon=None)
         dialog.open()
         return
 
@@ -428,11 +527,12 @@ async def open_dialog_impl(plugin, dialog_name: str, row: Optional[dict] = None)
         if not ok:
             ui.notify(content or 'Unable to load content', type='negative')
             return
-        with ui.dialog() as dialog, card('w-full'):
-            ui.label(title).classes('halon-title-section mb-4')
-            editor = ui.textarea(content).props('autogrow outlined').classes('w-full h-96')
-            with ui.row().classes('justify-end gap-2 mt-4'):
-                action_button('Cancel', on_click=dialog.close, icon=None, weight='flat')
+        with ui.dialog() as dialog:
+            body, footer = dialog_card(title, width='48rem')
+            with body:
+                editor = ui.textarea(value=content).props('autogrow outlined').classes('w-full font-mono')
+            with footer:
+                action_button('Cancel', on_click=dialog.close, icon=None)
 
                 async def save():
                     save_kwargs = _resolve_params(spec.get('save_params'))
@@ -450,19 +550,19 @@ async def open_dialog_impl(plugin, dialog_name: str, row: Optional[dict] = None)
         return
 
     if spec['kind'] == 'form':
-        with ui.dialog() as dialog, card('w-full'):
-            ui.label(title).classes('halon-title-section mb-4')
-            inputs = {
-                field['name']: ui.input(field.get('label', field['name']),
-                                        value=field.get('default', ''),
-                                        placeholder=field.get('placeholder', '')
-                                        ).props('outlined dense').classes('w-full')
-                for field in spec.get('fields', [])
-            }
-            output = ui.textarea().props('readonly autogrow outlined').classes('w-full font-mono')
-            output.set_visibility(False)
-            with ui.row().classes('justify-end gap-2 mt-4'):
-                action_button('Close', on_click=dialog.close, icon=None, weight='flat')
+        with ui.dialog() as dialog:
+            body, footer = dialog_card(title)
+            with body:
+                inputs = {
+                    field['name']: labeled_input(field.get('label', field['name']),
+                                                 value=field.get('default', ''),
+                                                 placeholder=field.get('placeholder', ''))
+                    for field in spec.get('fields', [])
+                }
+                output = ui.textarea().props('readonly autogrow outlined').classes('w-full font-mono')
+                output.set_visibility(False)
+            with footer:
+                action_button('Close', on_click=dialog.close, icon=None)
 
                 async def submit():
                     kwargs = _resolve_params(spec.get('params'))
@@ -510,16 +610,22 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
         ]
 
     filter_spec = filter_spec or {}
-    with card('w-full'):
-        table = data_table(columns=render_columns, row_key=row_key,
-                           filter_fields=filter_spec.get('fields'),
-                           filter_placeholder=filter_spec.get('placeholder', 'Filter')).classes('w-full')
+    with table_block():
+        heading = table_heading(table_spec.get('title'))
+        with table_wrap():
+            table = data_table(columns=render_columns, row_key=row_key,
+                               filter_fields=filter_spec.get('fields'),
+                               filter_placeholder=filter_spec.get('placeholder', 'Filter'),
+                               filter_into=heading).classes('w-full').props('flat')
 
     color_rules = _color_rules(columns)
     for col, _ in color_rules:
+        # A colored word is a state and takes a badge; a colored number stays a mark in the status color.
         table.add_slot(f'body-cell-{col["name"]}', f'''
             <q-td :props="props">
-                <span :style="{{ color: props.row._color_{col['name']} }}">{{{{ props.row.{col['field']} }}}}</span>
+                <span v-if="/\\d/.test(String(props.row.{col['field']}))"
+                      :style="{{ color: props.row._color_{col['name']} }}">{{{{ props.row.{col['field']} }}}}</span>
+                <span v-else class="halon-badge" :class="props.row._badge_{col['name']}">{{{{ props.row.{col['field']} }}}}</span>
             </q-td>
         ''')
 
@@ -528,15 +634,15 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
         # secondary glyph that goes accent on hover. Only a destructive one
         # spends a color, and it spends the danger token (§6.1).
         buttons_html = ''.join(
-            f'''<q-btn dense flat no-caps icon="{a['icon']}" size="sm"
+            f'''<q-btn flat no-caps icon="{a['icon']}"
                        class="{'halon-button-danger' if a.get('color') == 'negative' else ''}"
                        @click="$parent.$emit('{a['id']}', props.row)"
                        title="{a.get('tooltip', '')}" />'''
             for a in row_actions
         )
         table.add_slot('body-cell-actions', f'''
-<q-td :props="props" class="q-pa-none">
-  <div class="row items-center q-gutter-xs">
+<q-td :props="props">
+  <div class="row items-center justify-center halon-row-actions">
     {buttons_html}
   </div>
 </q-td>
@@ -572,6 +678,7 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
             for row in rows:
                 state = rule(row)
                 row[f"_color_{col['name']}"] = STATUS_COLORS.get(state, STATUS_COLORS['online']) if state else STATUS_COLORS['online']
+                row[f"_badge_{col['name']}"] = STATUS_BADGES.get(state or 'online', '')
         return rows
 
     def update_table():
@@ -592,10 +699,9 @@ def render_job_panel(plugin, spec: dict):
     enabled_name = spec.get('enabled_if')
     enabled_predicate = (resolve(ENABLED_PREDICATES, enabled_name) or (lambda p: True)) if enabled_name else (lambda p: True)
 
-    with card('w-full'):
-        with ui.row().classes('w-full items-center justify-between mb-2'):
-            ui.label(spec.get('title', 'Jobs')).classes(LABEL_CLASS)
-            with ui.row().classes('gap-2'):
+    with table_block():
+        with table_heading(spec.get('title', 'Jobs')):
+            with ui.row().classes('halon-table-actions'):
                 run_btn = action_button(
                     spec.get('run_label', 'Run'), icon=spec.get('run_icon', 'play_arrow'),
                     weight='filled',
@@ -607,18 +713,20 @@ def render_job_panel(plugin, spec: dict):
                     on_click=lambda: asyncio.create_task(_cancel(plugin)),
                 )
 
-        progress_label = ui.label('').classes('halon-caption font-mono mb-2')
+        with ui.row() as progress_row:
+            progress_label = ui.label('').classes('halon-caption font-mono')
 
-        jobs_table = data_table(
-            columns=[
-                {'name': 'started', 'label': 'Started', 'field': 'started', 'align': 'left'},
-                {'name': 'kind', 'label': 'Kind', 'field': 'kind', 'align': 'left'},
-                {'name': 'state', 'label': 'State', 'field': 'state', 'align': 'left'},
-                {'name': 'duration', 'label': 'Duration', 'field': 'duration', 'align': 'left',
-                 'sort_field': 'duration_seconds'},
-            ],
-            row_key='id',
-        ).classes('w-full border-none')
+        with table_wrap():
+            jobs_table = data_table(
+                columns=[
+                    {'name': 'started', 'label': 'Started', 'field': 'started', 'align': 'left'},
+                    {'name': 'kind', 'label': 'Kind', 'field': 'kind', 'align': 'left'},
+                    {'name': 'state', 'label': 'State', 'field': 'state', 'align': 'left'},
+                    {'name': 'duration', 'label': 'Duration', 'field': 'duration', 'align': 'left',
+                     'sort_field': 'duration_seconds'},
+                ],
+                row_key='id', filter_input=False,
+            ).classes('w-full').props('flat')
 
         last_progress_color = [None]
 
@@ -638,6 +746,7 @@ def render_job_panel(plugin, spec: dict):
             else:
                 progress_label.text = ''
                 color = None
+            progress_row.set_visibility(bool(progress_label.text))
             if color is not None and color != last_progress_color[0]:
                 last_progress_color[0] = color
                 progress_label.style(f"color: {color}")
@@ -691,7 +800,7 @@ def render_status_card(page, plugin_id: str, metric_name: str, title: str = 'STA
         value = page.model.metrics.get(metric_name)
         if value is not None:
             is_on = value > 0.5
-            lbl.style(f"color: {STATUS_COLORS['online'] if is_on else STATUS_COLORS['failed']}")
+            show_state(lbl, 'online' if is_on else 'failed', _on_off_text(value))
 
     page.on_refresh(update_color)
     return lbl

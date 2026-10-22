@@ -917,5 +917,5 @@ class NixosUpgrade(Plugin):
                 'cancel_label': 'Cancel', 'cancel_icon': 'stop',
                 'history_limit': 10,
             },
-            'events': {'title': 'EVENTS', 'limit': 100, 'full_height': True},
+            'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }

@@ -1,5 +1,7 @@
 """The answer every HTTP request gets while the engine is still loading its saved state, in place of a proxy's Bad Gateway."""
 
+from pathlib import Path
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import HTMLResponse, JSONResponse
 
@@ -9,6 +11,9 @@ RETRY_AFTER = 5
 _PASS_THROUGH = ('/_nicegui', '/icon.svg')
 _MACHINE_PATHS = ('/api/', '/metrics')
 
+_TOKENS_CSS = (Path(__file__).parent / 'static' / 'halon-tokens.css').read_text()
+
+# Plain HTML, since nothing behind the dashboard is up yet; the colors come from the same Halon token sheet.
 STARTING_PAGE = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -18,13 +23,13 @@ STARTING_PAGE = f"""<!doctype html>
 <title>X-Monitor starting</title>
 <link rel="icon" href="/icon.svg">
 <style>
-  :root {{ color-scheme: light dark; --bg: #f6f7f9; --fg: #1d2330; --muted: #5d6677; }}
-  @media (prefers-color-scheme: dark) {{ :root {{ --bg: #12151b; --fg: #e6e9ef; --muted: #9aa3b2; }} }}
-  body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
-         background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }}
+{_TOKENS_CSS}
+  body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: var(--space-6);
+         background: var(--surface-root); color: var(--text-body);
+         font-family: var(--font-family-interface); font-size: var(--text-prose); line-height: var(--line-height-body); }}
   main {{ max-width: 28rem; text-align: center; }}
-  h1 {{ font-size: 1.25rem; margin: 0 0 .5rem; }}
-  p {{ margin: 0; color: var(--muted); }}
+  h1 {{ font-size: var(--text-h2); font-weight: 600; color: var(--text-heading); margin: 0 0 var(--space-4); }}
+  p {{ margin: 0; color: var(--text-secondary); }}
 </style>
 </head>
 <body>

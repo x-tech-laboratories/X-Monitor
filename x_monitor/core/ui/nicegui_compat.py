@@ -42,3 +42,13 @@ def set_tree_nodes(tree: Any, nodes: List[dict]) -> None:
 def set_tree_expanded(tree: Any, node_ids: list) -> None:
     """Set a ui.tree's expanded set; the caller must still call tree.update()."""
     tree._props['expanded'] = node_ids
+
+
+def tree_selected(tree: Any) -> Any:
+    """The id of a ui.tree's selected node, or None."""
+    return tree._props.get('selected')
+
+
+def set_tree_selected(tree: Any, node_id: Any) -> None:
+    """Select one node of a ui.tree, or none; the caller must still call tree.update()."""
+    tree._props['selected'] = node_id

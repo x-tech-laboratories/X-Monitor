@@ -3,52 +3,47 @@
 from typing import Callable
 from nicegui import ui
 from x_monitor.core.contracts import EngineLike
-from ..theme import STATUS_COLORS, TEXT_SECONDARY
-from ..components import card, feed_columns, section_title, on_data_event, offload, refresh_rows
+from ..components import LEVEL_CELL_SLOT, feed_columns, page_header, table_block, table_heading, table_wrap, on_data_event, offload, refresh_rows
 from ..tables import data_table
 
 _EVENT_COLUMNS = feed_columns(target_label='Target',
-                              sortable=('timestamp', 'level', 'target'))
+                              sortable=('timestamp', 'level', 'target'),
+                              message_classes='halon-cell-wrap')
 
-_LEVEL_CELL_SLOT = '''
-    <q-td :props="props">
-        <span :style="{ color: props.row.level === 'ERROR' ? '%s'
-                            : props.row.level === 'WARNING' ? '%s' : '%s',
-                        fontWeight: 600 }">
-            {{ props.row.level }}
-        </span>
-    </q-td>
-''' % (STATUS_COLORS['failed'], STATUS_COLORS['warning'], TEXT_SECONDARY)
+# How many events the view reads; older ones are reachable only through the API.
+_EVENT_LIMIT = 500
+
 
 
 def _render_filter_bar():
-    """Renders the level/target/search filter inputs and returns them."""
-    with ui.row().classes('w-full gap-3 mb-4 items-end'):
+    """Renders the level/target/search filters above the table and returns them."""
+    with table_heading():
         level_sel = ui.select(
             {None: 'All levels', 'ERROR': 'Error', 'WARNING': 'Warning', 'INFO': 'Info'},
-            value=None, label='Level',
+            value=None,
         ).props('outlined dense options-dense').classes('w-40')
-        target_in = ui.input(label='Target').props('outlined dense clearable').classes('w-56')
-        search_in = ui.input(label='Search message').props('outlined dense clearable').classes('flex-1')
+        target_in = ui.input(placeholder='Filter by target').props('outlined dense clearable').classes('w-56')
+        search_in = ui.input(placeholder='Search messages').props('outlined dense clearable').classes('flex-1')
     return level_sel, target_in, search_in
 
 
 def render_events(engine: EngineLike, switch_view: Callable):
     """Renders the events view: filter inputs over a level-colored event table."""
-    section_title('Events')
+    page_header('Events', f'The most recent {_EVENT_LIMIT} events from every monitor')
 
     ev_filter = {'level': None, 'target': None, 'search': None}
-    level_sel, target_in, search_in = _render_filter_bar()
 
-    with card('w-full'):
-        # The filter bar above already narrows this table, so it needs no filter box of its own.
-        events_table = data_table(columns=_EVENT_COLUMNS, filter_input=False, row_key='timestamp',
-                                  pagination=25).classes('w-full')
-        events_table.add_slot('body-cell-level', _LEVEL_CELL_SLOT)
+    with table_block():
+        level_sel, target_in, search_in = _render_filter_bar()
+        with table_wrap():
+            # The filter bar above already narrows this table, so it needs no filter box of its own.
+            events_table = data_table(columns=_EVENT_COLUMNS, filter_input=False, row_key='timestamp',
+                                      pagination=25).classes('w-full').props('flat color=secondary')
+            events_table.add_slot('body-cell-level', LEVEL_CELL_SLOT)
 
     async def refresh_events():
         rows = await offload(engine.db.recent_events)(
-            limit=500,
+            limit=_EVENT_LIMIT,
             level=ev_filter['level'],
             target=(ev_filter['target'] or None),
             search=(ev_filter['search'] or None),

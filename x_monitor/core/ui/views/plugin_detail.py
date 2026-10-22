@@ -5,18 +5,15 @@ from datetime import datetime
 from typing import Any, Callable
 from nicegui import ui
 from x_monitor.core.contracts import EngineLike
-from ..components import action_button, notify_client
+from ..components import action_button, notify_client, page_header
 from .notifications import render_mute_button
 
 
 def render_plugin_detail(engine: EngineLike, switch_view: Callable, plugin: Any):
     """Renders one plugin's page: name header, action row and its render_ui output."""
-    header = ui.row().classes('w-full items-center justify-between gap-4 mb-6').style('flex-wrap: wrap;')
-    with header:
-        with ui.column().classes('min-w-0'):
-            ui.label(plugin.name).classes('halon-title-page break-words')
-            _render_schedule(plugin)
-        actions_row = ui.row().classes('gap-2 items-center').style('flex-wrap: wrap;')
+    heading, actions_row = page_header(plugin.name, _lede(plugin))
+    with heading:
+        _render_schedule(plugin)
 
     asyncio.create_task(_render_actions(engine, plugin, actions_row))
 
@@ -34,6 +31,13 @@ def _render_schedule(plugin: Any):
         when = f"next {upcoming:%a %d %b %H:%M}" if upcoming else 'never'
         ui.label(f"Scheduled: {names.get(entry.action, entry.action)} · {entry.cron.expression} · {when}") \
             .classes('halon-caption')
+
+
+def _lede(plugin: Any) -> str:
+    """The monitor's type and the host it watches, as one line under its name; a group watches no host of its own."""
+    kind = str(getattr(plugin, 'config', {}).get('type', '')).replace('_', ' ')
+    target = None if getattr(plugin, 'children', None) else getattr(plugin, 'target', None)
+    return ' · '.join(str(part) for part in (kind, target) if part)
 
 
 async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):

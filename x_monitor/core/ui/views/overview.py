@@ -7,7 +7,7 @@ from x_monitor.core.contracts import EngineLike
 from x_monitor.core.coordination.monitor_graph import iter_monitors, view_roots
 from .. import theme
 from ..theme import STATUS_COLORS, ACCENT
-from ..components import card, feed_columns, section_title, on_data_event, offload, refresh_rows
+from ..components import LEVEL_CELL_SLOT, STATUS_BADGES, STATUS_CELL_SLOT, card, feed_columns, icon_button, page_header, table_block, table_heading, table_wrap, on_data_event, offload, refresh_rows
 from ..tables import data_table
 
 _STATUS_ORDER = ('online', 'failed', 'warning', 'unavailable')
@@ -16,11 +16,11 @@ _STATUS_ORDER = ('online', 'failed', 'warning', 'unavailable')
 # one failed service is visible even inside a type that is otherwise healthy.
 _STATUS_SEVERITY = ('failed', 'warning', 'unavailable', 'online')
 
-# The treemap's key, in DOM rather than on the canvas so it follows the scheme
-# with no repaint.
+# Both charts' key, in DOM rather than on the canvas so it follows the scheme
+# with no repaint and reads the same in both panels.
 _STATUS_LEGEND = ''.join(
-    '<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px">'
-    f'<span style="width:8px;height:8px;border-radius:2px;background:{STATUS_COLORS[name]}"></span>'
+    '<span class="inline-flex items-center">'
+    f'<span class="halon-legend-swatch" style="background:{STATUS_COLORS[name]}"></span>'
     f'{name.capitalize()}</span>'
     for name in _STATUS_ORDER
 )
@@ -44,21 +44,14 @@ _RECENT_EVENT_COLUMNS = feed_columns(target_label='Host')
 
 _NAME_CELL_SLOT = '''
     <q-td :props="props">
-        <span class="cursor-pointer font-medium hover:underline"
-              style="color: %s"
+        <span class="cursor-pointer hover:underline"
+              style="color: %s; font-weight: 500"
               @click="$parent.$emit('navigate', props.row)">
             {{ props.row.name }}
         </span>
     </q-td>
 ''' % ACCENT
 
-_STATUS_CELL_SLOT = '''
-    <q-td :props="props">
-        <span :style="{ color: props.row.status_color }" class="font-semibold halon-caption">
-            {{ props.row.status }}
-        </span>
-    </q-td>
-'''
 
 
 @dataclass
@@ -72,10 +65,9 @@ def _pie_options() -> dict:
     """Options for the status donut: four fixed slices, one per state."""
     return {
         'tooltip': {'trigger': 'item', 'formatter': '{b}: {c} ({d}%)'},
-        'legend': {'bottom': '0', 'left': 'center', 'textStyle': {'fontSize': 12}},
         'series': [{
             'type': 'pie',
-            'radius': ['40%', '70%'],
+            'radius': ['45%', '75%'],
             'avoidLabelOverlap': False,
             'cursor': 'pointer',
             'itemStyle': {'borderRadius': 8, 'borderWidth': 2},
@@ -133,8 +125,8 @@ def _build_table_rows(monitors, statuses, flt: _ChartFilter) -> list:
             'name': m.name,
             'type': mtype.upper(),
             'host': m.target,
-            'status': st.upper(),
-            'status_color': STATUS_COLORS.get(st, STATUS_COLORS['unavailable']),
+            'status': st.capitalize(),
+            'status_badge': STATUS_BADGES.get(st, ''),
         })
     return rows
 
@@ -176,31 +168,30 @@ def _treemap_tiles(type_counts: dict, colors: dict) -> list:
 
 
 def _render_charts():
-    """Renders the status and type cards and returns (status_chart, type_chart)."""
-    with ui.row().classes('w-full gap-4 mb-6 halon-section-gap'):
-        with card('flex-1 h-80 min-w-[320px]'):
-            ui.label('Monitors by status').classes('halon-label mb-2')
-            status_chart = ui.echart(_pie_options()).classes('w-full h-64')
-        with card('flex-1 h-80 min-w-[320px]'):
-            ui.label('Monitors by type').classes('halon-label')
-            ui.html(_STATUS_LEGEND).classes('halon-caption mb-2')
-            type_chart = ui.echart(_treemap_options()).classes('w-full h-56')
+    """Renders the status and type panels and returns (status_chart, type_chart)."""
+    with ui.row().classes('halon-grid'):
+        with card('flex-1 min-w-[320px]', title='Monitors by status'):
+            ui.html(_STATUS_LEGEND).classes('halon-caption halon-legend flex')
+            status_chart = ui.echart(_pie_options()).classes('w-full').style('height: 232px')
+        with card('flex-1 min-w-[320px]', title='Monitors by type'):
+            ui.html(_STATUS_LEGEND).classes('halon-caption halon-legend flex')
+            type_chart = ui.echart(_treemap_options()).classes('w-full').style('height: 232px')
     return status_chart, type_chart
 
 
 def _render_monitor_card(plugin_by_id, switch_view: Callable):
     """Renders the all-monitors card and returns its table and filter chrome."""
-    with card('w-full mb-6'):
-        with ui.row().classes('w-full items-center justify-between mb-3'):
-            ui.label('All monitors').classes('halon-label')
-            with ui.row().classes('items-center gap-1') as filter_row:
+    with table_block():
+        with table_heading('Monitors') as heading:
+            with ui.row().classes('halon-table-actions') as filter_row:
                 filter_label = ui.label('').classes('halon-caption')
-                clear_button = ui.button(icon='close', color=None).props('flat dense round size=sm')
+                clear_button = icon_button('close', 'Clear filter')
         filter_row.set_visibility(False)
 
-        monitor_table = data_table(columns=_MONITOR_COLUMNS).classes('w-full border-none')
-        monitor_table.add_slot('body-cell-name', _NAME_CELL_SLOT)
-        monitor_table.add_slot('body-cell-status', _STATUS_CELL_SLOT)
+        with table_wrap():
+            monitor_table = data_table(columns=_MONITOR_COLUMNS, filter_into=heading).classes('w-full').props('flat')
+            monitor_table.add_slot('body-cell-name', _NAME_CELL_SLOT)
+            monitor_table.add_slot('body-cell-status', STATUS_CELL_SLOT)
 
         def _navigate_to_row(e):
             row_id = (e.args or {}).get('id')
@@ -254,8 +245,8 @@ def _wire_charts(engine, monitors, flt: _ChartFilter, status_chart, type_chart, 
     def _repaint_charts(colors):
         chart_colors['value'] = colors
         donut = status_chart.options['series'][0]
+        status_chart.options['textStyle'] = type_chart.options['textStyle'] = {'fontFamily': colors['font']}
         donut['itemStyle']['borderColor'] = colors['surface']
-        status_chart.options['legend'].setdefault('textStyle', {})['color'] = colors['text_secondary']
         for entry, state_name in zip(donut['data'], _STATUS_ORDER):
             entry['itemStyle'] = {'color': colors[state_name]}
 
@@ -288,33 +279,41 @@ def _wire_charts(engine, monitors, flt: _ChartFilter, status_chart, type_chart, 
     on_data_event(update_charts, run_now=False)
 
 
+def _short_times(rows: list) -> list:
+    """The raw feed rows with their timestamps cut to the second, as every other table shows them."""
+    return [{**row, 'timestamp': str(row.get('timestamp', ''))[:19].replace('T', ' ')} for row in rows]
+
+
 def _render_recent_metrics(engine):
     """Renders the recent system metrics card fed from the raw metric feed."""
-    with card('flex-1 min-w-[320px]'):
-        ui.label('Recent system metrics').classes('halon-label mb-2')
-        m_table = data_table(columns=_METRIC_COLUMNS).classes('w-full')
+    with table_block('flex-1 min-w-[320px]'):
+        heading = table_heading('Recent metrics')
+        with table_wrap():
+            m_table = data_table(columns=_METRIC_COLUMNS, filter_into=heading).classes('w-full').props('flat')
 
         async def update_m():
-            refresh_rows(m_table, await offload(engine.db.recent_metrics_raw)(limit=20))
+            refresh_rows(m_table, _short_times(await offload(engine.db.recent_metrics_raw)(limit=20)))
         on_data_event(update_m)
 
 
 def _render_recent_events(engine):
     """Renders the recent events card fed from the raw event feed."""
-    with card('flex-1 min-w-[320px]'):
-        ui.label('Recent events').classes('halon-label mb-2')
-        e_table = data_table(columns=_RECENT_EVENT_COLUMNS).classes('w-full')
+    with table_block('flex-1 min-w-[320px]'):
+        heading = table_heading('Recent events')
+        with table_wrap():
+            e_table = data_table(columns=_RECENT_EVENT_COLUMNS, filter_into=heading).classes('w-full').props('flat')
+            e_table.add_slot('body-cell-level', LEVEL_CELL_SLOT)
 
         async def update_e():
-            refresh_rows(e_table, await offload(engine.db.recent_events_raw)(limit=20))
+            refresh_rows(e_table, _short_times(await offload(engine.db.recent_events_raw)(limit=20)))
         on_data_event(update_e)
 
 
 def render_overview(engine: EngineLike, switch_view: Callable):
     """Renders the overview: the two charts, the filterable monitor table and recent activity."""
-    section_title('Monitors')
-
     monitors = _collect_leaf_monitors(view_roots(engine))
+    page_header('All Monitors', f"{len(monitors)} monitor{'' if len(monitors) == 1 else 's'}")
+
     plugin_by_id = {p.id: p for p in monitors}
     flt = _ChartFilter()
 
@@ -324,6 +323,6 @@ def render_overview(engine: EngineLike, switch_view: Callable):
                     monitor_table, filter_row, filter_label, clear_button)
     _wire_charts(engine, monitors, flt, status_chart, type_chart, monitor_table)
 
-    with ui.row().classes('w-full gap-4'):
+    with ui.row().classes('halon-grid'):
         _render_recent_metrics(engine)
         _render_recent_events(engine)

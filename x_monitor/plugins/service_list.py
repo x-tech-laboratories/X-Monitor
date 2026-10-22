@@ -258,6 +258,6 @@ class ServiceList(Plugin):
                                    'save_content_kwarg': 'content',
                                    'success_message': 'Unit file written successfully'},
             },
-            'events': {'title': 'PLUGIN EVENTS'},
+            'events': {'title': 'Plugin events'},
         }
 

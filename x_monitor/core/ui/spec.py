@@ -50,7 +50,7 @@ charts          ``{widget_name: {'metric': ..., 'title': ...}}`` history charts;
                 its config builds this dict (and the matching layout rows) in its
                 ``UI_SPEC`` property — see ports.py.
 events          True, or a kwargs dict forwarded to the plugin events table (e.g.
-                ``{'title': 'PLUGIN EVENTS'}``); renders into the ``events`` cell.
+                ``{'title': 'Plugin events'}``); renders into the ``events`` cell.
 tables          ``{widget_name: table spec}`` — see "Table specs".
 filters         ``{widget_name: {'placeholder': ..., 'fields': [row keys]}}`` — sets the
                 placeholder and searched fields of the filter box on the table with the
@@ -416,7 +416,7 @@ def _dialog_spec_for(plugin: Any, dialog_name: str) -> Optional[Dict[str, Any]]:
 def _make_attr_update(plugin: Any, label, value_attr: Optional[str],
                       value_format: str, color_attr: Optional[str]):
     """Build a refresh callback re-reading plugin attributes into a value card, restyling only when the color state changes."""
-    from x_monitor.core.ui.theme import STATUS_COLORS
+    from x_monitor.core.ui.components import show_state
     last_state = [None]
 
     def _update():
@@ -426,13 +426,13 @@ def _make_attr_update(plugin: Any, label, value_attr: Optional[str],
             state = getattr(plugin, color_attr)
             if state is not None and state != last_state[0]:
                 last_state[0] = state
-                label.style(f'color: {STATUS_COLORS[state]}')
+                show_state(label, state)
     return _update
 
 
 def _make_multi_update(page, label, metric_list: List[str], format_fn, color_fn):
     """Build a refresh callback recomputing a multi-metric card's text and color, restyling only when the color state changes."""
-    from x_monitor.core.ui.theme import STATUS_COLORS
+    from x_monitor.core.ui.components import show_state
     last_state = [None]
 
     def _update():
@@ -442,20 +442,22 @@ def _make_multi_update(page, label, metric_list: List[str], format_fn, color_fn)
             state = color_fn(values)
             if state is not None and state != last_state[0]:
                 last_state[0] = state
-                label.style(f'color: {STATUS_COLORS[state]}')
+                show_state(label, state, label.text)
     return _update
 
 
-def _make_color_update(page, label, metric_name: str, color_rule):
-    """Build a refresh callback recoloring a single-metric card, restyling only when the rule's state changes."""
-    from x_monitor.core.ui.theme import STATUS_COLORS
+def _make_color_update(page, label, metric_name: str, color_rule, formatter):
+    """Build a refresh callback marking a single-metric card with its state, restyling only when the rule's state changes."""
+    from x_monitor.core.ui.components import show_state
     last_state = [None]
 
     def _update():
-        state = color_rule(page.model.metrics.get(metric_name))
+        value = page.model.metrics.get(metric_name)
+        state = color_rule(value)
         if state is not None and state != last_state[0]:
             last_state[0] = state
-            label.style(f'color: {STATUS_COLORS[state]}')
+            # The bound text may not have caught up yet, so the value is formatted here.
+            show_state(label, state, formatter(value))
     return _update
 
 
@@ -536,7 +538,7 @@ def _render_metric_card(page, layout, widget_name: str, title: str, card_spec):
     color_rule = _card_color_rule(card_spec, widget_name)
     if color_rule is None:
         return None
-    return _make_color_update(page, label, metric_name, color_rule)
+    return _make_color_update(page, label, metric_name, color_rule, formatter)
 
 
 def _render_cards(plugin: Any, page, layout, cards: Dict[str, Any]) -> list:
