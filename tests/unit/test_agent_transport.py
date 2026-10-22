@@ -215,6 +215,35 @@ class TestAgentExecutor:
         with pytest.raises(ProcessLookupError):
             os.kill(cmd_pid, 0)
 
+    async def test_a_dropped_session_redials_without_the_old_backoff(self, monkeypatch):
+        """A session the server welcomed resets the backoff, so failures before it do not delay the redial after it drops."""
+        from x_monitor_agent import client as client_module
+
+        client = client_module.AgentClient("ws://unused", "test", None)
+        outcomes = iter(["fail", "fail", "fail", "welcomed", "stop"])
+
+        async def fake_session():
+            outcome = next(outcomes)
+            if outcome == "welcomed":
+                client._welcomed = True
+                raise ConnectionError("no close frame received or sent")
+            if outcome == "stop":
+                raise asyncio.CancelledError()
+            raise ConnectionError("refused")
+
+        delays = []
+
+        async def fake_sleep(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr(client, "_session", fake_session)
+        monkeypatch.setattr(client_module.asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(client_module.random, "uniform", lambda low, high: 1.0)
+
+        with pytest.raises(asyncio.CancelledError):
+            await client.run_forever()
+        assert delays == [1.0, 2.0, 4.0, 1.0]
+
 
 class TestEventRouting:
     """The engine glue between an inbound frame and a plugin's parse_event."""

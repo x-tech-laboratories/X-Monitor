@@ -40,6 +40,7 @@ class AgentClient:
         self.key = key
         self.hostname = hostname or socket.gethostname()
         self._socket: Any = None
+        self._welcomed = False
         self._send_lock = asyncio.Lock()
         self._streams: Dict[str, asyncio.Task] = {}
         self._execs: set = set()
@@ -53,9 +54,9 @@ class AgentClient:
         """Dial, serve, and redial. Only cancellation ends this."""
         backoff = _BACKOFF_INITIAL
         while True:
+            self._welcomed = False
             try:
                 await self._session()
-                backoff = _BACKOFF_INITIAL
             except asyncio.CancelledError:
                 await self._stop_streams()
                 self._desktop.cancel_all()
@@ -65,6 +66,10 @@ class AgentClient:
             # Any session failure becomes a redial; a network blip must not end the agent.
             except Exception as e:
                 logging.warning(f"connection to {self.url} ended: {e}")
+
+            # A session the server accepted proves the link works, so its loss redials promptly instead of waiting out earlier failures.
+            if self._welcomed:
+                backoff = _BACKOFF_INITIAL
 
             # Jitter keeps a fleet of agents from redialling a restarted
             # server in lockstep.
@@ -90,6 +95,7 @@ class AgentClient:
             if welcome.get('t') != proto.WELCOME:
                 raise ConnectionError("server did not accept the agent (check the key)")
             logging.info(f"connected to {self.url} as {self.agent_id!r}")
+            self._welcomed = True
 
             if not self.notify_only:
                 await self._apply_streams(welcome.get('streams') or [])
