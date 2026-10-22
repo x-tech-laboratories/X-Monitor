@@ -6,9 +6,9 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
-from vigil.core.connectors.agent_connector import AgentRegistry
-from vigil.core.notifications import NotificationEngine
-from vigil.core.ui.views.notifications import open_notifications_dialog, render_mute_button
+from x_monitor.core.connectors.agent_connector import AgentRegistry
+from x_monitor.core.notifications import NotificationEngine
+from x_monitor.core.ui.views.notifications import open_notifications_dialog, render_mute_button
 
 pytest_plugins = ['nicegui.testing.user_plugin']
 pytestmark = pytest.mark.nicegui_main_file(None)
@@ -91,7 +91,7 @@ class TestMuteButton:
 class TestMaintenance:
     def _window(self, notifications, **extra):
         from datetime import datetime, timedelta
-        from vigil.core.notifications.maintenance import window
+        from x_monitor.core.notifications.maintenance import window
         now = datetime.now()
         notifications.windows = [window({'name': 'Upgrades', 'start': (now - timedelta(hours=1)).isoformat(),
                                          'end': (now + timedelta(hours=1)).isoformat(), **extra}),

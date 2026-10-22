@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.connections import Connections
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.connections import Connections
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-connections", "id": "test-connections", "ssh_config": {"host": "test.host"}}
 
@@ -39,7 +39,7 @@ def plugin(make_plugin):
     return make_plugin(Connections, CFG)
 
 
-from vigil.plugins.connections import _parse_states
+from x_monitor.plugins.connections import _parse_states
 
 
 class TestParseStates:

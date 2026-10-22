@@ -3,9 +3,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from vigil.plugins.traccar import Traccar, _age_hours
-from vigil.core.connectors.types import HttpRequest, HttpResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.traccar import Traccar, _age_hours
+from x_monitor.core.connectors.types import HttpRequest, HttpResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 pytestmark = pytest.mark.asyncio
 
@@ -14,7 +14,7 @@ BASE_CFG = {
     "name": "test-traccar",
     "id":   "test-traccar",
     "api_url": "http://traccar.test:8082",
-    "username": "vigil",
+    "username": "x-monitor",
     "password": "hunter2",
     "stale_warning": 24,
     "stale_threshold": 72,
@@ -75,10 +75,10 @@ class TestRequests:
         assert len(reqs) == 1
         assert isinstance(reqs[0], HttpRequest)
         assert reqs[0].url == "http://traccar.test:8082/api/devices"
-        assert reqs[0].auth == ("vigil", "hunter2")
+        assert reqs[0].auth == ("x-monitor", "hunter2")
 
     def test_no_url_yields_no_requests(self, make_plugin):
-        p = make_plugin(Traccar, {"name": "t", "id": "t", "username": "vigil",
+        p = make_plugin(Traccar, {"name": "t", "id": "t", "username": "x-monitor",
                                   "ssh_config": {"host": "h"}})
         assert p.requests() == []
 

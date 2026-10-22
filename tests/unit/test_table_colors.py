@@ -6,8 +6,8 @@ import pytest
 from nicegui import json, ui
 from nicegui.testing import User
 
-from vigil.core.ui.components import render_table_with_actions
-from vigil.core.ui.theme import STATUS_COLORS
+from x_monitor.core.ui.components import render_table_with_actions
+from x_monitor.core.ui.theme import STATUS_COLORS
 
 pytest_plugins = ['nicegui.testing.user_plugin']
 pytestmark = pytest.mark.nicegui_main_file(None)

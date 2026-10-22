@@ -3,16 +3,16 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 pytestmark = pytest.mark.asyncio
 
-from vigil.core.connectors.ssh_connector import COLLECT_TIMEOUT, CONTROL_TIMEOUT
-from vigil.core.connectors.engine import ConnectorEngine
-from vigil.core.connectors.types import ActionPlan, Command
+from x_monitor.core.connectors.ssh_connector import COLLECT_TIMEOUT, CONTROL_TIMEOUT
+from x_monitor.core.connectors.engine import ConnectorEngine
+from x_monitor.core.connectors.types import ActionPlan, Command
 
 
 def _make(mock_conn, timeout=COLLECT_TIMEOUT):
     """A ConnectorEngine plus an ExecContext wrapping the mocked connection.
     Patches SSHConnection so exec_context() pools the mock instead of dialling."""
     engine = ConnectorEngine()
-    with patch("vigil.core.connectors.engine.SSHConnection") as MockSSH:
+    with patch("x_monitor.core.connectors.engine.SSHConnection") as MockSSH:
         MockSSH.from_config.return_value = mock_conn
         ctx = engine.exec_context({"ssh_config": {"host": "test.host"}},
                                  collect_timeout=timeout)
@@ -34,7 +34,7 @@ class TestExecContext:
 
     async def test_context_is_pooled_per_target(self, mock_conn):
         engine = ConnectorEngine()
-        with patch("vigil.core.connectors.engine.SSHConnection") as MockSSH:
+        with patch("x_monitor.core.connectors.engine.SSHConnection") as MockSSH:
             MockSSH.from_config.return_value = mock_conn
             cfg = {"ssh_config": {"host": "test.host"}}
             a = engine.exec_context(cfg)

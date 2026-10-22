@@ -59,20 +59,20 @@
                     nicegui
                     dnspython
                     # Native async SSH transport (see
-                    # vigil/core/connectors/ssh_connector.py) — the agentless
+                    # x_monitor/core/connectors/ssh_connector.py) — the agentless
                     # way of reaching a monitored host.
                     asyncssh
-                    # The apprise notification channel (vigil/core/notifications/mail.py).
+                    # The apprise notification channel (x_monitor/core/notifications/mail.py).
                     apprise
-                    # The agent transport's client half (vigil_agent/client.py).
+                    # The agent transport's client half (x_monitor_agent/client.py).
                     # The server side needs nothing extra: nicegui already
                     # brings FastAPI/uvicorn, which serve the agent WebSocket.
                     websockets
-                    # Ed25519 keys for the agent handshake (vigil_agent/keys.py).
+                    # Ed25519 keys for the agent handshake (x_monitor_agent/keys.py).
                     cryptography
                 ];
 
-                vigil-pkg = pkgs.python312Packages.buildPythonApplication {
+                x-monitor-pkg = pkgs.python312Packages.buildPythonApplication {
                     pname = pyproject.project.name;
                     version = pyproject.project.version;
                     format = "pyproject";
@@ -81,7 +81,7 @@
                     nativeBuildInputs = [ pkgs.python312Packages.setuptools ];
                     propagatedBuildInputs = pythonDeps;
 
-                    pythonImportsCheck = [ "vigil" ];
+                    pythonImportsCheck = [ "x_monitor" ];
                 };
 
                 # The agent, packaged apart from the server.
@@ -92,8 +92,8 @@
                 # wasteful and, on aarch64, a source of build failures the
                 # monitored host has no reason to care about.
                 #
-                # `vigil_agent` imports nothing from `vigil` (the wire protocol
-                # lives in vigil_agent/protocol.py precisely so it doesn't), so
+                # `x_monitor_agent` imports nothing from `x_monitor` (the wire protocol
+                # lives in x_monitor_agent/protocol.py precisely so it doesn't), so
                 # copying that one package in is the whole install.
                 agentPython = pkgs.python312.withPackages (ps: with ps; [
                     websockets
@@ -101,43 +101,43 @@
                     cryptography
                 ]);
 
-                agentSrc = pkgs.runCommand "vigil-agent-src" { } ''
+                agentSrc = pkgs.runCommand "x-monitor-agent-src" { } ''
                     mkdir -p $out
-                    cp -r ${./vigil_agent} $out/vigil_agent
+                    cp -r ${./x_monitor_agent} $out/x_monitor_agent
                 '';
 
-                vigil-agent-pkg = pkgs.writeShellApplication {
-                    name = "vigil-agent";
+                x-monitor-agent-pkg = pkgs.writeShellApplication {
+                    name = "x-monitor-agent";
                     text = ''
                         export PYTHONPATH="${agentSrc}''${PYTHONPATH:+:$PYTHONPATH}"
-                        exec ${agentPython}/bin/python3 -m vigil_agent "$@"
+                        exec ${agentPython}/bin/python3 -m x_monitor_agent "$@"
                     '';
                 };
 
-                # Vigil runs as a single process (target polling and the web
+                # X-Monitor runs as a single process (target polling and the web
                 # dashboard share one asyncio event loop — see
-                # vigil/__main__.py). This dev script just runs it.
-                vigil-run = pkgs.writeShellScriptBin "vigil-run" ''
+                # x_monitor/__main__.py). This dev script just runs it.
+                x-monitor-run = pkgs.writeShellScriptBin "x-monitor-run" ''
                     set -e
                     # Find project root (where pyproject.toml is)
-                    VIGIL_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-                    while [ "$VIGIL_ROOT" != "/" ] && [ ! -f "$VIGIL_ROOT/pyproject.toml" ]; do
-                        VIGIL_ROOT=$(dirname "$VIGIL_ROOT")
+                    XMONITOR_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+                    while [ "$XMONITOR_ROOT" != "/" ] && [ ! -f "$XMONITOR_ROOT/pyproject.toml" ]; do
+                        XMONITOR_ROOT=$(dirname "$XMONITOR_ROOT")
                     done
 
-                    export PYTHONPATH="$VIGIL_ROOT:$PYTHONPATH"
+                    export PYTHONPATH="$XMONITOR_ROOT:$PYTHONPATH"
 
-                    echo "Starting Vigil on http://localhost:8080"
-                    exec python3 -m vigil --config "$VIGIL_ROOT/config.yaml" --port 8080 "$@"
+                    echo "Starting X-Monitor on http://localhost:8080"
+                    exec python3 -m x_monitor --config "$XMONITOR_ROOT/config.yaml" --port 8080 "$@"
                 '';
             in
             {
-                packages.default = vigil-pkg;
-                packages.agent = vigil-agent-pkg;
+                packages.default = x-monitor-pkg;
+                packages.agent = x-monitor-agent-pkg;
 
                 apps.default = {
                     type = "app";
-                    program = "${vigil-pkg}/bin/vigil";
+                    program = "${x-monitor-pkg}/bin/x-monitor";
                 };
 
                 devShells.default = pkgs.mkShell {
@@ -152,19 +152,19 @@
                                 ps.pytest-asyncio
                             ]
                         ))
-                        vigil-run
+                        x-monitor-run
                     ];
 
                     shellHook = ''
                         # Identify project root and set PYTHONPATH
-                        VIGIL_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-                        export PYTHONPATH="$VIGIL_ROOT:$PYTHONPATH"
+                        XMONITOR_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+                        export PYTHONPATH="$XMONITOR_ROOT:$PYTHONPATH"
 
-                        echo "Vigil development environment loaded."
+                        echo "X-Monitor development environment loaded."
                         echo "Python: $(python3 --version)"
                         echo ""
                         echo "Commands:"
-                        echo "  vigil-run              Start the application"
+                        echo "  x-monitor-run              Start the application"
                         echo "  pytest                 Run all tests"
                         echo "  pytest tests/plugins/  Run plugin tests only"
                         echo "  pytest tests/unit/     Run unit tests only"
@@ -174,9 +174,9 @@
                 };
             }
         ) // {
-            nixosModules.vigil = import ./nix/module.nix self;
+            nixosModules.x-monitor = import ./nix/module.nix self;
             nixosModules.default = import ./nix/module.nix self;
-            # The monitored-host half. Enabled on every host Vigil watches
+            # The monitored-host half. Enabled on every host X-Monitor watches
             # through an agent; the server module above is enabled only on the
             # machine running the dashboard.
             nixosModules.agent = import ./nix/agent-module.nix self;

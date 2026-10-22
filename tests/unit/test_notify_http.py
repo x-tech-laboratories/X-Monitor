@@ -5,12 +5,12 @@ import json
 import httpx
 import pytest
 
-from vigil.core.notifications import build_channels
-from vigil.core.notifications.channels import Message
-from vigil.core.notifications.http import NtfyChannel, WebhookChannel, render
+from x_monitor.core.notifications import build_channels
+from x_monitor.core.notifications.channels import Message
+from x_monitor.core.notifications.http import NtfyChannel, WebhookChannel, render
 
 FAILED = Message('Nas is failed', 'Pool tank is DEGRADED\nHost: nas.lan', 'failed', 'problem',
-                 'nas-zfs', 'https://vigil.lan/monitor/nas-zfs', 'Nas', 'nas.lan', 1790000000.0)
+                 'nas-zfs', 'https://x-monitor.lan/monitor/nas-zfs', 'Nas', 'nas.lan', 1790000000.0)
 RECOVERED = Message('Nas recovered', 'Was down for 5 Minutes', 'online', 'recovered',
                     'nas-zfs', None, 'Nas', 'nas.lan', 1790000300.0)
 
@@ -28,18 +28,18 @@ def _capture(channel, status=200):
 
 class TestWebhook:
     async def test_default_payload_is_json(self):
-        channel = WebhookChannel('hook', {'url': 'https://hooks.lan/vigil'})
+        channel = WebhookChannel('hook', {'url': 'https://hooks.lan/x-monitor'})
         requests = _capture(channel)
         await channel.send(FAILED)
 
         [request] = requests
-        assert (request.method, str(request.url)) == ('POST', 'https://hooks.lan/vigil')
+        assert (request.method, str(request.url)) == ('POST', 'https://hooks.lan/x-monitor')
         body = json.loads(request.content)
         assert body['title'] == 'Nas is failed'
         assert body['status'] == 'failed'
         assert body['kind'] == 'problem'
         assert body['monitor'] == {'id': 'nas-zfs', 'name': 'Nas', 'host': 'nas.lan'}
-        assert body['url'] == 'https://vigil.lan/monitor/nas-zfs'
+        assert body['url'] == 'https://x-monitor.lan/monitor/nas-zfs'
         assert body['timestamp'].startswith('2026-')
 
     async def test_a_mapping_payload_is_filled_and_sent_as_json(self):
@@ -70,12 +70,12 @@ class TestWebhook:
         url = tmp_path / 'url'
         url.write_text('https://ha.lan/api/webhook/abc123\n')
         channel = WebhookChannel('hook', {'url_file': str(url), 'bearer_token_file': str(token),
-                                          'headers': {'X-Source': 'vigil'}})
+                                          'headers': {'X-Source': 'x-monitor'}})
         requests = _capture(channel)
         await channel.send(FAILED)
         assert str(requests[0].url) == 'https://ha.lan/api/webhook/abc123'
         assert requests[0].headers['authorization'] == 'Bearer s3cret'
-        assert requests[0].headers['x-source'] == 'vigil'
+        assert requests[0].headers['x-source'] == 'x-monitor'
 
     async def test_a_rejected_request_raises(self):
         channel = WebhookChannel('hook', {'url': 'https://x.lan'})
@@ -94,19 +94,19 @@ class TestWebhook:
 
 class TestNtfy:
     async def test_publishes_to_the_topic_with_a_click_link(self):
-        channel = NtfyChannel('phone', {'topic': 'vigil-alerts'})
+        channel = NtfyChannel('phone', {'topic': 'x-monitor-alerts'})
         requests = _capture(channel)
         await channel.send(FAILED)
 
         [request] = requests
         assert str(request.url) == 'https://ntfy.sh'
         assert json.loads(request.content) == {
-            'topic': 'vigil-alerts',
+            'topic': 'x-monitor-alerts',
             'title': 'Nas is failed',
             'message': 'Pool tank is DEGRADED\nHost: nas.lan',
             'priority': 4,
             'tags': ['rotating_light'],
-            'click': 'https://vigil.lan/monitor/nas-zfs',
+            'click': 'https://x-monitor.lan/monitor/nas-zfs',
         }
 
     async def test_recovery_uses_its_own_priority_and_tags(self):
@@ -119,13 +119,13 @@ class TestNtfy:
 
     async def test_priority_and_tags_can_be_set_once_or_per_status(self):
         channel = NtfyChannel('phone', {'topic': 't', 'priority': {'failed': 'urgent'},
-                                        'tags': 'server, vigil'})
+                                        'tags': 'server, x-monitor'})
         requests = _capture(channel)
         await channel.send(FAILED)
         await channel.send(RECOVERED)
         bodies = [json.loads(r.content) for r in requests]
         assert [(b['priority'], b['tags']) for b in bodies] == [
-            (5, ['server', 'vigil']), (2, ['server', 'vigil'])]
+            (5, ['server', 'x-monitor']), (2, ['server', 'x-monitor'])]
 
     async def test_a_self_hosted_server_with_a_token(self, tmp_path):
         topic = tmp_path / 'topic'

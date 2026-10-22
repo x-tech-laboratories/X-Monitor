@@ -3,9 +3,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from vigil.plugins.trilium import Trilium, _age_hours, _parse_response
-from vigil.core.connectors.types import HttpRequest, HttpResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.trilium import Trilium, _age_hours, _parse_response
+from x_monitor.core.connectors.types import HttpRequest, HttpResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 pytestmark = pytest.mark.asyncio
 

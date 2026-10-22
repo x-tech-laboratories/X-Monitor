@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from vigil.plugins.qbittorrent import (
+from x_monitor.plugins.qbittorrent import (
     Qbittorrent,
     _AUTH_FAILED,
     SCRIPT_SEP,
@@ -13,8 +13,8 @@ from vigil.plugins.qbittorrent import (
     _format_rate,
     _parse_response,
 )
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {

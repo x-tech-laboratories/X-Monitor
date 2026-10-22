@@ -1,0 +1,228 @@
+import time
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from x_monitor.plugins.x_monitor_self import (
+    XMonitorSelfPlugin,
+    _format_uptime,
+    _read_rss_mb,
+    _read_cpu_seconds,
+)
+from x_monitor.core.database.database import db, StatusHistory, Metric
+
+
+BASE_CFG = {
+    "name": "test-self",
+    "id":   "test-self",
+    "memory_warning":   256,
+    "memory_threshold": 512,
+    "stale_warning":     3,
+    "stale_threshold":  10,
+}
+
+
+def _make_engine(plugins, last_collected=None):
+    collected = last_collected or {}
+    return MagicMock(plugins=plugins,
+                     last_collected=lambda pid: collected.get(pid, 0.0))
+
+
+@pytest.fixture
+def plugin(make_plugin):
+    p = make_plugin(XMonitorSelfPlugin, BASE_CFG)
+    p.engine = _make_engine([])
+    yield p
+    XMonitorSelfPlugin.engine = None
+
+
+def _latest_status(plugin_id: str = "test-self") -> str | None:
+    with db.connection_context():
+        row = StatusHistory.select().where(
+            StatusHistory.plugin_id == plugin_id
+        ).order_by(StatusHistory.timestamp.desc()).first()
+    return row.state if row else None
+
+
+def _latest_metric(metric: str, name: str = "test-self") -> float | None:
+    with db.connection_context():
+        row = Metric.select().where(
+            (Metric.plugin_id == name) & (Metric.metric_name == metric)
+        ).order_by(Metric.timestamp.desc()).first()
+    return row.value if row else None
+
+
+def _fake_monitor(monitor_id: str, interval: float, children=None):
+    m = MagicMock()
+    m.id = monitor_id
+    m.name = monitor_id
+    m.interval = interval
+    m.children = children or []
+    return m
+
+
+def _run(plugin, run_io_cycle):
+    return run_io_cycle(plugin)
+
+
+class TestFormatUptime:
+    def test_minutes_only(self):
+        assert _format_uptime(300) == "5m"
+
+    def test_hours_and_minutes(self):
+        assert _format_uptime(3900) == "1h 5m"
+
+    def test_days_and_hours(self):
+        assert _format_uptime(280800) == "3d 6h"
+
+
+class TestProcReaders:
+    def test_rss_is_positive(self):
+        assert _read_rss_mb() > 0
+
+    def test_cpu_seconds_is_non_negative(self):
+        assert _read_cpu_seconds() >= 0
+
+    def test_rss_returns_none_when_proc_unreadable(self):
+        with patch("builtins.open", side_effect=OSError("no /proc")):
+            assert _read_rss_mb() is None
+
+    def test_cpu_returns_none_when_proc_unreadable(self):
+        with patch("builtins.open", side_effect=OSError("no /proc")):
+            assert _read_cpu_seconds() is None
+
+
+class TestSelfCollection:
+    async def test_healthy_process_sets_online(self, plugin, run_io_cycle):
+        _run(plugin, run_io_cycle)
+        assert _latest_status() == "online"
+
+    async def test_uptime_metric_recorded(self, plugin, run_io_cycle):
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("uptime_seconds") is not None
+
+    async def test_memory_metric_recorded(self, plugin, run_io_cycle):
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("memory_mb") > 0
+
+    async def test_sample_that_raises_is_unavailable(self, plugin, run_io_cycle):
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", side_effect=RuntimeError("boom")):
+            _run(plugin, run_io_cycle)
+        assert _latest_status() == "unavailable"
+        assert _latest_metric("uptime_seconds") is None
+
+    async def test_memory_above_threshold_sets_failed(self, plugin, run_io_cycle):
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=600.0):
+            _run(plugin, run_io_cycle)
+        assert _latest_status() == "failed"
+
+    async def test_memory_above_warning_sets_warning(self, plugin, run_io_cycle):
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=300.0):
+            _run(plugin, run_io_cycle)
+        assert _latest_status() == "warning"
+
+    async def test_unreadable_memory_does_not_fail(self, plugin, run_io_cycle):
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=None):
+            _run(plugin, run_io_cycle)
+        assert _latest_status() == "online"
+
+    async def test_first_collection_records_no_cpu(self, plugin, run_io_cycle):
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("cpu_pct") is None
+
+    async def test_second_collection_records_cpu(self, plugin, run_io_cycle):
+        _run(plugin, run_io_cycle)
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("cpu_pct") is not None
+
+
+class TestCollectionHealth:
+    async def test_counts_only_leaf_monitors(self, plugin, run_io_cycle):
+        now = time.monotonic()
+        leaf = _fake_monitor("leaf", 60)
+        group = _fake_monitor("group", 60, children=[leaf])
+        plugin.engine = _make_engine([group], {"leaf": now, "group": now})
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_total") == 1.0
+
+    async def test_fresh_monitors_are_not_late(self, plugin, run_io_cycle):
+        now = time.monotonic()
+        m = _fake_monitor("fresh", 60)
+        plugin.engine = _make_engine([m], {"fresh": now})
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_late") == 0.0
+        assert _latest_status() == "online"
+
+    async def test_late_monitor_sets_warning(self, plugin, run_io_cycle):
+        stale = time.monotonic() - (60 * 4)
+        m = _fake_monitor("late", 60)
+        plugin.engine = _make_engine([m], {"late": stale})
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_late") == 1.0
+        assert _latest_status() == "warning"
+
+    async def test_stalled_monitor_sets_failed(self, plugin, run_io_cycle):
+        stale = time.monotonic() - (60 * 12)
+        m = _fake_monitor("stalled", 60)
+        plugin.engine = _make_engine([m], {"stalled": stale})
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_stalled") == 1.0
+        assert _latest_status() == "failed"
+
+    async def test_the_default_late_bound_clears_the_quiet_window(self, make_plugin,
+                                                                  run_io_cycle):
+        """A pushed monitor is only guaranteed an event every
+        SAMPLE_MAX_QUIET_INTERVALS, so the default must not read that silence
+        as late."""
+        from x_monitor.plugins.base.plugin_base import Plugin
+        cfg = {k: v for k, v in BASE_CFG.items() if k != "stale_warning"}
+        p = make_plugin(XMonitorSelfPlugin, cfg)
+        quiet = time.monotonic() - (60 * Plugin.SAMPLE_MAX_QUIET_INTERVALS)
+        m = _fake_monitor("quiet", 60)
+        p.engine = _make_engine([m], {"quiet": quiet})
+        try:
+            _run(p, run_io_cycle)
+            assert _latest_metric("monitors_late") == 0.0
+            assert _latest_status() == "online"
+        finally:
+            XMonitorSelfPlugin.engine = None
+
+    async def test_never_collected_monitor_is_not_stalled(self, plugin, run_io_cycle):
+        m = _fake_monitor("new", 3600)
+        plugin.engine = _make_engine([m], {"new": 0.0})
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_stalled") == 0.0
+        assert _latest_status() == "online"
+
+    async def test_staleness_is_relative_to_each_interval(self, plugin, run_io_cycle):
+        ten_min_ago = time.monotonic() - 600
+        hourly = _fake_monitor("hourly", 3600)
+        frequent = _fake_monitor("frequent", 30)
+        plugin.engine = _make_engine([hourly, frequent], {"hourly": ten_min_ago, "frequent": ten_min_ago})
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_total") == 2.0
+        assert _latest_metric("monitors_stalled") == 1.0
+
+    async def test_stalled_outranks_healthy_memory(self, plugin, run_io_cycle):
+        stale = time.monotonic() - (60 * 12)
+        m = _fake_monitor("stalled", 60)
+        plugin.engine = _make_engine([m], {"stalled": stale})
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=10.0):
+            _run(plugin, run_io_cycle)
+        assert _latest_status() == "failed"
+
+    async def test_no_engine_reports_zero_monitors(self, plugin, run_io_cycle):
+        plugin.engine = None
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_total") == 0.0
+        assert _latest_status() == "online"
+
+    async def test_excludes_itself_from_the_count(self, plugin, run_io_cycle):
+        plugin.engine = _make_engine([plugin])
+        _run(plugin, run_io_cycle)
+        assert _latest_metric("monitors_total") == 0.0
+
+
+class TestSelfActions:
+    async def test_on_action_always_returns_false(self, plugin):
+        assert plugin.plan_action("anything") is None

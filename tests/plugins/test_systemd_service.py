@@ -3,9 +3,9 @@ import stat
 import subprocess
 import time
 import pytest
-from vigil.plugins.systemd_service import SystemdService
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric, LogLine, flush_writes
+from x_monitor.plugins.systemd_service import SystemdService
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric, LogLine, flush_writes
 
 pytestmark = pytest.mark.asyncio
 

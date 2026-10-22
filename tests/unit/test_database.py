@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
 import json
 import pytest
-from vigil.core.database.database import (
+from x_monitor.core.database.database import (
     DatabaseManager, Metric, Event, Job, Setting, StatusHistory, LogLine,
     PluginSnapshot, db,
 )
-from vigil.core.connectors.types import CollectResult
+from x_monitor.core.connectors.types import CollectResult
 
 
 @pytest.fixture
@@ -376,7 +376,7 @@ class TestDownsampling:
         assert len(self._rows()) == 12
 
     def test_the_background_writer_works_through_every_day(self, mgr, monkeypatch):
-        from vigil.core.database.database import _writer
+        from x_monitor.core.database.database import _writer
         start = (datetime.now() - timedelta(days=15)).replace(minute=0, second=0, microsecond=0)
         for day in range(6):
             for minute in (1, 2):
@@ -390,7 +390,7 @@ class TestDownsampling:
 
     def test_a_stopped_pass_lets_flush_return_before_its_remaining_days(self, mgr, monkeypatch):
         import time
-        from vigil.core.database.database import _writer
+        from x_monitor.core.database.database import _writer
         start = (datetime.now() - timedelta(days=30)).replace(minute=0, second=0, microsecond=0)
         for day in range(20):
             for minute in (1, 2):
@@ -656,7 +656,7 @@ class TestHydration:
         assert m2.create_job("p", "h", "k", "cmd") > first
 
     def test_hydration_respects_buffer_limits(self, mgr):
-        from vigil.core.state import BufferSizes
+        from x_monitor.core.state import BufferSizes
         for value in range(50):
             mgr.insert_metric("h", "cpu", "usage", float(value))
         mgr.flush()
@@ -684,7 +684,7 @@ class TestHydration:
             assert [line["message"] for line in m2.log_lines(target, limit=0)] == [f"from {target}"]
 
     def test_distinct_keys_steps_through_each_key_once_in_order(self, mgr):
-        from vigil.core.database.database import _distinct_keys
+        from x_monitor.core.database.database import _distinct_keys
         for plugin_id, name in [("b", "y"), ("a", "z"), ("b", "x"), ("a", "z"), ("b", "y")]:
             mgr.insert_metric("h", plugin_id, name, 1.0)
         mgr.flush()
@@ -699,7 +699,7 @@ class TestHydration:
         assert [m.metadata for m in m2.metric_history("borg", "archive_list")] == [None, '{"new": 1}']
 
     def test_distinct_keys_of_an_empty_table_is_empty(self, mgr):
-        from vigil.core.database.database import _distinct_keys
+        from x_monitor.core.database.database import _distinct_keys
         with db.connection_context():
             assert list(_distinct_keys(StatusHistory, "plugin_id")) == []
 

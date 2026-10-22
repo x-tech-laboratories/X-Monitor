@@ -1,6 +1,6 @@
 # Notifications plan
 
-The plan for Vigil's notifications, modelled on the notification providers Uptime Kuma supports.
+The plan for X-Monitor's notifications, modelled on the notification providers Uptime Kuma supports.
 How to use what exists today is in [notifications.md](notifications.md).
 
 ## What Uptime Kuma supports
@@ -8,7 +8,7 @@ How to use what exists today is in [notifications.md](notifications.md).
 Uptime Kuma ships **109 providers** (`server/notification-providers/`, September 2026). They fall
 into five groups:
 
-| Group | Kuma providers (examples) | Plan for Vigil |
+| Group | Kuma providers (examples) | Plan for X-Monitor |
 |---|---|---|
 | Generic | webhook, smtp, apprise | Built in |
 | Push and chat apps | ntfy, gotify, pushover, telegram, discord, slack, matrix, mattermost, rocket-chat, teams, google-chat, signal, home-assistant, nextcloudtalk, pushbullet, bark, threema | Build about 8 in; reach the rest through Apprise |
@@ -20,14 +20,14 @@ into five groups:
 itself uses it through its command line tool. Apprise plus about ten built-in providers covers
 roughly what Kuma does, without porting 109 files.
 
-Kuma has no desktop notifications. Vigil has them, through its agent.
+Kuma has no desktop notifications. X-Monitor has them, through its agent.
 
-## How it fits Vigil
+## How it fits X-Monitor
 
-- **Detecting changes:** the Notification Engine (`vigil/core/notifications/`) subscribes to the
+- **Detecting changes:** the Notification Engine (`x_monitor/core/notifications/`) subscribes to the
   change bus. Every collection cycle writes a status, so it sees each cycle. It hands each write
   to the event loop and never sends anything on the writer's thread.
-- **Restarts:** it starts from the status history Vigil loads at startup, so a restart does not
+- **Restarts:** it starts from the status history X-Monitor loads at startup, so a restart does not
   announce a problem again.
 - **Sending:** each delivery runs as its own task and is retried twice, after 5s and 30s. A
   delivery that still fails is written to the events feed. Events never trigger notifications,
@@ -38,7 +38,7 @@ Kuma has no desktop notifications. Vigil has them, through its agent.
 
 ## Rules, mapped from Kuma
 
-| Kuma | Vigil |
+| Kuma | X-Monitor |
 |---|---|
 | Only a change between down and up notifies | `on: [failed]` by default, with `recovery: true`. `warning` and `unavailable` are opt-in |
 | Retries before marking down | `after: N` problem cycles in a row |
@@ -74,7 +74,7 @@ of one per monitor.
    `POST /api/notifications/<channel>/test`.
 2. **Generic channels:** webhook and ntfy are done: a JSON body or a payload template for the
    webhook, and a tap link, priority and tags for ntfy. Every secret can be given as `*_file`.
-   smtp and Apprise (the optional extra `vigil[apprise]`) are done too.
+   smtp and Apprise (the optional extra `x-monitor[apprise]`) are done too.
 3. **More providers and UI:** the dashboard part is done: a mute switch on each monitor's page,
    and a header dialog that tests channels and lists mutes. Still to do: telegram, discord,
    slack, gotify, pushover, matrix, home-assistant and signal built in.

@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from vigil.plugins.nixos_upgrade import NixosUpgrade
-from vigil.core.connectors.types import CmdResult, CollectResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.nixos_upgrade import NixosUpgrade
+from x_monitor.core.connectors.types import CmdResult, CollectResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -440,7 +440,7 @@ class TestLocalPath:
 
 async def _launch(plugin, action_id="switch", pid=4242):
     """Drive plan_action -> ActionPlan (launch) -> interpret_action, mirroring
-    VigilEngine.dispatch_action for a launched detached job."""
+    XMonitorEngine.dispatch_action for a launched detached job."""
     plan = plugin.plan_action(action_id)
     if plan is None:
         return None
@@ -455,10 +455,10 @@ async def _launch(plugin, action_id="switch", pid=4242):
 def _poll(size, exit_code, alive, out):
     """Build the raw stdout one poll_command produces on the target."""
     return CmdResult(0, (
-        f"===VIGIL_SIZE===\n{size}\n"
-        f"===VIGIL_EXIT===\n{exit_code if exit_code is not None else ''}\n"
-        f"===VIGIL_ALIVE===\n{1 if alive else 0}\n"
-        f"===VIGIL_OUT===\n{out}"
+        f"===XMONITOR_SIZE===\n{size}\n"
+        f"===XMONITOR_EXIT===\n{exit_code if exit_code is not None else ''}\n"
+        f"===XMONITOR_ALIVE===\n{1 if alive else 0}\n"
+        f"===XMONITOR_OUT===\n{out}"
     ), "")
 
 
@@ -804,7 +804,7 @@ class TestSchedule:
 
     def test_latest_slot_is_never_in_the_future(self):
         from datetime import datetime, time as tod
-        from vigil.plugins.nixos_upgrade import _latest_slot
+        from x_monitor.plugins.nixos_upgrade import _latest_slot
         now = datetime(2026, 10, 10, 1, 0).timestamp()
         assert _latest_slot(tod(2, 30), now) == datetime(2026, 10, 9, 2, 30).timestamp()
         assert _latest_slot(tod(0, 30), now) == datetime(2026, 10, 10, 0, 30).timestamp()
@@ -847,7 +847,7 @@ class TestBuildAgent:
         assert p.commands()[0].agent == "builder"
 
     async def test_cancel_reaches_the_build_agent(self, make_plugin):
-        from vigil.core.coordination.jobs import JobsGateway
+        from x_monitor.core.coordination.jobs import JobsGateway
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_agent": "builder"})
         sent = []
 

@@ -2,11 +2,11 @@ import json
 
 import pytest
 
-from vigil.plugins.blockurl import (
+from x_monitor.plugins.blockurl import (
     AGENT_UNAVAILABLE, Blockurl, _parse_response, _write_probe_error,
 )
-from vigil.core.connectors.types import CmdResult, Command, HttpRequest, HttpResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.core.connectors.types import CmdResult, Command, HttpRequest, HttpResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -19,7 +19,7 @@ BASE_CFG = {
 }
 
 _DOMAINS = [["example.com", 5], ["other.com", 3]]
-_PROBE_URL = "https://vigil-write-probe.invalid/blockurl"
+_PROBE_URL = "https://x-monitor-write-probe.invalid/blockurl"
 
 
 @pytest.fixture
@@ -196,7 +196,7 @@ class TestWriteProbeCollection:
 
 class TestProbeUnavailable:
     async def test_disconnected_agent_is_unavailable_not_failed(self, plugin, run_requests):
-        """A Vigil restart races the agent connection; that is not a write failure."""
+        """A X-Monitor restart races the agent connection; that is not a write failure."""
         probe = _probe(exit_code=-1, stderr="Agent 'heimdall' is not connected")
         run_requests(plugin, _respond(probe=probe))
         assert _latest_status() == "unavailable"

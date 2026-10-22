@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.wifi import Wifi
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.wifi import Wifi
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-wifi", "id": "test-wifi", "ssh_config": {"host": "test.host"}}
 
@@ -42,7 +42,7 @@ def plugin(make_plugin):
     return make_plugin(Wifi, CFG)
 
 
-from vigil.plugins.wifi import _parse_wireless, _strongest_interface
+from x_monitor.plugins.wifi import _parse_wireless, _strongest_interface
 
 
 class TestParseWireless:

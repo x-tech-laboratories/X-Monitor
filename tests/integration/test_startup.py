@@ -9,9 +9,9 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from vigil.__main__ import VigilEngine
-from vigil.core.database.database import DatabaseManager, db
-from vigil.core.ui.startup import StartingUpMiddleware
+from x_monitor.__main__ import XMonitorEngine
+from x_monitor.core.database.database import DatabaseManager, db
+from x_monitor.core.ui.startup import StartingUpMiddleware
 
 
 @pytest.fixture(autouse=True)
@@ -24,7 +24,7 @@ def close_db():
 @pytest.fixture
 def saved(tmp_path):
     """A database holding one monitor's status from a previous run."""
-    path = str(tmp_path / "vigil.db")
+    path = str(tmp_path / "x-monitor.db")
     manager = DatabaseManager(path)
     manager.insert_status("cpu", "failed")
     manager.flush()
@@ -35,8 +35,8 @@ def saved(tmp_path):
 def _engine(tmp_path, db_path):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(yaml.dump({"plugins": []}))
-    with patch("vigil.core.connectors.engine.SSHConnection"):
-        return VigilEngine(str(cfg), db_path_override=db_path)
+    with patch("x_monitor.core.connectors.engine.SSHConnection"):
+        return XMonitorEngine(str(cfg), db_path_override=db_path)
 
 
 class TestLoading:
@@ -93,7 +93,7 @@ class TestStartingPage:
         response = http.get('/monitor/cpu')
         assert response.status_code == 503
         assert response.headers['retry-after'] == '5'
-        assert 'Vigil is starting' in response.text and 'http-equiv="refresh"' in response.text
+        assert 'X-Monitor is starting' in response.text and 'http-equiv="refresh"' in response.text
 
     @pytest.mark.parametrize('path', ['/api/summary', '/metrics'])
     def test_machines_get_json(self, client, path):

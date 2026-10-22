@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from vigil.core.ui.views.overview import (
+from x_monitor.core.ui.views.overview import (
     _build_chart_counts, _collect_leaf_monitors, _treemap_options, _treemap_tiles,
     _worst_status,
 )

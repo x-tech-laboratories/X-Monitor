@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.throughput import Throughput
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.throughput import Throughput
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-throughput", "id": "test-throughput", "ssh_config": {"host": "test.host"}}
 
@@ -53,7 +53,7 @@ def plugin(make_plugin):
     return make_plugin(Throughput, CFG)
 
 
-from vigil.plugins.throughput import _parse_net_dev, _busiest_interface, _format_rate
+from x_monitor.plugins.throughput import _parse_net_dev, _busiest_interface, _format_rate
 
 
 class TestParseNetDev:

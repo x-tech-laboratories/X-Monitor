@@ -1,0 +1,921 @@
+"""NixOS flake deployment drift: whether the running system is the one the
+configured flake currently evaluates to. Every cycle reads the target's
+/run/current-system, /run/booted-system, generation and version (one cheap
+script); every `eval_interval` it additionally evaluates
+`<flake>#nixosConfigurations.<host>.config.system.build.toplevel` and reads
+`nix flake metadata`, so drift is a comparison of two store paths rather than
+a guess from revisions, and the flake's own revision and input ages are
+tracked alongside it. A failed evaluation is retried after `retry_interval`
+rather than held for the full `eval_interval`, and a dashboard poll always
+evaluates. An unreachable or non-NixOS target, unreadable flake metadata,
+or an evaluation that never ran is unavailable; an evaluation that ran and
+errored is failed. `eval_agent` runs the two expensive commands on another agent's
+host, for a target too small to evaluate its own flake, and `build_host` sends the
+switch's own compilation to a host that can do it. `build_agent` runs the build job
+on another agent's host, so one host can warm the cache for every other. `switch_agent` runs the switch
+and update jobs on another agent's host, which with `target_host` lets one host
+build every other's closure and activate it over SSH; the probe stays on the target,
+so drift is still read from the machine it describes. Actions launch
+detached jobs on the target: `nix flake update` on the flake, and
+`nixos-rebuild switch --flake`; a `github:` flake with a `push_ssh_key` is
+updated in a fresh clone that is committed and pushed back over SSH. With `auto_switch`, drift that outlasts
+`auto_switch_after` launches the switch itself, once per target closure, and
+only when the flake changed after the running generation was made. `update_at` and
+`build_at` launch the update and the build once a day at a local time of day; a slot
+missed while X-Monitor was down runs once when it returns, and a restart never repeats one. Config:
+flake, configuration, eval_agent, eval_interval, retry_interval, eval_timeout,
+max_input_age, drift_status, reboot_status, require_sudo, nix_bin,
+rebuild_bin, nix_args, rebuild_args, build_host, build_agent, switch_agent, target_host,
+auto_switch, auto_switch_after, update_at, build_at,
+switch_wrapper, post_switch, push_ssh_key, commit_author,
+commit_message."""
+
+import json
+import shlex
+import time
+from datetime import datetime, time as time_of_day, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors import ssh_connector as detached
+from x_monitor.core.connectors.types import (
+    ActionPlan, CmdResult, Command, CollectResult, Status,
+)
+from x_monitor.plugins.base.plugin_helpers import (
+    StatusAccumulator, format_age, format_duration, parse_duration,
+)
+
+
+_DEFAULT_LAYOUT = [
+    ['host_card', 'drift_card', 'reboot_card', 'generation_card'],
+    ['flake_card', 'revision_card', 'switched_card', 'inputs_card'],
+    ['details'],
+    ['controls'],
+    ['jobs'],
+    ['events'],
+]
+
+# Metric carrying the evaluation's epoch as its value and the whole evaluated
+# state as JSON metadata, so a restart resumes the eval schedule.
+_STATE_METRIC = 'flake_eval_epoch'
+
+# The parts of a system closure whose change between the booted and the current
+# generation means the new one is only fully live after a reboot.
+_BOOT_PARTS = ('initrd', 'kernel', 'kernel-modules', 'systemd')
+
+_LOCAL_SCHEMES = ('path:', 'git+file://', 'file://')
+
+
+def _probe_script() -> str:
+    """One script collecting every cheap fact about the deployed system."""
+    return '\n'.join([
+        'echo "hostname=$(uname -n)"',
+        'echo "current=$(readlink -f /run/current-system 2>/dev/null)"',
+        'echo "booted=$(readlink -f /run/booted-system 2>/dev/null)"',
+        'echo "switched=$(stat -c %Y /run/current-system 2>/dev/null)"',
+        'echo "profile=$(readlink /nix/var/nix/profiles/system 2>/dev/null)"',
+        'echo "profile_created=$(stat -c %Y "/nix/var/nix/profiles/$(readlink /nix/var/nix/profiles/system)" 2>/dev/null)"',
+        'echo "version=$(cat /run/current-system/nixos-version 2>/dev/null)"',
+        "echo \"version_json=$(nixos-version --json 2>/dev/null | tr -d '\\n')\"",
+        f'for part in {" ".join(_BOOT_PARTS)}; do',
+        '  echo "booted_part=$(readlink -f /run/booted-system/$part 2>/dev/null)"',
+        '  echo "current_part=$(readlink -f /run/current-system/$part 2>/dev/null)"',
+        'done',
+    ])
+
+
+def _parse_probe(stdout: str) -> Dict[str, Any]:
+    """Turn the probe script's key=value lines into a dict, collecting the
+    repeated booted_part/current_part lines into lists."""
+    fields: Dict[str, Any] = {'booted_part': [], 'current_part': []}
+    for line in stdout.splitlines():
+        key, sep, value = line.partition('=')
+        if not sep:
+            continue
+        value = value.strip()
+        if key in ('booted_part', 'current_part'):
+            fields[key].append(value)
+        else:
+            fields[key] = value
+    return fields
+
+
+def _generation(profile_link: str) -> Optional[int]:
+    """Extract the generation number from a `system-210-link` profile symlink."""
+    name = profile_link.rsplit('/', 1)[-1]
+    if not (name.startswith('system-') and name.endswith('-link')):
+        return None
+    try:
+        return int(name[len('system-'):-len('-link')])
+    except ValueError:
+        return None
+
+
+def _decode_json(raw: str) -> Dict[str, Any]:
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _short_rev(revision: Optional[str]) -> str:
+    """Abbreviate a flake revision, keeping the -dirty marker a local checkout
+    with uncommitted changes carries."""
+    if not revision:
+        return '--'
+    head, sep, tail = revision.partition('-')
+    return head[:12] + sep + tail
+
+
+def _escape(value: str) -> str:
+    """Escape a value for embedding inside a double-quoted shell word."""
+    return value.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$')
+
+
+def _time_of_day(value, key: str) -> Optional[time_of_day]:
+    """Read a configured daily time such as "02:30", or None when unset."""
+    if value is None or value == '':
+        return None
+    try:
+        return time_of_day.fromisoformat(str(value))
+    except ValueError as e:
+        raise ValueError(f"`{key}` must be a time of day such as \"02:30\", not {value!r}") from e
+
+
+def _latest_slot(at: time_of_day, now: float) -> int:
+    """The epoch of the most recent local `at` no later than `now`."""
+    moment = datetime.fromtimestamp(now)
+    slot = datetime.combine(moment.date(), at)
+    if slot > moment:
+        slot -= timedelta(days=1)
+    return int(slot.timestamp())
+
+
+def _severity(value, default: str) -> str:
+    """Read a configured status name, falling back on anything unrecognised."""
+    try:
+        return str(Status(str(value)))
+    except ValueError:
+        return default
+
+
+def _oldest_input(locks: Dict[str, Any]) -> Tuple[Optional[str], Optional[int]]:
+    """Return the (name, lastModified) of the least recently updated locked
+    input — the one `nix flake update` would move furthest."""
+    nodes = locks.get('nodes')
+    if not isinstance(nodes, dict):
+        return None, None
+    root = locks.get('root', 'root')
+    oldest_name, oldest_epoch = None, None
+    for name, node in nodes.items():
+        if name == root or not isinstance(node, dict):
+            continue
+        locked = node.get('locked')
+        stamp = locked.get('lastModified') if isinstance(locked, dict) else None
+        if not isinstance(stamp, (int, float)):
+            continue
+        if oldest_epoch is None or stamp < oldest_epoch:
+            oldest_name, oldest_epoch = name, int(stamp)
+    return oldest_name, oldest_epoch
+
+
+class NixosUpgrade(Plugin):
+    def __init__(self, name: str, config):
+        super().__init__(name, config)
+        self.flake = str(config.get('flake', '/etc/nixos'))
+        self.configuration = config.get('configuration')
+        self.eval_agent = config.get('eval_agent') or None
+        self.eval_interval = parse_duration(config.get('eval_interval', '1h'))
+        self.retry_interval = min(parse_duration(config.get('retry_interval', '15m')),
+                                  self.eval_interval)
+        self.eval_timeout = parse_duration(config.get('eval_timeout', '10m'))
+        self.max_input_age = (
+            parse_duration(config['max_input_age'])
+            if config.get('max_input_age') is not None else None
+        )
+        self.drift_status = _severity(config.get('drift_status'), 'warning')
+        self.reboot_status = _severity(config.get('reboot_status'), 'warning')
+        self.require_sudo = bool(config.get('require_sudo', True))
+        self.nix_bin = str(config.get('nix_bin', 'nix'))
+        self.rebuild_bin = str(config.get('rebuild_bin', 'nixos-rebuild'))
+        self.nix_args = list(config.get(
+            'nix_args', ['--extra-experimental-features', 'nix-command flakes']))
+        self.rebuild_args = list(config.get('rebuild_args', []))
+        self.build_host = config.get('build_host') or None
+        self.switch_agent = config.get('switch_agent') or None
+        self.build_agent = config.get('build_agent') or self.switch_agent
+        self.build_args = list(config.get('build_args', ['--keep-going', '--print-build-logs']))
+        self.target_host = config.get('target_host') or None
+        self.auto_switch = bool(config.get('auto_switch', False))
+        self.auto_switch_after = parse_duration(config.get('auto_switch_after', '30m'))
+        self.schedule = {kind: at for kind, at in (
+            ('update', _time_of_day(config.get('update_at'), 'update_at')),
+            ('build', _time_of_day(config.get('build_at'), 'build_at'))) if at is not None}
+        self.switch_wrapper = list(config.get('switch_wrapper', []))
+        self.post_switch = config.get('post_switch') or None
+        self.push_ssh_key = config.get('push_ssh_key') or None
+        self.commit_author = str(config.get('commit_author', 'X-Monitor <x-monitor@localhost>'))
+        self.commit_message = str(config.get('commit_message', 'chore(flake): update inputs'))
+        # Set by a finished job so the next cycle re-evaluates immediately
+        # instead of waiting out eval_interval.
+        self._force_eval = False
+        self._pending_launch = None
+        self._polling_job = None
+        # The target an automatic switch is due for, and the launch the current cycle sent for it.
+        self._auto_switch_due = None
+        self._auto_launch = None
+        # The (kind, slot, command, workdir) of the scheduled job the current cycle launched.
+        self._scheduled_launch = None
+
+    # --- flake reference ---
+
+    @property
+    def local_path(self) -> Optional[str]:
+        """The flake's filesystem path when it is a local checkout, else None
+        — `nix flake update` can only write a lock file it owns."""
+        ref = self.flake
+        for scheme in _LOCAL_SCHEMES:
+            if ref.startswith(scheme):
+                ref = ref[len(scheme):]
+                break
+        else:
+            if not (ref.startswith('/') or ref.startswith('.')):
+                return None
+        path = ref.split('?', 1)[0].split('#', 1)[0]
+        return path or None
+
+    @property
+    def github_repo(self) -> Optional[Tuple[str, Optional[str]]]:
+        """The (SSH clone URL, branch or None) of a `github:owner/repo[/ref]` flake, else None."""
+        if not self.flake.startswith('github:'):
+            return None
+        path, _, query = self.flake[len('github:'):].partition('?')
+        parts = path.split('/')
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            return None
+        params = dict(p.partition('=')[::2] for p in query.split('&') if p)
+        ref = params.get('ref') or ('/'.join(parts[2:]) or None)
+        return f'git@github.com:{parts[0]}/{parts[1]}.git', ref
+
+    @property
+    def pushes_to_github(self) -> bool:
+        """Whether Update Flake clones and pushes the flake's GitHub repo, which needs a key to push with."""
+        return not self.local_path and self.github_repo is not None and self.push_ssh_key is not None
+
+    def _refresh_args(self) -> List[str]:
+        """A mutable remote ref is only seen freshly with --refresh; a local
+        path is read from disk every time and needs none."""
+        return [] if self.local_path else ['--refresh']
+
+    def _build_host_args(self) -> List[str]:
+        """Where the switch compiles what the cache cannot supply: a target too
+        small to build its own closure names a host that can, which needs SSH
+        from the target's root to that host."""
+        return ['--build-host', self.build_host] if self.build_host else []
+
+    def _target_host_args(self) -> List[str]:
+        """Which machine the built closure is copied to and activated on, for a
+        switch driven from another host rather than from the target itself."""
+        return ['--target-host', self.target_host] if self.target_host else []
+
+    def _attribute(self) -> Optional[str]:
+        """The nixosConfigurations attribute to evaluate: the configured name,
+        else the hostname the last probe reported (needed when the evaluation
+        runs on another host, where `uname -n` would name the wrong machine)."""
+        if self.configuration:
+            return str(self.configuration)
+        snapshot = self.data.latest_snapshot(default={}) if self.data else {}
+        return (snapshot or {}).get('hostname') or None
+
+    def _installable(self) -> str:
+        """The flake installable for this host's system closure, double-quoted
+        so an unknown attribute falls back to the evaluating host's own hostname."""
+        attr = self._attribute()
+        attr = _escape(attr) if attr else '$(uname -n)'
+        return (f'"{_escape(self.flake)}#nixosConfigurations.\\"{attr}\\"'
+                f'.config.system.build.toplevel"')
+
+    def _sudo(self) -> str:
+        return 'sudo -n ' if self.require_sudo else ''
+
+    # --- collection ---
+
+    def commands(self) -> List[Command]:
+        job = self._running_job()
+        # parse() must read the results the way they were requested, even if a job starts or ends mid-cycle.
+        self._polling_job = job
+        if job is not None:
+            return [Command(detached.poll_command(job['workdir'], job['pid'], job['output_seq']),
+                            agent=self.job_agent(job))]
+
+        self._auto_launch = None
+        if self._auto_switch_due:
+            command = self._switch_command()
+            workdir = detached.workdir_for(f'{self.id}-auto-{int(time.time())}')
+            self._auto_launch = (self._auto_switch_due, command, workdir)
+            self._auto_switch_due = None
+            return [Command(detached.launch_command(command, workdir), agent=self.switch_agent)]
+
+        self._scheduled_launch = None
+        due = self._scheduled_due()
+        if due is not None:
+            kind, slot = due
+            command = self._build_command() if kind == 'build' else self._update_command()
+            workdir = detached.workdir_for(f'{self.id}-{kind}-{int(time.time())}')
+            self._scheduled_launch = (kind, slot, command, workdir)
+            return [Command(detached.launch_command(command, workdir), agent=self._agent_for(kind))]
+
+        commands = [Command(_probe_script())]
+        # An offloaded evaluation needs the target's attribute name, which the first probe supplies.
+        if self._due_for_eval() and not (self.eval_agent and self._attribute() is None):
+            nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
+            refresh = ' '.join(self._refresh_args())
+            commands.append(Command(
+                ' '.join(filter(None, [nix, 'eval --raw --no-write-lock-file', refresh,
+                                       self._installable()])),
+                timeout=self.eval_timeout, agent=self.eval_agent,
+            ))
+            commands.append(Command(
+                ' '.join(filter(None, [nix, 'flake metadata --json --no-write-lock-file',
+                                       refresh, shlex.quote(self.flake)])),
+                timeout=self.eval_timeout, agent=self.eval_agent,
+            ))
+        return commands
+
+    def _agent_for(self, kind: str) -> Optional[str]:
+        """The agent a job of this kind launches on: the build may run apart from the switch and update."""
+        return self.build_agent if kind == 'build' else self.switch_agent
+
+    def job_agent(self, job: dict) -> Optional[str]:
+        return self._agent_for(job.get('kind'))
+
+    def _running_job(self) -> Optional[dict]:
+        job = self.jobs.running() if self.jobs else None
+        if job and job.get('pid') and job.get('workdir'):
+            return job
+        return None
+
+    def _state(self) -> Dict[str, Any]:
+        """The last evaluation's stored result: target closure, flake revision
+        and input ages, carried between cycles as metric metadata."""
+        metric = self.data.latest_metric(_STATE_METRIC) if self.data else None
+        return _decode_json(metric.metadata) if metric is not None and metric.metadata else {}
+
+    def _scheduled_due(self) -> Optional[Tuple[str, int]]:
+        """The first scheduled job whose latest slot is newer than the one last handled, update before build."""
+        handled = self._state().get('scheduled') or {}
+        now = time.time()
+        for kind, at in self.schedule.items():
+            if kind == 'update' and not self._update_enabled(self):
+                continue
+            # A schedule never seen before was seeded by the last probe cycle, so it first fires at its next slot.
+            if kind in handled and _latest_slot(at, now) > int(handled[kind]):
+                return kind, _latest_slot(at, now)
+        return None
+
+    def _due_for_eval(self) -> bool:
+        if self._force_eval:
+            return True
+        state = self._state()
+        evaluated = state.get('evaluated_epoch')
+        if not evaluated:
+            return True
+        # A failed evaluation waits only retry_interval; holding its error for a whole eval_interval hides a fix.
+        failed = bool(state.get('eval_error') or state.get('metadata_error'))
+        wait = self.retry_interval if failed else self.eval_interval
+        return time.time() - float(evaluated) >= wait
+
+    async def run_cycle(self) -> bool:
+        """A dashboard poll is an explicit ask, so it evaluates instead of only re-reading the cached result."""
+        self._force_eval = True
+        return await super().run_cycle()
+
+    def parse(self, results: List[CmdResult]) -> CollectResult:
+        job, self._polling_job = self._polling_job, None
+        if job is not None:
+            return self._parse_poll(job, results[0])
+        launch, self._auto_launch = self._auto_launch, None
+        if launch is not None:
+            return self._parse_auto_launch(launch, results[0])
+        scheduled, self._scheduled_launch = self._scheduled_launch, None
+        if scheduled is not None:
+            return self._parse_scheduled_launch(scheduled, results[0])
+
+        if not results:
+            return CollectResult.unavailable('No probe result for this cycle')
+
+        probe = results[0]
+        if probe.exit_code != 0 and not probe.stdout.strip():
+            return CollectResult.unavailable(
+                f"Could not read the deployed system: {(probe.stderr or probe.stdout).strip()[:200]}")
+
+        fields = _parse_probe(probe.stdout)
+        current = fields.get('current')
+        if not current:
+            return CollectResult.unavailable(
+                '/run/current-system is unreadable — is this a NixOS host?')
+
+        evaluated = len(results) > 2
+        state = self._eval_state(results[1], results[2]) if evaluated else self._state()
+        return self._assemble(fields, current, state, evaluated)
+
+    def _eval_state(self, eval_result: CmdResult, metadata_result: CmdResult) -> Dict[str, Any]:
+        """Fold this cycle's evaluation and flake metadata into the stored
+        state, keeping the last known good values for whichever half failed."""
+        state = dict(self._state())
+        state['evaluated_epoch'] = int(time.time())
+        self._force_eval = False
+
+        if eval_result.exit_code == 0 and eval_result.stdout.strip():
+            state['target'] = eval_result.stdout.strip().splitlines()[-1].strip()
+            state['eval_error'] = None
+        else:
+            state['eval_error'] = (
+                (eval_result.stderr or eval_result.stdout).strip()[:400]
+                or f'nix eval exited {eval_result.exit_code}')
+            # An eval host that never answered measured nothing, unlike an evaluation that ran and errored.
+            state['eval_unreachable'] = eval_result.exit_code == -1
+
+        data = _decode_json(metadata_result.stdout) if metadata_result.exit_code == 0 else {}
+        if data:
+            locked = data.get('locked') if isinstance(data.get('locked'), dict) else {}
+            # An uncommitted local checkout has no `rev`, only a `dirtyRev`.
+            state['flake_revision'] = (data.get('revision') or locked.get('rev')
+                                       or locked.get('dirtyRev'))
+            state['flake_last_modified'] = data.get('lastModified') or locked.get('lastModified')
+            locks = data.get('locks') if isinstance(data.get('locks'), dict) else {}
+            name, epoch = _oldest_input(locks)
+            state['oldest_input'] = name
+            state['inputs_last_modified'] = epoch
+            state['metadata_error'] = None
+        else:
+            state['metadata_error'] = (
+                (metadata_result.stderr or metadata_result.stdout).strip()[:400]
+                or f'nix flake metadata exited {metadata_result.exit_code}')
+        return state
+
+    def _assemble(self, fields: Dict[str, Any], current: str,
+                  state: Dict[str, Any], evaluated: bool) -> CollectResult:
+        """Turn the probe's facts and the stored evaluation into this cycle's
+        metrics, log lines and worst-of status."""
+        acc = StatusAccumulator()
+        now = int(time.time())
+        metrics: Dict[str, float] = {}
+        metadata: Dict[str, str] = {}
+        logs: List[Tuple[str, str]] = []
+
+        version = fields.get('version') or _decode_json(
+            fields.get('version_json', '')).get('nixosVersion') or 'unknown'
+        generation = _generation(fields.get('profile', ''))
+        if generation is not None:
+            metrics['generation'] = float(generation)
+
+        switched = fields.get('switched')
+        if switched and switched.isdigit():
+            metrics['last_switch_epoch'] = float(switched)
+            logs.append((f"Running NixOS {version}, generation {generation or '?'}, "
+                         f"switched {format_age(now - int(switched))}", 'INFO'))
+        else:
+            logs.append((f"Running NixOS {version}, generation {generation or '?'}", 'INFO'))
+
+        target = state.get('target')
+        self._auto_switch_due = None
+        if state.get('eval_error'):
+            unreachable = bool(state.get('eval_unreachable'))
+            acc.escalate('unavailable' if unreachable else 'failed')
+            logs.append((f"Flake evaluation failed: {state['eval_error']}",
+                         'WARNING' if unreachable else 'ERROR'))
+        previous = ((self.data.latest_snapshot(default={}) or {}).get('current')
+                    if self.data else None)
+        if target and not evaluated and previous and previous != current and target != current:
+            # A closure that changed since the last evaluation is judged against a fresh one, not a stale target.
+            self._force_eval = True
+            logs.append((f"Running closure changed to {current}; re-evaluating the flake before "
+                         "judging drift", 'INFO'))
+        elif target:
+            up_to_date = target == current
+            metrics['up_to_date'] = 1.0 if up_to_date else 0.0
+            if up_to_date:
+                state['drift_target'] = state['drift_since'] = None
+                logs.append(('System matches the flake', 'INFO'))
+            else:
+                acc.escalate(self.drift_status)
+                logs.append((f"System is out of date: {self.flake} evaluates to {target}, "
+                             f"running {current}", Status(self.drift_status).log_level))
+                if state.get('drift_target') != target:
+                    state['drift_target'], state['drift_since'] = target, now
+                logs.extend(self._consider_auto_switch(fields, state, target, now))
+
+        if state.get('metadata_error'):
+            acc.escalate('unavailable')
+            logs.append((f"Could not read flake metadata: {state['metadata_error']}", 'WARNING'))
+        metrics['flake_reachable'] = 0.0 if state.get('metadata_error') else 1.0
+
+        flake_modified = state.get('flake_last_modified')
+        if flake_modified:
+            metrics['flake_last_modified_epoch'] = float(flake_modified)
+            revision = state.get('flake_revision')
+            logs.append((f"Flake last changed {format_age(now - int(flake_modified))}"
+                         + (f" at {_short_rev(revision)}" if revision else ''), 'INFO'))
+
+        inputs_modified = state.get('inputs_last_modified')
+        if inputs_modified:
+            metrics['inputs_last_modified_epoch'] = float(inputs_modified)
+            age = now - int(inputs_modified)
+            stale = self.max_input_age is not None and age > self.max_input_age
+            if stale:
+                acc.escalate('warning')
+            logs.append((
+                f"Oldest locked input {state.get('oldest_input') or '?'} is "
+                f"{format_age(age)}" + (
+                    f", over the {format_duration(self.max_input_age)} limit" if stale else ''),
+                'WARNING' if stale else 'INFO'))
+
+        scheduled = dict(state.get('scheduled') or {})
+        for kind, at in self.schedule.items():
+            scheduled.setdefault(kind, _latest_slot(at, now))
+        state['scheduled'] = scheduled
+        if 'update' in self.schedule and not self._update_enabled(self):
+            acc.escalate('warning')
+            logs.append((f"Scheduled update never runs: {self.flake} has no lock file this host can "
+                         "write", 'WARNING'))
+
+        reboot = self._reboot_required(fields)
+        if reboot is not None:
+            metrics['reboot_required'] = 1.0 if reboot else 0.0
+            if reboot:
+                acc.escalate(self.reboot_status)
+                logs.append(('Reboot required: the booted kernel/initrd is not the current one',
+                             Status(self.reboot_status).log_level))
+
+        metrics[_STATE_METRIC] = float(state.get('evaluated_epoch') or 0)
+        metadata[_STATE_METRIC] = json.dumps(state)
+
+        return CollectResult(
+            metrics=metrics, metadata=metadata, logs=logs, status=str(acc.status),
+            snapshot={'current': current, 'version': version,
+                      'generation': generation, 'booted': fields.get('booted'),
+                      'hostname': fields.get('hostname')},
+        )
+
+    def _consider_auto_switch(self, fields: Dict[str, Any], state: Dict[str, Any],
+                              target: str, now: int) -> List[Tuple[str, str]]:
+        """Decide whether this drift should launch a switch on the next cycle, returning any log lines explaining a hold."""
+        if not self.auto_switch or state.get('eval_error') or state.get('auto_switch_target') == target:
+            return []
+        created = fields.get('profile_created') or fields.get('switched') or ''
+        flake_modified = state.get('flake_last_modified')
+        # A generation newer than the flake came from somewhere else, such as an unpushed checkout, and switching would roll it back.
+        if not (created.isdigit() and flake_modified and int(flake_modified) > int(created)):
+            return [('Not switching automatically: the running generation is newer than the flake', 'INFO')]
+        waited = now - int(state.get('drift_since') or now)
+        if waited < self.auto_switch_after:
+            return [(f"Switching automatically once the drift has lasted "
+                     f"{format_duration(self.auto_switch_after)}", 'INFO')]
+        self._auto_switch_due = target
+        return [(f"Drift has lasted {format_age(waited)}; switching automatically", 'WARNING')]
+
+    def _parse_auto_launch(self, launch: Tuple[str, str, str], result: CmdResult) -> CollectResult:
+        """Record the job an automatic switch launched, and the target it was for so it is never retried."""
+        target, command, workdir = launch
+        pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
+        # An agent that never answered launched nothing, so the next cycle may try again.
+        if pid is None and result.exit_code == -1:
+            return CollectResult(logs=[(f"Could not launch the automatic switch: "
+                                        f"{(result.stderr or '').strip()[:200]}", 'WARNING')])
+        state = self._state()
+        state['auto_switch_target'] = target
+        written = CollectResult(metrics={_STATE_METRIC: float(state.get('evaluated_epoch') or 0)},
+                                metadata={_STATE_METRIC: json.dumps(state)})
+        if pid is None:
+            written.logs = [(f"Failed to launch the automatic switch: "
+                             f"{(result.stderr or result.stdout).strip()[:200]}", 'ERROR')]
+            written.status = 'failed'
+            return written
+        job_id = self.jobs.create('switch', command, workdir)
+        self.jobs.set_pid(job_id, pid)
+        written.logs = [(f"Automatic switch started (pid {pid})", 'INFO')]
+        return written
+
+    def _parse_scheduled_launch(self, launch: Tuple[str, int, str, str],
+                                result: CmdResult) -> CollectResult:
+        """Record the job a schedule launched, and its slot as handled so neither a retry nor a restart repeats it."""
+        kind, slot, command, workdir = launch
+        pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
+        # An agent that never answered launched nothing, so the next cycle may try again.
+        if pid is None and result.exit_code == -1:
+            return CollectResult(logs=[(f"Could not launch the scheduled {kind}: "
+                                        f"{(result.stderr or '').strip()[:200]}", 'WARNING')])
+        state = self._state()
+        state['scheduled'] = {**(state.get('scheduled') or {}), kind: slot}
+        written = CollectResult(metrics={_STATE_METRIC: float(state.get('evaluated_epoch') or 0)},
+                                metadata={_STATE_METRIC: json.dumps(state)})
+        if pid is None:
+            written.logs = [(f"Failed to launch the scheduled {kind}: "
+                             f"{(result.stderr or result.stdout).strip()[:200]}", 'ERROR')]
+            written.status = 'failed'
+            return written
+        job_id = self.jobs.create(kind, command, workdir)
+        self.jobs.set_pid(job_id, pid)
+        written.logs = [(f"Scheduled {kind} started (pid {pid})", 'INFO')]
+        return written
+
+    @staticmethod
+    def _reboot_required(fields: Dict[str, Any]) -> Optional[bool]:
+        """Whether the booted closure's kernel-side parts differ from the
+        current one's; None when the comparison could not be made."""
+        booted, current = fields.get('booted_part') or [], fields.get('current_part') or []
+        if not booted or len(booted) != len(current) or not any(booted):
+            return None
+        return booted != current
+
+    # --- job polling ---
+
+    def _parse_poll(self, job: dict, result: CmdResult) -> CollectResult:
+        """Advance a running detached job from one poll's output, finalizing
+        the Job row and forcing a re-evaluation when it completes."""
+        job_id = job['id']
+        # A poll that never reached the target says nothing about the job; only a real answer may finish it.
+        if result.exit_code != 0 and not result.stdout.strip():
+            return CollectResult(logs=[(
+                f"Could not poll the running {job['kind']}: "
+                f"{(result.stderr or '').strip()[:200] or f'exit {result.exit_code}'}", 'WARNING')])
+        poll = detached.parse_poll(result.stdout)
+
+        lines, consumed = detached.split_lines(poll.new_output)
+        if lines:
+            self.jobs.append_output(job_id, lines)
+            self.jobs.bump_output_seq(job_id, job['output_seq'] + consumed)
+            summary = next((line.strip() for line in reversed(lines) if line.strip()), None)
+            if summary:
+                self.jobs.set_progress(job_id, summary[:200])
+
+        if poll.exit_code is None and poll.alive:
+            return CollectResult()
+
+        kind = job['kind']
+        self._force_eval = True
+        if poll.exit_code is None:
+            self.jobs.finish(job_id, 'failed', exit_code=-1,
+                             error='Process ended without writing an exit code')
+            return CollectResult.failed(f"{kind.capitalize()} ended unexpectedly")
+
+        state = 'succeeded' if poll.exit_code == 0 else 'failed'
+        self.jobs.finish(job_id, state, exit_code=poll.exit_code,
+                         error=None if state == 'succeeded' else f"Exited with status {poll.exit_code}")
+        if poll.exit_code == 0:
+            return CollectResult(logs=[(f"{kind.capitalize()} completed successfully", 'INFO')],
+                                 success=True)
+        return CollectResult.failed(f"{kind.capitalize()} failed (exit {poll.exit_code})")
+
+    # --- actions ---
+
+    def get_actions(self) -> List[Dict[str, str]]:
+        return [
+            {'name': 'Update Flake', 'action_id': 'update_flake',
+             'variant': 'secondary', 'icon': 'sync'},
+            {'name': 'Rebuild & Switch', 'action_id': 'switch',
+             'variant': 'primary', 'icon': 'rocket_launch'},
+        ]
+
+    def _update_command(self) -> str:
+        nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
+        if not self.pushes_to_github:
+            return f'{self._sudo()}{nix} flake update --flake {shlex.quote(self.flake)}'
+        return self._remote_update_command(nix)
+
+    def _remote_update_command(self, nix: str) -> str:
+        """Clone the flake's repo, update its lock, and push a commit back, as the monitoring user rather than root."""
+        url, ref = self.github_repo
+        name, _, email = self.commit_author.partition('<')
+        identity = (f"-c user.name={shlex.quote(name.strip())} "
+                    f"-c user.email={shlex.quote(email.rstrip('>').strip())}")
+        branch = f'--branch {shlex.quote(ref)} ' if ref else ''
+        lines = [
+            'set -e',
+            't=$(mktemp -d)',
+            'trap \'rm -rf "$t"\' EXIT',
+            # Host keys come from the system known_hosts, so an unpinned github.com fails rather than being trusted on first use.
+            f'export GIT_SSH_COMMAND={shlex.quote(f"ssh -i {shlex.quote(self.push_ssh_key)} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes")}',
+            f'git clone --quiet --depth 1 {branch}{shlex.quote(url)} "$t/repo"',
+            f'{nix} flake update --flake "$t/repo" > "$t/log" 2>&1 || {{ cat "$t/log"; exit 1; }}',
+            'cat "$t/log"',
+            'if git -C "$t/repo" diff --quiet -- flake.lock; then echo "Every input is already current"; exit 0; fi',
+            f'printf \'%s\\n\\n\' {shlex.quote(self.commit_message)} > "$t/msg"',
+            "sed -n \"s/.*Updated input '\\([^']*\\)'.*/- \\1/p\" \"$t/log\" >> \"$t/msg\"",
+            f'git -C "$t/repo" {identity} commit --quiet -F "$t/msg" -- flake.lock',
+            'git -C "$t/repo" push origin HEAD',
+            'git -C "$t/repo" log --oneline -1',
+        ]
+        # A subshell, so set -e ends the update and not the launcher that records its exit status.
+        return '(\n' + '\n'.join(lines) + '\n)'
+
+    def _build_command(self) -> str:
+        """Realise this host's closure without activating it, so a deploy
+        substitutes instead of building. --keep-going by default: one
+        unbuildable package should cost its own path and not the whole
+        closure, and the job still exits non-zero so the failure is seen."""
+        nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
+        args = ' '.join(shlex.quote(a) for a in self.build_args + self._refresh_args())
+        return ' '.join(filter(None, [nix, 'build --no-link', args, self._installable()]))
+
+    def _switch_command(self) -> str:
+        flake_ref = f'{self.flake}#{self.configuration}' if self.configuration else self.flake
+        args = ' '.join(shlex.quote(a) for a in
+                        self._build_host_args() + self._target_host_args()
+                        + self.rebuild_args + self._refresh_args())
+        wrapper = ''.join(shlex.quote(a) + ' ' for a in self.switch_wrapper)
+        switch = (f'{wrapper}{self._sudo()}{self.rebuild_bin} switch --flake {shlex.quote(flake_ref)} '
+                  f'{args}').strip()
+        if not self.post_switch:
+            return switch
+        # The job's exit status stays the switch's own, whatever the follow-up command returns.
+        return f'{switch}; rc=$?; {self.post_switch}; (exit $rc)'
+
+    def plan_action(self, action_id: str, **kwargs):
+        if action_id not in ('update_flake', 'switch', 'build'):
+            return None
+        if self._running_job() is not None:
+            return CollectResult.failed('A job is already running for this monitor',
+                                        level='WARNING', status=None)
+        if action_id == 'update_flake' and not (self.local_path or self.pushes_to_github):
+            return CollectResult.failed(
+                f"Cannot update {self.flake}: only a local checkout, or a github: flake with a "
+                f"push_ssh_key, has a lock file this host can write")
+
+        kind = {'update_flake': 'update', 'switch': 'switch', 'build': 'build'}[action_id]
+        command = {'update': self._update_command, 'switch': self._switch_command,
+                   'build': self._build_command}[kind]()
+        # The on-target workdir is named before the Job row exists;
+        # interpret_action records the pid the launch prints and creates the row.
+        workdir = detached.workdir_for(f'{self.id}-{int(time.time())}')
+        self._pending_launch = (kind, command, workdir)
+        return ActionPlan(detached.launch_command(command, workdir), agent=self._agent_for(kind))
+
+    def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
+        if action_id not in ('update_flake', 'switch', 'build'):
+            return result.exit_code == 0
+
+        kind, command, workdir = self._pending_launch or ('switch', '', '')
+        self._pending_launch = None
+
+        pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
+        if pid is None:
+            return CollectResult.failed(
+                f"Failed to launch {kind}: {(result.stderr or result.stdout).strip()[:200]}")
+
+        job_id = self.jobs.create(kind, command, workdir)
+        self.jobs.set_pid(job_id, pid)
+        return CollectResult(logs=[(f"{kind.capitalize()} started (pid {pid})", 'INFO')],
+                             success=True)
+
+    # --- UI ---
+
+    def _metric(self, name: str) -> Optional[float]:
+        metric = self.data.latest_metric(name)
+        return metric.value if metric is not None else None
+
+    def _drift_pair(self) -> Tuple[str, Optional[str]]:
+        state = self._state()
+        if state.get('eval_error'):
+            return 'EVAL FAILED', 'failed'
+        value = self._metric('up_to_date')
+        if value is None:
+            return 'UNKNOWN', 'unavailable'
+        if value > 0.5:
+            return 'UP TO DATE', 'online'
+        return 'OUT OF DATE', self.drift_status
+
+    def _reboot_pair(self) -> Tuple[str, Optional[str]]:
+        value = self._metric('reboot_required')
+        if value is None:
+            return '--', 'unavailable'
+        if value > 0.5:
+            return 'REQUIRED', self.reboot_status
+        return 'NOT NEEDED', 'online'
+
+    def _inputs_pair(self) -> Tuple[str, Optional[str]]:
+        epoch = self._metric('inputs_last_modified_epoch')
+        if not epoch:
+            return '--', None
+        age = int(time.time()) - int(epoch)
+        stale = self.max_input_age is not None and age > self.max_input_age
+        return format_age(age), 'warning' if stale else 'online'
+
+    @property
+    def _drift_text(self) -> str:
+        return self._drift_pair()[0]
+
+    @property
+    def _drift_color(self) -> Optional[str]:
+        return self._drift_pair()[1]
+
+    @property
+    def _reboot_text(self) -> str:
+        return self._reboot_pair()[0]
+
+    @property
+    def _reboot_color(self) -> Optional[str]:
+        return self._reboot_pair()[1]
+
+    @property
+    def _inputs_text(self) -> str:
+        return self._inputs_pair()[0]
+
+    @property
+    def _inputs_color(self) -> Optional[str]:
+        return self._inputs_pair()[1]
+
+    @property
+    def _revision_text(self) -> str:
+        return _short_rev(self._state().get('flake_revision'))
+
+    @property
+    def _switched_text(self) -> str:
+        epoch = self._metric('last_switch_epoch')
+        return format_age(int(time.time()) - int(epoch)) if epoch else '--'
+
+    @property
+    def _detail_rows(self) -> List[Dict[str, str]]:
+        """The full deployment picture as label/value rows: what is running,
+        what the flake says should be, and when each was last established."""
+        state = self._state()
+        snapshot = self.data.latest_snapshot(default={}) or {}
+        now = int(time.time())
+
+        def stamp(epoch) -> str:
+            return format_age(now - int(epoch)) if epoch else '--'
+
+        rows = [
+            ('Flake', self.flake),
+            ('Configuration', self.configuration or snapshot.get('hostname') or "the target's hostname"),
+            ('NixOS version', snapshot.get('version', '--')),
+            ('Generation', str(snapshot.get('generation') or '--')),
+            ('Last switch', self._switched_text),
+            ('Running closure', snapshot.get('current', '--')),
+            ('Flake closure', state.get('target') or '--'),
+            ('Flake revision', state.get('flake_revision') or '--'),
+            ('Flake last changed', stamp(state.get('flake_last_modified'))),
+            ('Oldest input', f"{state.get('oldest_input') or '--'} "
+                             f"({stamp(state.get('inputs_last_modified'))})"),
+            ('Last evaluated', stamp(state.get('evaluated_epoch'))),
+        ]
+        handled = state.get('scheduled') or {}
+        for kind, at in self.schedule.items():
+            rows.append((f'Scheduled {kind}', f"Daily at {at:%H:%M}, last slot {stamp(handled.get(kind))}"))
+        for label, error in (('Evaluation error', state.get('eval_error')),
+                             ('Metadata error', state.get('metadata_error'))):
+            if error:
+                rows.append((label, error))
+        return [{'label': label, 'value': value} for label, value in rows]
+
+    def _update_enabled(self, _plugin) -> bool:
+        return self.local_path is not None or self.pushes_to_github
+
+    @property
+    def UI_SPEC(self):
+        return {
+            'layout': _DEFAULT_LAYOUT,
+            'cards': {
+                'drift_card': {'title': 'DEPLOYMENT', 'value_attr': '_drift_text',
+                               'color_attr': '_drift_color'},
+                'reboot_card': {'title': 'REBOOT', 'value_attr': '_reboot_text',
+                                'color_attr': '_reboot_color'},
+                'generation_card': {'metric': 'generation', 'title': 'GENERATION',
+                                    'format': 'int'},
+                'flake_card': {'title': 'FLAKE', 'value': self.flake},
+                'revision_card': {'title': 'REVISION', 'value_attr': '_revision_text',
+                                  'refresh': True},
+                'switched_card': {'title': 'LAST SWITCH', 'value_attr': '_switched_text',
+                                  'refresh': True},
+                'inputs_card': {'title': 'OLDEST INPUT', 'value_attr': '_inputs_text',
+                                'color_attr': '_inputs_color'},
+            },
+            'tables': {
+                'details': {
+                    'row_key': 'label',
+                    'rows_attr': '_detail_rows',
+                    'columns': [
+                        {'name': 'label', 'label': 'Field', 'field': 'label', 'align': 'left'},
+                        {'name': 'value', 'label': 'Value', 'field': 'value', 'align': 'left'},
+                    ],
+                },
+            },
+            'buttons': {
+                'controls': [
+                    {'id': 'update_flake', 'label': 'Update Flake', 'icon': 'sync',
+                     'color': 'secondary', 'kind': 'dispatch',
+                     'visible_if': self._update_enabled},
+                ],
+            },
+            'job_panel': {
+                'widget': 'jobs',
+                'title': 'REBUILD JOBS',
+                'run_action_id': 'switch',
+                'run_label': 'Rebuild & Switch', 'run_icon': 'rocket_launch',
+                'cancel_label': 'Cancel', 'cancel_icon': 'stop',
+                'history_limit': 10,
+            },
+            'events': {'title': 'EVENTS', 'limit': 100, 'full_height': True},
+        }

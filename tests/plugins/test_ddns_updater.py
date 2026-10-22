@@ -3,9 +3,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.ddns_updater import DdnsUpdater
-from vigil.core.connectors.types import IoActionPlan
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.ddns_updater import DdnsUpdater
+from x_monitor.core.connectors.types import IoActionPlan
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 def _latest_status(pid):

@@ -2,9 +2,9 @@ import time
 
 import pytest
 
-from vigil.plugins.vuln_scan import VulnScan
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.vuln_scan import VulnScan
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {

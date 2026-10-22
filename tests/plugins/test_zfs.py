@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.zfs import Zfs
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.zfs import Zfs
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-zfs", "id": "test-zfs", "ssh_config": {"host": "test.host"}}
 
@@ -38,7 +38,7 @@ def plugin(make_plugin):
     return make_plugin(Zfs, CFG)
 
 
-from vigil.plugins.zfs import _sanitize_pool
+from x_monitor.plugins.zfs import _sanitize_pool
 
 
 class TestSanitizePool:

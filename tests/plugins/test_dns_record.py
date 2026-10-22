@@ -2,9 +2,9 @@ import dns.rrset
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.dns_record import DnsRecord
-from vigil.core.connectors.types import DnsQuery, DnsResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.dns_record import DnsRecord
+from x_monitor.core.connectors.types import DnsQuery, DnsResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 def _resolves(answer):

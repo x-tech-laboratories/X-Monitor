@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.smart import Smart
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.smart import Smart
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-smart", "id": "test-smart", "ssh_config": {"host": "test.host"}}
 
@@ -33,7 +33,7 @@ def plugin(make_plugin):
     return make_plugin(Smart, CFG)
 
 
-from vigil.plugins.smart import _SMART_SCRIPT
+from x_monitor.plugins.smart import _SMART_SCRIPT
 
 
 class TestCollection:

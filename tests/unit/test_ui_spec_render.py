@@ -9,10 +9,10 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
-from vigil.core.connectors.types import CollectResult
-from vigil.core.ui import spec
-from vigil.core.ui.theme import STATUS_COLORS
-from vigil.plugins.cpu import Cpu
+from x_monitor.core.connectors.types import CollectResult
+from x_monitor.core.ui import spec
+from x_monitor.core.ui.theme import STATUS_COLORS
+from x_monitor.plugins.cpu import Cpu
 
 # The user fixture only — nicegui.testing.plugin also pulls in its selenium Screen plugin.
 pytest_plugins = ['nicegui.testing.user_plugin']

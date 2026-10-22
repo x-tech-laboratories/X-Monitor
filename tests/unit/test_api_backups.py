@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from vigil.core.ui.api import register_api
+from x_monitor.core.ui.api import register_api
 
 
 def _backup(plugin_id, age):

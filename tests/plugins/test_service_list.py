@@ -1,7 +1,7 @@
 import pytest
-from vigil.plugins.service_list import ServiceList
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, Metric, flush_writes
+from x_monitor.plugins.service_list import ServiceList
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, Metric, flush_writes
 
 CFG = {
     "name": "service-browser",
