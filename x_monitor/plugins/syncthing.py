@@ -23,6 +23,7 @@ from x_monitor.plugins.base.plugin_helpers import StatusAccumulator, resolve_sec
 _DEFAULT_LAYOUT = [
     ['host_card', 'folders_card', 'devices_card'],
     ['errors_card', 'need_card', 'stalled_card'],
+    ['folder_tiles'],
     ['chart'],
     ['events'],
 ]
@@ -147,6 +148,61 @@ def _classify_folders(folder_states: Dict[str, Dict[str, Any]],
     return errored_folders, stalled_folders, total_need_bytes, total_pull_errors, new_stall_since
 
 
+def _sync_percent(status: Dict[str, Any]) -> int:
+    """How much of a folder's global data is already local, as a whole percentage."""
+    global_bytes = float(status.get('globalBytes', 0) or 0)
+    need_bytes = float(status.get('needBytes', 0) or 0)
+    if global_bytes <= 0:
+        return 0 if need_bytes > 0 else 100
+    in_sync = status.get('inSyncBytes')
+    in_sync_bytes = float(in_sync) if in_sync is not None else global_bytes - need_bytes
+    return max(0, min(100, int(in_sync_bytes / global_bytes * 100)))
+
+
+def _folder_tile(status: Dict[str, Any], errored: bool, stalled: bool,
+                 paused: bool) -> Dict[str, str]:
+    """One folder's tile state (idle, syncing, error, paused or stalled), its caption and its status color."""
+    errors = max(int(status.get('pullErrors', 0) or 0), int(status.get('errors', 0) or 0))
+    state = status.get('state', 'unknown')
+    if errored:
+        if status.get('invalid'):
+            caption = status['invalid']
+        elif state == 'error':
+            caption = status.get('error') or 'error'
+        else:
+            caption = 'out of sync'
+        return {'state': 'error', 'caption': caption, 'status': 'failed'}
+    if paused or state == 'paused':
+        return {'state': 'paused', 'caption': 'paused', 'status': 'unavailable'}
+    if stalled:
+        return {'state': 'stalled', 'caption': f"stalled {_sync_percent(status)}%",
+                'status': 'warning'}
+    if errors:
+        caption = f"{errors} error" if errors == 1 else f"{errors} errors"
+        tile_state = 'idle' if state == 'idle' else 'syncing'
+        return {'state': tile_state, 'caption': caption, 'status': 'warning'}
+    if state == 'syncing':
+        return {'state': 'syncing', 'caption': f"syncing {_sync_percent(status)}%",
+                'status': 'online'}
+    if state == 'idle':
+        return {'state': 'idle', 'caption': 'up to date', 'status': 'online'}
+    # Scanning and Syncthing's other passing states read as syncing under their own name.
+    return {'state': 'syncing', 'caption': state.replace('-', ' '), 'status': 'online'}
+
+
+def _folder_items(config: Dict[str, Any], folder_states: Dict[str, Dict[str, Any]],
+                  errored_folders: List[str], stalled_folders: List[str]) -> List[Dict[str, str]]:
+    """One snapshot item per watched folder, in config order, labelled by its folder label or id."""
+    folder_configs = {folder['id']: folder for folder in config.get('folders', [])}
+    items = []
+    for folder_id, status in folder_states.items():
+        folder_config = folder_configs.get(folder_id, {})
+        tile = _folder_tile(status, folder_id in errored_folders,
+                            folder_id in stalled_folders, bool(folder_config.get('paused')))
+        items.append({'id': folder_id, 'label': folder_config.get('label') or folder_id, **tile})
+    return items
+
+
 def _accumulate_problems(errored_folders: List[str], stalled_folders: List[str],
                          disconnected: List[str], total_pull_errors: int,
                          stall_warning_secs: float) -> StatusAccumulator:
@@ -268,7 +324,17 @@ class Syncthing(Plugin):
         if acc.problems:
             parts.append("| " + "; ".join(acc.problems))
 
-        return CollectResult(metrics=metrics, logs=[(' | '.join(parts), acc.log_level)], status=acc.status)
+        return CollectResult(
+            metrics=metrics, logs=[(' | '.join(parts), acc.log_level)], status=acc.status,
+            snapshot=_folder_items(config, folder_states, errored_folders, stalled_folders))
+
+    @staticmethod
+    def _folder_caption(item: Dict[str, Any]) -> str:
+        return item.get('caption', '--')
+
+    @staticmethod
+    def _folder_status(item: Dict[str, Any]) -> Optional[str]:
+        return item.get('status')
 
     @staticmethod
     def _need_text(values: Dict[str, Any]) -> str:
@@ -297,6 +363,16 @@ class Syncthing(Plugin):
                 'need_card': {'title': 'NEED', 'metrics': ['need_bytes'], 'format_fn': self._need_text},
                 'stalled_card': {'metric': 'folders_stalled', 'title': 'STALLED', 'format': 'int',
                                  'color': self._stalled_color},
+                'folder_tiles': {
+                    'title': 'FOLDERS BY STATE',
+                    'repeat': {
+                        'source': 'snapshot',
+                        'container': 'tiles',
+                        'item_format_fn': self._folder_caption,
+                        'item_color_by': self._folder_status,
+                        'empty_text': 'No folder status yet',
+                    },
+                },
             },
             'chart': {'metric': 'need_bytes', 'title': 'BYTES NEEDED'},
             'events': True,

@@ -112,9 +112,46 @@ def _survey_cameras(watched: Dict[str, Any], camera_configs: Dict[str, Any],
     return counts, worst_state, worst_camera, totals, problems
 
 
+# A camera whose config sets no detect fps is metered against this rate.
+_FALLBACK_TARGET_FPS = 5.0
+
+_STATE_COLOR = {'stalled': 'failed', 'degraded': 'warning', 'healthy': 'online'}
+
+
+def _camera_items(watched: Dict[str, Any], camera_configs: Dict[str, Any],
+                  min_fps_ratio: float) -> List[Dict[str, Any]]:
+    """One snapshot item per watched camera, by name, with its state, fps and fps as a share of its target."""
+    items = []
+    for camera_name in sorted(watched):
+        state, fps, target = _camera_state(
+            watched[camera_name], camera_configs.get(camera_name) or {}, min_fps_ratio)
+        expected = target if target > 0 else _FALLBACK_TARGET_FPS
+        items.append({
+            'label': camera_name,
+            'state': state,
+            'fps': fps,
+            'target_fps': target if target > 0 else None,
+            'fps_pct': fps / expected * 100.0,
+        })
+    return items
+
+
+def _camera_text(item: Dict[str, Any]) -> str:
+    """One camera's meter text: its fps, or that it is disarmed."""
+    if item.get('state') == 'disarmed':
+        return 'disarmed'
+    return f"{item.get('fps') or 0.0:.1f} fps"
+
+
+def _camera_color(item: Dict[str, Any]) -> Optional[str]:
+    """One camera's meter color from its state, leaving a disarmed camera uncolored."""
+    return _STATE_COLOR.get(item.get('state'))
+
+
 _DEFAULT_LAYOUT = [
     ['host_card', 'state_card', 'fps_card'],
     ['detector_card', 'armed_card'],
+    ['camera_bars'],
     ['chart'],
     ['events'],
 ]
@@ -209,6 +246,7 @@ class Frigate(Plugin):
             metrics=metrics,
             logs=[(' | '.join(p for p in parts if p), log_level)],
             status=level,
+            snapshot=_camera_items(watched, camera_configs, self.min_fps_ratio),
         )
 
     def get_actions(self) -> List[Dict[str, str]]:
@@ -279,30 +317,45 @@ class Frigate(Plugin):
             return CollectResult.failed(result['log'])
         return CollectResult(logs=[(result['log'], 'INFO')], success=True)
 
-    UI_SPEC = {
-        'layout': _DEFAULT_LAYOUT,
-        'cards': {
-            'state_card': {
-                'metric': 'worst_camera_rank', 'title': 'CAMERAS',
-                'format': 'frigate_camera_state', 'color': 'frigate_camera_state_color',
+    @property
+    def UI_SPEC(self):
+        return {
+            'layout': _DEFAULT_LAYOUT,
+            'cards': {
+                'state_card': {
+                    'metric': 'worst_camera_rank', 'title': 'CAMERAS',
+                    'format': 'frigate_camera_state', 'color': 'frigate_camera_state_color',
+                },
+                'fps_card': {
+                    'metric': 'camera_fps_total', 'title': 'CAMERA FPS', 'format': 'decimal1',
+                },
+                'detector_card': {
+                    'metric': 'detector_inference_ms', 'title': 'INFERENCE', 'format': 'ms1',
+                },
+                'armed_card': {
+                    'kind': 'share', 'title': 'ARMING', 'format': 'int',
+                    'parts': [
+                        {'metric': 'cameras_armed', 'label': 'Armed', 'color': 'online'},
+                        {'metric': 'cameras_disarmed', 'label': 'Disarmed', 'color': 'neutral'},
+                    ],
+                },
+                'camera_bars': {
+                    'title': 'CAMERA FPS BY CAMERA',
+                    'repeat': {
+                        'source': 'snapshot',
+                        'container': 'bars',
+                        'bar_value': 'fps_pct',
+                        'bar_max': 100,
+                        'bar_marker': self.min_fps_ratio * 100.0,
+                        'item_format_fn': _camera_text,
+                        'item_color_by': _camera_color,
+                        'empty_text': 'No cameras reported yet',
+                    },
+                },
             },
-            'fps_card': {
-                'metric': 'camera_fps_total', 'title': 'CAMERA FPS', 'format': 'decimal1',
-            },
-            'detector_card': {
-                'metric': 'detector_inference_ms', 'title': 'INFERENCE', 'format': 'ms1',
-            },
-            'armed_card': {
-                'kind': 'share', 'title': 'ARMING', 'format': 'int',
-                'parts': [
-                    {'metric': 'cameras_armed', 'label': 'Armed', 'color': 'online'},
-                    {'metric': 'cameras_disarmed', 'label': 'Disarmed', 'color': 'neutral'},
-                ],
-            },
-        },
-        'chart': {'metric': 'camera_fps_total', 'title': 'CAMERA FPS'},
-        'events': True,
-    }
+            'chart': {'metric': 'camera_fps_total', 'title': 'CAMERA FPS'},
+            'events': True,
+        }
 
 
 

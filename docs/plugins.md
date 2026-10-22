@@ -1507,6 +1507,9 @@ The same keys can instead be given as a **mapping of widget name → properties*
 | `folders`          | `host_card`, `count_card`, `folders`, `events`                              |
 | `freshrss`         | `host_card`, `refresh_card`, `feeds_card`, `stale_card`, `share_card`, `chart`, `events` |
 | `qbittorrent`      | `host_card`, `connection_card`, `speed_card`, `torrents_card`, `stalled_card`, `errored_card`, `share_card`, `chart`, `events` |
+| `frigate`          | `host_card`, `state_card`, `fps_card`, `detector_card`, `armed_card`, `camera_bars` (fps per camera against its detect fps), `chart`, `events` |
+| `syncthing`        | `host_card`, `folders_card`, `devices_card`, `errors_card`, `need_card`, `stalled_card`, `folder_tiles` (state per folder), `chart`, `events` |
+| `traccar`          | `host_card`, `stale_card`, `devices_card`, `device_bars` (hours since each device last reported, to twice `stale_threshold`), `chart`, `events` |
 
 Any other plugin's names are the keys of its `UI_SPEC` `cards`, `charts` and `tables`, plus `events`, `logs`, `jobs` and `host_card` where it has them.
 
