@@ -20,6 +20,7 @@ from x_monitor.core.coordination.engine import XMonitorEngine
 from x_monitor.core.ui import theme
 from x_monitor.core.ui.main_dashboard import init_gui
 from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.processes import _process_tree
 
 # ============================================================================
 # Sample readings
@@ -78,6 +79,30 @@ def temperature(plugin, tick, seed) -> Reading:
 def throughput(plugin, tick, seed) -> Reading:
     """Download well above upload, both wandering."""
     return {'rx_kbps': wave(tick, seed, 2400, 1500, 600), 'tx_kbps': wave(tick, seed, 600, 300, 150)}, 'online'
+
+
+def processes(plugin, tick, seed) -> Reading:
+    """A small process tree whose busiest branch, a browser's content processes, wanders."""
+    def proc(pid, ppid, user, cpu, mem, command):
+        return {'pid': pid, 'ppid': ppid, 'user': user, 'cpu': round(cpu, 1), 'mem': mem, 'command': command}
+    flat = [
+        proc(1, 0, 'root', 0.2, 0.1, 'systemd'),
+        proc(412, 1, 'root', 0.0, 0.3, 'sshd'),
+        proc(5120, 412, 'alice', 0.1, 0.1, 'bash'),
+        proc(5188, 5120, 'alice', wave(tick, seed, 3, 2, 1), 0.2, 'htop'),
+        proc(880, 1, 'root', wave(tick, seed, 4, 2, 1), 1.4, 'nginx'),
+        proc(881, 880, 'nginx', wave(tick, seed + 1, 2, 1, 0.5), 0.6, 'nginx'),
+        proc(882, 880, 'nginx', wave(tick, seed + 2, 2, 1, 0.5), 0.6, 'nginx'),
+        proc(1500, 1, 'alice', wave(tick, seed, 6, 3, 1), 4.2, 'firefox'),
+        proc(1544, 1500, 'alice', wave(tick, seed + 3, 30, 25, 5), 3.1, 'Isolated Web Co'),
+        proc(1560, 1500, 'alice', wave(tick, seed + 4, 8, 6, 2), 2.4, 'Isolated Web Co'),
+        proc(1571, 1500, 'alice', 0.3, 0.9, 'RDD Process'),
+        proc(2, 0, 'root', 0.0, 0.0, 'kthreadd'),
+        proc(14, 2, 'root', wave(tick, seed, 1, 1, 0.3), 0.0, 'ksoftirqd/0'),
+    ]
+    top = max(p['cpu'] for p in flat)
+    return ({'process_count': float(len(flat)), 'top_cpu_pct': top}, level_for(top, plugin.cpu_warning, plugin.cpu_threshold),
+            _process_tree(flat, plugin.max_processes))
 
 
 def connections(plugin, tick, seed) -> Reading:
@@ -194,7 +219,7 @@ def vuln_scan(plugin, tick, seed) -> Reading:
 
 SAMPLES: Dict[str, Callable[[Any, int, int], Reading]] = {
     'cpu': cpu, 'memory': memory, 'load': load, 'temperature': temperature,
-    'throughput': throughput, 'connections': connections, 'disk_io': disk_io,
+    'throughput': throughput, 'connections': connections, 'processes': processes, 'disk_io': disk_io,
     'disk_space': disk_space, 'filesystems': filesystems, 'zfs': zfs, 'smart': smart,
     'uptime': uptime, 'http': http, 'ports': ports, 'pihole': pihole, 'unbound': unbound,
     'containers': containers, 'borg': borg, 'nixos_upgrade': nixos_upgrade, 'vuln_scan': vuln_scan,

@@ -133,6 +133,12 @@ class TableSpec(TypedDict, total=False):
     row_actions: List[RowActionSpec]
     rows_attr: str                 # getattr(plugin, rows_attr) instead of a repeat-item source
     source: str                    # _resolve_repeat_items source, when rows_attr is absent
+    tree: 'TreeSpec'               # nests rows under their parent row, collapsible
+
+
+class TreeSpec(TypedDict, total=False):
+    parent_field: str              # row field holding the parent row's row_key
+    column: str                    # column drawn indented with the open/close chevron; default the first
 
 
 class FilterSpec(TypedDict, total=False):
