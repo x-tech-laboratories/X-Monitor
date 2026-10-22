@@ -505,6 +505,9 @@ a, .q-link { color: var(--accent); }
 
 .q-table td.halon-cell-wrap { white-space: normal; overflow-wrap: anywhere; }
 
+/* A truncating cell takes the width the other columns leave and ends in an ellipsis. */
+.q-table td.halon-cell-truncate { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
 .q-table__sort-icon { color: var(--text-secondary); font-size: var(--icon-size-small); }
 
 .q-table__bottom {
@@ -706,9 +709,9 @@ a, .q-link { color: var(--accent); }
 /* Toggles are the exception: the boundary genuinely is the control (§6.2). */
 .q-checkbox__inner, .q-radio__inner, .q-toggle__track { color: var(--border-control); }
 
-/* ── Selects — a white control with accent text; its list a normal surface (§6.3) ── */
+/* ── Selects — a ghost control with accent text; its list a normal surface (§6.3) ── */
 
-.q-select.q-field--outlined .q-field__control { background-color: var(--surface-default); padding-right: var(--space-4); }
+.q-select.q-field--outlined .q-field__control { background-color: transparent; padding-right: var(--space-4); }
 
 .q-select .q-field__native,
 .q-select .q-field__native > span,

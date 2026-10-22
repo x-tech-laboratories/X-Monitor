@@ -40,7 +40,12 @@ _METRIC_COLUMNS = [
     {'name': 'value', 'label': 'Value', 'field': 'value', 'align': 'left'},
 ]
 
-_RECENT_EVENT_COLUMNS = feed_columns(target_label='Host')
+# The message truncates so the table fits its half-width column; the full text is in its tooltip.
+_RECENT_EVENT_COLUMNS = feed_columns(target_label='Host', message_classes='halon-cell-truncate')
+
+_TRUNCATED_CELL_SLOT = '''
+    <q-td :props="props" :title="props.value">{{ props.value }}</q-td>
+'''
 
 _NAME_CELL_SLOT = '''
     <q-td :props="props">
@@ -284,6 +289,18 @@ def _short_times(rows: list) -> list:
     return [{**row, 'timestamp': str(row.get('timestamp', ''))[:19].replace('T', ' ')} for row in rows]
 
 
+def _short_value(value):
+    """A metric value cut to two decimals, with no trailing zeros, so the column stays narrow."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return value
+    return f'{value:.2f}'.rstrip('0').rstrip('.')
+
+
+def _metric_rows(rows: list) -> list:
+    """The raw metric rows with short timestamps and values, as the recent metrics table shows them."""
+    return [{**row, 'value': _short_value(row.get('value'))} for row in _short_times(rows)]
+
+
 def _render_recent_metrics(engine):
     """Renders the recent system metrics card fed from the raw metric feed."""
     with table_block('flex-1 min-w-[320px]'):
@@ -292,7 +309,7 @@ def _render_recent_metrics(engine):
             m_table = data_table(columns=_METRIC_COLUMNS, filter_into=heading).classes('w-full').props('flat')
 
         async def update_m():
-            refresh_rows(m_table, _short_times(await offload(engine.db.recent_metrics_raw)(limit=20)))
+            refresh_rows(m_table, _metric_rows(await offload(engine.db.recent_metrics_raw)(limit=20)))
         on_data_event(update_m)
 
 
@@ -303,6 +320,7 @@ def _render_recent_events(engine):
         with table_wrap():
             e_table = data_table(columns=_RECENT_EVENT_COLUMNS, filter_into=heading).classes('w-full').props('flat')
             e_table.add_slot('body-cell-level', LEVEL_CELL_SLOT)
+            e_table.add_slot('body-cell-message', _TRUNCATED_CELL_SLOT)
 
         async def update_e():
             refresh_rows(e_table, _short_times(await offload(engine.db.recent_events_raw)(limit=20)))
