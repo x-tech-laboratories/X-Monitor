@@ -987,14 +987,14 @@ On an agent-backed host the monitor also follows the kernel journal, so a kill i
 ---
 
 ### `processes`
-Monitors running processes over SSH via `ps`, sorted by CPU usage. Process data is ephemeral and stored in memory only — not persisted to the database. Per-row SIGTERM and SIGKILL buttons are available directly in the UI.
+Monitors running processes over SSH via `ps`, shown as a tree: each process sits under its parent, and its CPU %, MEM % and PROCS count add up its whole branch, with its own share in SELF CPU % and SELF MEM %. A chevron collapses or opens a branch, sorting orders siblings within their parent, and the filter keeps each match with the processes above it. Per-row SIGTERM and SIGKILL buttons are available directly in the UI.
 
 | Option          | Description                                                                  |
 |-----------------|------------------------------------------------------------------------------|
-| `max_processes` | Maximum number of processes to display (default: `20`)                       |
+| `max_processes` | Busiest processes kept in the tree, each with its ancestors (default: `20`); totals still count every process |
 | `require_sudo`  | Prefix kill commands with `sudo` (default: `false`)                          |
-| `cpu_warning`   | Top-process CPU % that triggers `warning` (optional — omit to disable)       |
-| `cpu_threshold` | Top-process CPU % that triggers `failed`  (optional — omit to disable)       |
+| `cpu_warning`   | Busiest single process's own CPU % that triggers `warning` (optional — omit to disable) |
+| `cpu_threshold` | Busiest single process's own CPU % that triggers `failed`  (optional — omit to disable) |
 | `interval`      | Polling frequency (default: `60`)                                             |
 | `ssh_config`    | SSH connection details — see [SSH Config](#ssh-config) below                 |
 

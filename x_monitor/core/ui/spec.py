@@ -170,6 +170,10 @@ row_actions     ``[{'id', 'icon', 'color', 'tooltip', 'visible_if' (ENABLED_PRED
                 ``confirm`` template (``{row[field]}``, ``{plugin.attr}``) when one is set.
 rows_attr       ``getattr(plugin, rows_attr)`` supplies the rows.
 source          Repeat-spec source used when rows_attr is absent (default ``'snapshot'``).
+tree            ``{'parent_field', 'column'}`` nests each row under the row whose row_key
+                its ``parent_field`` holds, indented in ``column`` (default the first) with a
+                chevron that collapses the branch; sorting orders siblings within their parent,
+                and a filter keeps each match with the rows above it.
 
 Dialog specs (dialogs[dialog_name])
 ===================================

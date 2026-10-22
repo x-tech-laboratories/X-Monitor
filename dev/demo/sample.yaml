@@ -21,6 +21,7 @@ plugins:
           - {name: "Temperature", id: "heimdall-temp", type: "temperature", warning: 75, threshold: 85, interval: 3, <<: *ssh}
           - {name: "Throughput", id: "heimdall-net", type: "throughput", interval: 3, <<: *ssh}
           - {name: "Connections", id: "heimdall-conn", type: "connections", warning: 400, threshold: 800, interval: 3, <<: *ssh}
+          - {name: "Processes", id: "heimdall-procs", type: "processes", cpu_warning: 50, cpu_threshold: 80, interval: 3, <<: *ssh}
           - {name: "Disk I/O", id: "heimdall-io", type: "disk_io", interval: 3, <<: *ssh}
           - {name: "/Storage", id: "heimdall-storage", type: "disk_space", path: "/Storage", warning: 85, threshold: 95, interval: 5, <<: *ssh}
           - {name: "Filesystems", id: "heimdall-fs", type: "filesystems", warning: 85, threshold: 95, interval: 5, <<: *ssh}

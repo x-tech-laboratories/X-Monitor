@@ -1,7 +1,7 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from x_monitor.plugins.processes import Processes, _parse_ps_output
+from x_monitor.plugins.processes import Processes, _parse_ps_output, _process_tree
 from x_monitor.plugins.base.plugin_helpers import level_for
 from x_monitor.core.connectors.types import CmdResult
 from x_monitor.core.database.database import db, StatusHistory, Metric
@@ -22,11 +22,11 @@ CFG_WITH_THRESHOLDS = {
     "cpu_threshold": 80.0,
 }
 
-_PS_HEADER = "  PID USER     %CPU %MEM COMMAND"
+_PS_HEADER = "  PID  PPID USER     %CPU %MEM COMMAND"
 _PS_ROWS = [
-    "  123 root      45.2  2.1 python3",
-    " 4567 beatlink   3.0  0.5 bash",
-    "   89 www-data   0.1  0.3 nginx",
+    "  123     1 root      45.2  2.1 python3",
+    " 4567     1 alice      3.0  0.5 bash",
+    "   89     1 www-data   0.1  0.3 nginx",
 ]
 
 _PS_OUTPUT_OK = "\n".join([_PS_HEADER] + _PS_ROWS) + "\n"
@@ -35,12 +35,12 @@ _PS_OUTPUT_EMPTY = ""
 
 _PS_OUTPUT_HIGH_CPU = "\n".join([
     _PS_HEADER,
-    "  999 root      85.0  1.0 stress",
+    "  999     1 root      85.0  1.0 stress",
 ]) + "\n"
 
 _PS_OUTPUT_WARN_CPU = "\n".join([
     _PS_HEADER,
-    "  999 root      60.0  1.0 stress",
+    "  999     1 root      60.0  1.0 stress",
 ]) + "\n"
 
 
@@ -75,6 +75,10 @@ class TestParsePsOutput:
         procs = _parse_ps_output(_PS_OUTPUT_OK)
         assert procs[0]['pid'] == 123
 
+    def test_parses_ppid(self):
+        procs = _parse_ps_output(_PS_OUTPUT_OK)
+        assert procs[0]['ppid'] == 1
+
     def test_parses_user(self):
         procs = _parse_ps_output(_PS_OUTPUT_OK)
         assert procs[0]['user'] == 'root'
@@ -104,15 +108,65 @@ class TestParsePsOutput:
         assert procs == []
 
     def test_command_with_spaces_preserved(self):
-        output = _PS_HEADER + "\n  1 root 0.0 0.0 my command with spaces\n"
+        output = _PS_HEADER + "\n  1 0 root 0.0 0.0 my command with spaces\n"
         procs = _parse_ps_output(output)
         assert procs[0]['command'] == 'my command with spaces'
 
     def test_skips_malformed_lines(self):
-        output = _PS_HEADER + "\nbadline\n  123 root 0.1 0.2 bash\n"
+        output = _PS_HEADER + "\nbadline\n  123 1 root 0.1 0.2 bash\n"
         procs = _parse_ps_output(output)
         assert len(procs) == 1
         assert procs[0]['pid'] == 123
+
+
+def _proc(pid, ppid, cpu, mem=0.0, command='x'):
+    return {'pid': pid, 'ppid': ppid, 'user': 'root', 'cpu': cpu, 'mem': mem, 'command': command}
+
+
+class TestProcessTree:
+    # systemd(1) -> firefox(10) -> two content processes (11, 12); sshd(20) stands alone under 1.
+    PROCS = [
+        _proc(1, 0, 0.5, 0.1, 'systemd'),
+        _proc(10, 1, 5.0, 4.0, 'firefox'),
+        _proc(11, 10, 20.0, 2.0, 'Web Content'),
+        _proc(12, 10, 1.0, 1.0, 'Web Content'),
+        _proc(20, 1, 0.0, 0.2, 'sshd'),
+    ]
+
+    def _rows(self, max_processes=20):
+        return {row['pid']: row for row in _process_tree(self.PROCS, max_processes)}
+
+    def test_a_parent_totals_its_whole_branch(self):
+        rows = self._rows()
+        assert rows[10]['cpu'] == pytest.approx(26.0)
+        assert rows[10]['mem'] == pytest.approx(7.0)
+        assert rows[10]['procs'] == 3
+        assert rows[1]['cpu'] == pytest.approx(26.5)
+        assert rows[1]['procs'] == 5
+
+    def test_a_row_keeps_its_own_share_beside_the_total(self):
+        rows = self._rows()
+        assert (rows[10]['own_cpu'], rows[10]['own_mem']) == (5.0, 4.0)
+        assert (rows[11]['cpu'], rows[11]['own_cpu'], rows[11]['procs']) == (20.0, 20.0, 1)
+
+    def test_a_root_has_no_parent_row(self):
+        rows = self._rows()
+        assert rows[1]['ppid'] is None
+        assert rows[11]['ppid'] == 10
+
+    def test_rows_come_busiest_branch_first(self):
+        assert [row['pid'] for row in _process_tree(self.PROCS, 20)][:3] == [1, 10, 11]
+
+    def test_the_limit_keeps_the_busiest_with_their_ancestors_and_totals_still_count_all(self):
+        rows = self._rows(max_processes=1)
+        assert set(rows) == {1, 10, 11}
+        assert rows[1]['cpu'] == pytest.approx(26.5)
+        assert rows[1]['procs'] == 5
+
+    def test_a_parent_loop_does_not_hang(self):
+        rows = {row['pid']: row for row in _process_tree([_proc(5, 6, 1.0), _proc(6, 5, 2.0)], 20)}
+        assert rows[5]['cpu'] == pytest.approx(3.0)
+        assert rows[6]['cpu'] == pytest.approx(3.0)
 
 
 class TestLevelFor:
@@ -142,6 +196,12 @@ class TestProcessesCollection:
     async def test_process_count_metric_recorded(self, plugin, run_cycle):
         run_cycle(plugin, lambda c: CmdResult(0, _PS_OUTPUT_OK, ""))
         assert _latest_metric("process_count") == pytest.approx(3.0)
+
+    async def test_process_count_counts_every_process_beyond_the_limit(self, plugin, run_cycle):
+        output = _PS_HEADER + "\n" + "\n".join(f"  {pid} 1 root 0.0 0.0 p" for pid in range(10, 20)) + "\n"
+        result = run_cycle(plugin, lambda c: CmdResult(0, output, ""))
+        assert _latest_metric("process_count") == pytest.approx(10.0)
+        assert len(result.snapshot) == 5
 
     async def test_top_cpu_metric_recorded(self, plugin, run_cycle):
         run_cycle(plugin, lambda c: CmdResult(0, _PS_OUTPUT_OK, ""))

@@ -684,7 +684,7 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
             table = data_table(columns=render_columns, row_key=row_key,
                                filter_fields=filter_spec.get('fields'),
                                filter_placeholder=filter_spec.get('placeholder', 'Filter'),
-                               filter_into=heading).classes('w-full').props('flat')
+                               filter_into=heading, tree=table_spec.get('tree')).classes('w-full').props('flat')
 
     color_rules = _color_rules(columns)
     for col, _ in color_rules:

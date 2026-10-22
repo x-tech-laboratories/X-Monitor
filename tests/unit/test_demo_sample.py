@@ -20,6 +20,7 @@ def sample():
 
 def stand_in(kind):
     return SimpleNamespace(config={'type': kind}, warning=70, threshold=90, max_age=86400,
+                           cpu_warning=50, cpu_threshold=80, max_processes=20,
                            checks=[{'metric': 'web'}, {'metric': 'ssh'}])
 
 

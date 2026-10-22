@@ -632,6 +632,10 @@ a, .q-link { color: var(--accent); }
 
 .halon-row-actions { gap: var(--space-1); flex-wrap: nowrap; }
 
+/* A tree row's chevron, and the blank of the same width that keeps a leaf in line with its siblings. */
+.q-table .q-btn.halon-tree-toggle { margin-right: var(--space-1); }
+.halon-tree-leaf { display: inline-block; width: var(--row-height); margin-right: var(--space-1); flex: none; }
+
 /* ── Inputs — hairline at rest, accent on interaction (§6.2) ────────────── */
 
 .q-field--outlined .q-field__control,
