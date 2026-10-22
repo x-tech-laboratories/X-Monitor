@@ -1,0 +1,120 @@
+# A homelab-shaped demo fleet for sample.py, which feeds it moving sample readings instead of
+# collecting; run.sh --sample renders it per port. The hosts and addresses are never contacted.
+
+x-ssh: &ssh
+  ssh_config:
+    host: "127.0.0.1"
+    port: 1
+
+plugins:
+  - name: "Heimdall"
+    type: "group"
+    children:
+      - {name: "Availability", id: "heimdall-up", type: "uptime", target_host: "heimdall.lan", interval: 3}
+      - name: "System"
+        id: "heimdall-system"
+        type: "group"
+        children:
+          - {name: "CPU", id: "heimdall-cpu", type: "cpu", warning: 70, threshold: 90, interval: 3, <<: *ssh}
+          - {name: "Memory", id: "heimdall-memory", type: "memory", warning: 80, threshold: 92, interval: 3, <<: *ssh}
+          - {name: "Load", id: "heimdall-load", type: "load", warning: 80, threshold: 100, interval: 3, <<: *ssh}
+          - {name: "Temperature", id: "heimdall-temp", type: "temperature", warning: 75, threshold: 85, interval: 3, <<: *ssh}
+          - {name: "Throughput", id: "heimdall-net", type: "throughput", interval: 3, <<: *ssh}
+          - {name: "Connections", id: "heimdall-conn", type: "connections", warning: 400, threshold: 800, interval: 3, <<: *ssh}
+          - {name: "Disk I/O", id: "heimdall-io", type: "disk_io", interval: 3, <<: *ssh}
+          - {name: "/Storage", id: "heimdall-storage", type: "disk_space", path: "/Storage", warning: 85, threshold: 95, interval: 5, <<: *ssh}
+          - {name: "Filesystems", id: "heimdall-fs", type: "filesystems", warning: 85, threshold: 95, interval: 5, <<: *ssh}
+          - {name: "ZFS", id: "heimdall-zfs", type: "zfs", warning: 80, threshold: 90, interval: 5, <<: *ssh}
+          - {name: "SMART", id: "heimdall-smart", type: "smart", interval: 10, <<: *ssh}
+      - name: "Services"
+        id: "heimdall-services"
+        type: "group"
+        children:
+          - name: "Service Reachability"
+            id: "heimdall-ports"
+            type: "ports"
+            interval: 3
+            <<: *ssh
+            checks:
+              - {name: "Nginx", host: "localhost", port: 443}
+              - {name: "Home Assistant", url: "https://home-assistant.lan"}
+              - {name: "Pi-hole", url: "https://pi-hole.lan"}
+              - {name: "Jackett", url: "https://jackett.lan"}
+              - {name: "Stremio Server", url: "https://stremio-server.lan/heartbeat"}
+          - {name: "Pi-hole", id: "heimdall-pihole", type: "pihole", api_url: "http://127.0.0.1:9", interval: 3, <<: *ssh}
+          - {name: "Unbound", id: "heimdall-unbound", type: "unbound", interval: 5, <<: *ssh}
+          - {name: "Containers", id: "heimdall-containers", type: "containers", interval: 5, <<: *ssh}
+          - {name: "Calibre Web", id: "heimdall-calibre", type: "http", url: "http://127.0.0.1:9/opds", interval: 3}
+      - name: "Backups"
+        id: "heimdall-backups"
+        type: "group"
+        children:
+          - name: "Borgmatic"
+            id: "heimdall-borgmatic"
+            type: "group"
+            children:
+              - {name: "On Disk", id: "heimdall-borg-disk", type: "borg", repo: "/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh}
+              - {name: "Ragnarok", id: "heimdall-borg-ragnarok", type: "borg", repo: "ssh://ragnarok.lan/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh}
+      - {name: "Vulnerability Scan", id: "heimdall-scan", type: "vuln_scan", scan_host: "heimdall.lan", interval: 10, <<: *ssh}
+
+  - name: "Ragnarok"
+    type: "group"
+    children:
+      - {name: "Availability", id: "ragnarok-up", type: "uptime", target_host: "ragnarok.lan", interval: 3}
+      - name: "System"
+        id: "ragnarok-system"
+        type: "group"
+        children:
+          - {name: "CPU", id: "ragnarok-cpu", type: "cpu", warning: 70, threshold: 90, interval: 3, <<: *ssh}
+          - {name: "Memory", id: "ragnarok-memory", type: "memory", warning: 80, threshold: 92, interval: 3, <<: *ssh}
+          - {name: "Temperature", id: "ragnarok-temp", type: "temperature", warning: 75, threshold: 85, interval: 3, <<: *ssh}
+          - {name: "/", id: "ragnarok-root", type: "disk_space", path: "/", warning: 85, threshold: 95, interval: 5, <<: *ssh}
+      - {name: "Vulnerability Scan", id: "ragnarok-scan", type: "vuln_scan", scan_host: "ragnarok.lan", interval: 10, <<: *ssh}
+
+  - name: "Odin"
+    type: "group"
+    children:
+      - {name: "Availability", id: "odin-up", type: "uptime", target_host: "odin.lan", interval: 3}
+      - name: "System"
+        id: "odin-system"
+        type: "group"
+        children:
+          - {name: "CPU", id: "odin-cpu", type: "cpu", warning: 70, threshold: 90, interval: 3, <<: *ssh}
+          - {name: "Memory", id: "odin-memory", type: "memory", warning: 80, threshold: 92, interval: 3, <<: *ssh}
+          - {name: "/", id: "odin-root", type: "disk_space", path: "/", warning: 85, threshold: 95, interval: 5, <<: *ssh}
+      - name: "Backups"
+        id: "odin-backups"
+        type: "group"
+        children:
+          - name: "Vorta"
+            id: "odin-vorta"
+            type: "group"
+            children:
+              - {name: "On Disk", id: "odin-vorta-disk", type: "borg", repo: "/backup/odin", max_age: "1d", interval: 10, <<: *ssh}
+              - {name: "Heimdall", id: "odin-vorta-heimdall", type: "borg", repo: "ssh://heimdall.lan/backup/odin", max_age: "1d", interval: 10, <<: *ssh}
+              - {name: "Ragnarok", id: "odin-vorta-ragnarok", type: "borg", repo: "ssh://ragnarok.lan/backup/odin", max_age: "1d", interval: 10, <<: *ssh}
+      - {name: "Vulnerability Scan", id: "odin-scan", type: "vuln_scan", scan_host: "odin.lan", interval: 10, <<: *ssh}
+
+  - name: "Thor"
+    type: "group"
+    children:
+      - {name: "Availability", id: "thor-up", type: "uptime", target_host: "thor.lan", interval: 3}
+      - {name: "CPU", id: "thor-cpu", type: "cpu", warning: 70, threshold: 90, interval: 3, <<: *ssh}
+      - {name: "Vulnerability Scan", id: "thor-scan", type: "vuln_scan", scan_host: "thor.lan", interval: 10, <<: *ssh}
+
+  - name: "IoT Sensors"
+    type: "group"
+    children:
+      - {name: "Bedroom Light", id: "iot-bedroom-light", type: "uptime", target_host: "bedroom-light.lan", interval: 3}
+      - {name: "Kitchen Light", id: "iot-kitchen-light", type: "uptime", target_host: "kitchen-light.lan", interval: 3}
+      - {name: "Outside Light", id: "iot-outside-light", type: "uptime", target_host: "outside-light.lan", interval: 3}
+      - {name: "Fan Socket", id: "iot-fan-socket", type: "uptime", target_host: "fan-socket.lan", interval: 3}
+      - {name: "Bedroom Sensor", id: "iot-bedroom-sensor", type: "uptime", target_host: "bedroom-sensor.lan", interval: 3}
+
+  - name: "NixOS Fleet"
+    type: "group"
+    children:
+      - {name: "Heimdall", id: "nixos-heimdall", type: "nixos_upgrade", flake: "/etc/nixos", interval: 10, <<: *ssh}
+      - {name: "Ragnarok", id: "nixos-ragnarok", type: "nixos_upgrade", flake: "/etc/nixos", interval: 10, <<: *ssh}
+      - {name: "Odin", id: "nixos-odin", type: "nixos_upgrade", flake: "/etc/nixos", interval: 10, <<: *ssh}
+      - {name: "Thor", id: "nixos-thor", type: "nixos_upgrade", flake: "/etc/nixos", interval: 10, <<: *ssh}

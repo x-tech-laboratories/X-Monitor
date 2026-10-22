@@ -23,6 +23,19 @@ Run it from your own worktree to see your own code. Each port keeps its database
 `$XDG_RUNTIME_DIR/x-monitor-demo/<port>/`, so a restart keeps the charts' history; delete that
 folder for a clean start.
 
+## Sample data
+
+```bash
+dev/demo/run.sh --sample          # a homelab-shaped fleet on moving sample readings
+dev/demo/run.sh --sample 8123
+```
+
+`--sample` runs `sample.yaml`, a fleet of four hosts, IoT sensors, backups, NixOS deployments and
+vulnerability scans, on `sample.py`. That is the real dashboard on an engine whose cycles apply a
+sample reading for each monitor's type instead of collecting, so every chart, gauge, strip and
+fleet section has live data and nothing is contacted. A type with no sample in `sample.py` shows as
+unavailable.
+
 ## Screenshot it
 
 ```bash
