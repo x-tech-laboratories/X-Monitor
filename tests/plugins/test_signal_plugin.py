@@ -4,6 +4,9 @@ import pytest
 
 from x_monitor.plugins.base.signal_plugin import SignalPlugin, worst_status
 
+# The user fixture only — nicegui.testing.plugin also pulls in its selenium Screen plugin.
+pytest_plugins = ['nicegui.testing.user_plugin']
+
 # Every single-signal monitor, as the config's `type` names it.
 SIGNALS = [
     'cpu', 'memory', 'load', 'temperature', 'interrupts', 'gpu', 'oom',
@@ -56,10 +59,19 @@ class TestRendering:
         monkeypatch.setattr('x_monitor.core.ui.model.schedule_callback',
                             lambda callback, run_now=True: None)
 
-    def test_the_page_builds(self, signal, no_scheduler):
+    # The page is built inside a real client, since NiceGUI's default one is gone once any user test has run.
+    @pytest.mark.nicegui_main_file(None)
+    async def test_the_page_builds(self, signal, no_scheduler, user):
         from nicegui import ui
-        with ui.element('div'):
+        built = []
+
+        @ui.page('/')
+        def _page():
             signal.render_ui()
+            built.append(True)
+
+        await user.open('/')
+        assert built == [True]
 
 
 class TestWorstStatus:
