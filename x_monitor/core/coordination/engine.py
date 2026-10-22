@@ -443,6 +443,12 @@ class XMonitorEngine:
                 return outcome.success, (outcome.metadata or None)
             return bool(outcome), None
 
+        custom = plugin.custom_action(action_id)
+        if custom is not None:
+            plan = custom.plan()
+            result = await self.connectors.execute(self._action_context(net, plan), plan)
+            return _finish(custom.interpret(result))
+
         plan = plugin.plan_action(action_id, **kwargs)
         if plan is None:
             return False, None

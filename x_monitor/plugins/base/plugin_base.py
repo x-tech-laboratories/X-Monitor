@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from x_monitor.core.connectors.types import Request, Result
     from x_monitor.core.connectors.agent_protocol import StreamSpec
 
+from x_monitor.plugins.base.custom_actions import CustomAction, parse_custom_actions
 from x_monitor.plugins.base.plugin_helpers import PluginConfigMixin, parse_duration
 from x_monitor.core.connectors.ssh_connector import COLLECT_TIMEOUT as SSH_TIMEOUT
 from x_monitor.core.contracts import ActionButtonSpec, EngineLike
@@ -81,6 +82,7 @@ class Plugin(PluginConfigMixin, ABC):
         construction via bind() — see XMonitorEngine.setup_modules."""
         self._init_config(name, config)
         self.timeout = parse_duration(config.get('timeout', SSH_TIMEOUT))
+        self.custom_actions = parse_custom_actions(config.get('actions'))
         self.data = None  # PluginDataView, injected by engine.bind()
 
     def bind(self, data: "PluginDataView") -> None:
@@ -204,6 +206,14 @@ class Plugin(PluginConfigMixin, ABC):
     def get_actions(self) -> List[ActionButtonSpec]:
         return []
 
+    def all_actions(self) -> List[ActionButtonSpec]:
+        """The plugin's own action buttons followed by the custom ones its config adds."""
+        return self.get_actions() + [action.button() for action in self.custom_actions]
+
+    def custom_action(self, action_id: str) -> Optional[CustomAction]:
+        """The custom action with this id, or None when it is not one."""
+        return next((action for action in self.custom_actions if action.action_id == action_id), None)
+
     def plan_action(self, action_id: str, **kwargs) -> ActionPlanResult:
         """Pure: decide what an action requires. Return an ActionPlan for an
         SSH command (including launching a detached long-running job — see
@@ -237,7 +247,7 @@ class Plugin(PluginConfigMixin, ABC):
         return {
             "name": self.name,
             "target": self.target,
-            "actions": self.get_actions(),
+            "actions": self.all_actions(),
         }
 
     def render_ui(self, context: str = 'page'):

@@ -51,3 +51,12 @@ plugins:
         ssh_config:
           host: "127.0.0.1"
           port: 1
+        # Custom command buttons, shown after the plugin's own in the page header.
+        actions:
+          - name: "Clear Cache"
+            command: "rm -rf /var/cache/nginx/*"
+          - name: "Rotate Logs"
+            command: "logrotate -f /etc/logrotate.conf"
+            icon: "autorenew"
+            danger: true
+            confirm: "Force a log rotation now?"
