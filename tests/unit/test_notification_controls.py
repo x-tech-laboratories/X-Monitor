@@ -65,27 +65,42 @@ async def _started(notifications):
     notifications.start([notifications.group])
 
 
-class TestMuteButton:
-    async def test_toggles_the_monitors_mute(self, user: User, notifications, pages):
+def _switch(user: User):
+    return next(iter(user.find(kind=ui.switch).elements))
+
+
+class TestMuteSwitch:
+    async def test_switching_notifications_off_and_on_mutes_and_unmutes(self, user: User, notifications, pages):
         await _started(notifications)
         await user.open('/nas')
-        user.find('Mute').click()
+        await user.should_see('Notifications')
+        assert _switch(user).value is True
+        _switch(user).value = False
+        await user.should_see('Nas muted')
         assert notifications.muted_by('nas') == 'nas'
-        await user.should_see('Unmute')
-        user.find('Unmute').click()
+        _switch(user).value = True
+        await user.should_see('Nas unmuted')
         assert notifications.muted_by('nas') is None
-        await user.should_see('Mute')
 
-    async def test_a_monitor_muted_by_its_group_says_so(self, user: User, notifications, pages):
+    async def test_a_muted_monitor_shows_the_switch_off(self, user: User, notifications, pages):
+        await _started(notifications)
+        notifications.set_muted('nas', True)
+        await user.open('/nas')
+        await user.should_see('Notifications')
+        assert _switch(user).value is False
+
+    async def test_a_monitor_muted_by_its_group_says_so_and_cannot_be_switched(self, user: User, notifications, pages):
         await _started(notifications)
         notifications.set_muted('storage', True)
         await user.open('/nas')
         await user.should_see('Muted by Storage')
+        assert _switch(user).value is False
+        assert not _switch(user).enabled
 
-    async def test_no_channels_means_no_button(self, user: User, notifications, pages):
+    async def test_no_channels_means_no_switch(self, user: User, notifications, pages):
         notifications.channels = {}
         await user.open('/nas')
-        await user.should_not_see('Mute')
+        await user.should_not_see('Notifications')
 
 
 class TestMaintenance:
@@ -103,7 +118,7 @@ class TestMaintenance:
         self._window(notifications)
         await user.open('/nas')
         await user.should_see('In maintenance: Upgrades')
-        await user.should_see('Mute')
+        await user.should_see('Notifications')
 
     async def test_the_dialog_lists_windows_and_which_are_active(self, user: User, notifications, pages):
         await _started(notifications)
