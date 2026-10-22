@@ -184,3 +184,85 @@ class TestSyncthingCollection:
 class TestSyncthingActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+def _tiles(plugin):
+    """The folder snapshot keyed by folder label."""
+    return {item["label"]: item for item in plugin.data.latest_snapshot()}
+
+
+class TestFolderSnapshot:
+    async def test_idle_folder_is_up_to_date_under_its_label(self, plugin, run_requests):
+        cfg = {**_CONFIG, "folders": [{"id": "docs", "label": "Documents"}, {"id": "photos"}]}
+        _collect_twice(plugin, run_requests, config=cfg)
+        tiles = _tiles(plugin)
+        assert list(tiles) == ["Documents", "photos"]
+        assert tiles["Documents"]["state"] == "idle"
+        assert tiles["Documents"]["caption"] == "up to date"
+        assert tiles["Documents"]["status"] == "online"
+
+    async def test_syncing_folder_shows_its_progress(self, plugin, run_requests):
+        _collect_twice(plugin, run_requests, folder_statuses={
+            "docs": {**_folder_status(state="syncing", need_bytes=180), "globalBytes": 1000},
+            "photos": _folder_status(),
+        })
+        docs = _tiles(plugin)["docs"]
+        assert docs["state"] == "syncing"
+        assert docs["caption"] == "syncing 82%"
+        assert docs["status"] == "online"
+
+    async def test_folder_syncing_past_the_stall_warning_is_stalled(self, make_plugin, run_requests):
+        p = make_plugin(Syncthing, {**BASE_CFG, "stall_warning": 0})
+        _collect_twice(p, run_requests, folder_statuses={
+            "docs": {**_folder_status(state="syncing", need_bytes=500), "globalBytes": 1000},
+            "photos": _folder_status(),
+        })
+        docs = _tiles(p)["docs"]
+        assert docs["state"] == "stalled"
+        assert docs["caption"] == "stalled 50%"
+        assert docs["status"] == "warning"
+
+    async def test_folder_with_pull_errors_counts_them(self, plugin, run_requests):
+        _collect_twice(plugin, run_requests, folder_statuses={
+            "docs": _folder_status(pull_errors=2),
+            "photos": _folder_status(),
+        })
+        docs = _tiles(plugin)["docs"]
+        assert docs["caption"] == "2 errors"
+        assert docs["status"] == "warning"
+
+    async def test_errored_folder_is_failed(self, plugin, run_requests):
+        _collect_twice(plugin, run_requests, folder_statuses={
+            "docs": _folder_status(invalid="path missing"),
+            "photos": _folder_status(state="idle", need_files=1, need_bytes=10),
+        })
+        tiles = _tiles(plugin)
+        assert tiles["docs"]["state"] == "error"
+        assert tiles["docs"]["caption"] == "path missing"
+        assert tiles["docs"]["status"] == "failed"
+        assert tiles["photos"]["state"] == "error"
+        assert tiles["photos"]["caption"] == "out of sync"
+
+    async def test_paused_folder_is_paused(self, plugin, run_requests):
+        cfg = {**_CONFIG, "folders": [{"id": "docs", "paused": True}, {"id": "photos"}]}
+        _collect_twice(plugin, run_requests, config=cfg)
+        docs = _tiles(plugin)["docs"]
+        assert docs["state"] == "paused"
+        assert docs["caption"] == "paused"
+        assert docs["status"] == "unavailable"
+
+
+class TestFolderTiles:
+    async def test_folder_tiles_show_each_folder_by_its_status(self, plugin):
+        spec = plugin.UI_SPEC
+        repeat = spec['cards']['folder_tiles']['repeat']
+        assert repeat['source'] == 'snapshot'
+        assert repeat['container'] == 'tiles'
+        assert repeat['item_format_fn']({"caption": "syncing 82%"}) == "syncing 82%"
+        assert repeat['item_color_by']({"status": "failed"}) == "failed"
+        assert any('folder_tiles' in row for row in spec['layout'])
+
+    async def test_existing_cards_keep_their_threshold_colors(self, plugin):
+        cards = plugin.UI_SPEC['cards']
+        assert cards['errors_card']['color'](1) == 'failed'
+        assert cards['stalled_card']['color'](1) == 'warning'
