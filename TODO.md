@@ -1,6 +1,6 @@
 # TODO — Finish the move to X-Tech Laboratories
 
-- [ ] Design a hexagon logo in the X-Tech style (see the `.github` repo's `branding/README.md`) and use it as the app, agent and desktop-notification icon.
+- [x] Design a hexagon logo in the X-Tech style (see the `.github` repo's `branding/README.md`) and use it as the app, agent and desktop-notification icon.
 - [x] Add `AGENTS.md` (with `CLAUDE.md` importing it), a CI workflow running `ruff check` and `pytest`, the AI review workflow, and the readiness badge in the README.
 - [ ] Protect `main` with a ruleset that requires CI to pass.
 - [x] Run the full test suite and fix anything the rename broke.
