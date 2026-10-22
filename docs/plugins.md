@@ -1290,6 +1290,8 @@ Monitors the size of arbitrary directories over SSH via `du` — for watching th
 
 **Metrics**: `worst_folder_gb`; `folder_<path>_gb` per folder
 
+The `folders` card draws one meter per folder, scaled to the largest folder at each refresh.
+
 ```yaml
 - name: "Folders"
   id: "server-folders"
@@ -1496,6 +1498,9 @@ The same keys can instead be given as a **mapping of widget name → properties*
 | `disk_io`          | `host_card`, `io_device_card`, `read_card`, `write_card`, `read_chart`, `events` |
 | `processes`        | `host_card`, `count_card`, `top_cpu_card`, `table`, `logs`                  |
 | `disk_space`       | `host_card`, `path_card`, `threshold_card`, `usage_card`, `avail_card`, `total_card`, `chart`, `logs` |
+| `folders`          | `host_card`, `count_card`, `folders`, `events`                              |
+| `freshrss`         | `host_card`, `refresh_card`, `feeds_card`, `stale_card`, `share_card`, `chart`, `events` |
+| `qbittorrent`      | `host_card`, `connection_card`, `speed_card`, `torrents_card`, `stalled_card`, `errored_card`, `share_card`, `chart`, `events` |
 
 Any other plugin's names are the keys of its `UI_SPEC` `cards`, `charts` and `tables`, plus `events`, `logs`, `jobs` and `host_card` where it has them.
 
