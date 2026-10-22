@@ -11,7 +11,7 @@ from typing import Callable, List, Optional, Sequence
 from nicegui import ui
 
 from x_monitor.core.ui import theme
-from x_monitor.core.ui.components import LABEL_CLASS, card, offload
+from x_monitor.core.ui.components import LABEL_CLASS, VALUE_CLASS, card, offload
 from x_monitor.core.ui.theme import STATUS_COLORS
 
 # ============================================================================
@@ -104,15 +104,16 @@ def share_percents(values: Sequence[Optional[float]]) -> List[float]:
 def render_gauge(page, title: str, metric_name: str, formatter: Callable,
                  color_rule: Optional[Callable], maximum: float = 100.0,
                  caption: Optional[str] = None):
-    """A stat panel whose value sits inside an arc filled by the metric's share of `maximum`,
-    colored by the card's status rule or the accent when it has none."""
+    """A stat panel with its label and value laid out like any other, and a small arc beside them
+    filled by the metric's share of `maximum`, colored by the card's status rule or the accent."""
     with card('halon-stat halon-gauge-card flex-1 min-w-[12rem]'):
-        ui.label(title).classes(LABEL_CLASS)
-        with ui.element('div').classes('halon-gauge'):
+        with ui.row().classes('halon-gauge-row no-wrap'):
+            with ui.column().classes('halon-gauge-text'):
+                ui.label(title).classes(LABEL_CLASS)
+                value_label = ui.label(formatter(None)).classes(f'{VALUE_CLASS} halon-gauge-value')
+                caption_label = ui.label(caption or '').classes('halon-caption')
+                caption_label.set_visibility(bool(caption))
             arc = ui.element('div').classes('halon-gauge-arc')
-            value_label = ui.label(formatter(None)).classes('halon-gauge-value')
-        caption_label = ui.label(caption or '').classes('halon-caption')
-        caption_label.set_visibility(bool(caption))
     arc.style(gauge_style(0, theme.ACCENT))
     last = [None]
 
@@ -135,7 +136,8 @@ def render_gauge(page, title: str, metric_name: str, formatter: Callable,
 def render_share(page, title: str, parts: List[dict], formatter: Callable):
     """One bar split into the parts' shares of their total, with each part's value printed in
     the legend beneath, since a share alone never says how many."""
-    with card('flex-1 min-w-[16rem] w-full', title=title):
+    with card('halon-stat halon-share-card flex-1 min-w-[16rem] w-full'):
+        ui.label(title).classes(LABEL_CLASS)
         with ui.element('div').classes('halon-share'):
             segments = [ui.element('div').classes('halon-share-part')
                         .style(f'background: {color_for(p.get("color"), NAMED_COLORS["series-1"])}; flex-grow: 0')

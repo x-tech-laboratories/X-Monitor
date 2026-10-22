@@ -206,6 +206,10 @@ a, .q-link { color: var(--accent); }
     line-height: var(--line-height-ui);
 }
 
+/* A panel fills its layout cell, so panels side by side in a row stand equally tall. */
+.halon-layout-row > div { display: flex; flex-direction: column; }
+.halon-layout-row > div > .q-card { flex: 1 1 auto; }
+
 /* A row of panels: the gap between surfaces on a pane is one step, not a section. */
 .halon-grid { width: 100%; gap: var(--space-5); flex-wrap: wrap; align-items: stretch; }
 
@@ -356,8 +360,8 @@ a, .q-link { color: var(--accent); }
 
 .halon-card-header .nicegui-row { gap: var(--space-2); flex-wrap: nowrap; align-items: center; }
 
-/* A labelled value: label on top, value under it, both flush left. */
-.halon-stat { justify-content: flex-start; gap: var(--space-2); min-height: 76px; }
+/* A labelled value: the label pinned to the top and the value to the bottom, both flush left. */
+.halon-stat { justify-content: space-between; gap: var(--space-2); min-height: 92px; }
 
 .halon-label {
     font-size: var(--text-label);
@@ -861,28 +865,19 @@ a, .q-link { color: var(--accent); }
 
 /* ── Charts: gauges, meters, tiles, strips and share bars ──────────────── */
 
-/* A gauge is a stat panel whose value sits inside a 270° arc drawn by a conic gradient. */
-.halon-gauge-card { align-items: flex-start; }
+/* A gauge is a stat panel with a small arc beside its value, so it stands as tall as any other stat. */
+.halon-gauge-row { flex: 1 1 auto; width: 100%; align-items: stretch; justify-content: space-between; gap: var(--space-5); }
+.halon-gauge-text { justify-content: space-between; gap: var(--space-2); min-width: 0; }
 
-.halon-gauge { position: relative; width: 120px; height: 120px; flex-shrink: 0; }
-
+/* The arc is a 6px ring, a meter's thickness, drawn by a conic gradient and masked to its edge. */
 .halon-gauge-arc {
-    position: absolute;
-    inset: 0;
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    align-self: center;
     border-radius: 50%;
-    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
-    mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
-}
-
-.halon-gauge-value {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: var(--text-h2);
-    font-weight: 600;
-    color: var(--text-heading);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
 }
 
 /* A meter is 6px thick and rounds at half that; its value is always printed above it (§3.6). */
@@ -943,6 +938,11 @@ a, .q-link { color: var(--accent); }
 .halon-strip-share { font-size: var(--text-caption); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* A share bar splits one whole; every part's value is printed in the legend beneath it. */
+.halon-share-card { gap: var(--space-4); }
+
+/* The bar and its legend sit at the bottom of the panel, where a stat's value would. */
+.halon-share-card > .halon-share { margin-top: auto; }
+
 .halon-share {
     display: flex;
     gap: 2px;
