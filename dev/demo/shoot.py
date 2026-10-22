@@ -9,6 +9,7 @@ from playwright.async_api import async_playwright
 PAGES = {
     'overview': '/',
     'events': '/events',
+    'schedules': '/schedules',
     'group': '/monitor/Local%20Services',
     'http': '/monitor/self-http',
     'systemd': '/monitor/ws-nginx',

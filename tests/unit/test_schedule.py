@@ -1,6 +1,7 @@
 """Scheduled actions: cron parsing, next-run times, and when the engine starts a run."""
 
 import asyncio
+import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -160,3 +161,26 @@ class TestScheduleLoop:
         assert engine._apply.call_args.args[1].logs == [
             ('Scheduled run_backup (0 3 * * *) failed: agent gone', 'ERROR')]
         assert engine._scheduled_running == set()
+
+
+class TestScheduleResult:
+    async def test_a_run_records_when_it_started_and_how_it_went(self):
+        engine, settings = _engine(_monitor())
+        engine._start_due_schedules(_at(2026, 10, 21, 2, 0))
+        engine._start_due_schedules(_at(2026, 10, 21, 3, 0))
+        await _settle()
+        record = json.loads(settings[_monitor().scheduled_actions[0].result_key('borg')])
+        assert record['ok'] is True and record['message'] == 'Scheduled run_backup (0 3 * * *) ran'
+
+    async def test_a_failed_run_is_recorded_as_failed(self):
+        engine, settings = _engine(_monitor())
+        engine.dispatch_action = AsyncMock(side_effect=RuntimeError('agent gone'))
+        engine._start_due_schedules(_at(2026, 10, 21, 2, 0))
+        engine._start_due_schedules(_at(2026, 10, 21, 3, 0))
+        await _settle()
+        record = json.loads(settings[_monitor().scheduled_actions[0].result_key('borg')])
+        assert record['ok'] is False and 'agent gone' in record['message']
+
+    def test_the_result_key_is_distinct_from_the_run_key(self):
+        entry = _monitor().scheduled_actions[0]
+        assert entry.result_key('borg') != entry.state_key('borg')

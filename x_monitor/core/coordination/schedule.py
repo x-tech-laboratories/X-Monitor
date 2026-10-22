@@ -154,6 +154,10 @@ class ScheduledAction:
             key += ':' + json.dumps(self.args, sort_keys=True)
         return key
 
+    def result_key(self, plugin_id: str) -> str:
+        """The settings key holding this entry's last run: when it started, whether it succeeded, and what it logged."""
+        return 'schedule-result:' + self.state_key(plugin_id)[len('schedule:'):]
+
     def due(self, handled: float, now: float) -> bool:
         """Whether a run fell after the last handled time and no later than now."""
         upcoming = self.cron.next_after(datetime.fromtimestamp(handled))
