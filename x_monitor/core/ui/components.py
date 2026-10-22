@@ -3,6 +3,7 @@ import asyncio
 from typing import Optional
 from nicegui import context, ui
 from x_monitor.core.contracts import RefreshCallback
+from .tables import data_table, set_rows
 from .theme import STATUS_COLORS
 
 
@@ -16,9 +17,7 @@ def offload(read_fn):
 
 def refresh_rows(table, new_rows) -> None:
     """Replace a table's rows only when they changed, so unchanged tables send nothing."""
-    if new_rows != table.rows:
-        table.rows = new_rows
-        table.update()
+    set_rows(table, new_rows)
 
 
 def on_data_event(callback: RefreshCallback, run_now: bool = True):
@@ -97,7 +96,7 @@ def _feed_table(page, read, title: str, full_height: bool):
             sortable=('timestamp',),
             message_classes='text-wrap font-mono' if full_height else '')
         table_classes = 'w-full border-none' + (' h-[600px]' if full_height else '')
-        table = ui.table(columns=columns, rows=[]).classes(table_classes)
+        table = data_table(columns=columns).classes(table_classes)
         if full_height:
             table.props('virtual-scroll')
 
@@ -510,12 +509,11 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
             {'name': 'actions', 'label': '', 'field': 'actions', 'sortable': False, 'align': 'center'},
         ]
 
-    search_in = None
+    filter_spec = filter_spec or {}
     with card('w-full'):
-        if filter_spec:
-            search_in = ui.input(filter_spec.get('placeholder', 'Filter')).props(
-                'outlined dense clearable').classes('w-full mb-4')
-        table = ui.table(columns=render_columns, rows=[], row_key=row_key).classes('w-full')
+        table = data_table(columns=render_columns, row_key=row_key,
+                           filter_fields=filter_spec.get('fields'),
+                           filter_placeholder=filter_spec.get('placeholder', 'Filter')).classes('w-full')
 
     color_rules = _color_rules(columns)
     for col, _ in color_rules:
@@ -574,22 +572,10 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
             for row in rows:
                 state = rule(row)
                 row[f"_color_{col['name']}"] = STATUS_COLORS.get(state, STATUS_COLORS['online']) if state else STATUS_COLORS['online']
-
-        if search_in is not None:
-            filter_term = (search_in.value or '').strip().lower()
-            fields = filter_spec.get('fields', [])
-            if filter_term:
-                rows = [
-                    row for row in rows
-                    if filter_term in ' '.join(str(row.get(f, '')).lower() for f in fields)
-                ]
         return rows
 
     def update_table():
         refresh_rows(table, _rows())
-
-    if search_in is not None:
-        search_in.on('update:modelValue', lambda e: update_table())
 
     page.on_refresh(update_table)
     update_table()
@@ -623,14 +609,15 @@ def render_job_panel(plugin, spec: dict):
 
         progress_label = ui.label('').classes('halon-caption font-mono mb-2')
 
-        jobs_table = ui.table(
+        jobs_table = data_table(
             columns=[
                 {'name': 'started', 'label': 'Started', 'field': 'started', 'align': 'left'},
                 {'name': 'kind', 'label': 'Kind', 'field': 'kind', 'align': 'left'},
                 {'name': 'state', 'label': 'State', 'field': 'state', 'align': 'left'},
-                {'name': 'duration', 'label': 'Duration', 'field': 'duration', 'align': 'left'},
+                {'name': 'duration', 'label': 'Duration', 'field': 'duration', 'align': 'left',
+                 'sort_field': 'duration_seconds'},
             ],
-            rows=[], row_key='id',
+            row_key='id',
         ).classes('w-full border-none')
 
         last_progress_color = [None]
@@ -659,6 +646,7 @@ def render_job_panel(plugin, spec: dict):
                 {
                     'id': j['id'], 'started': j['started'], 'kind': j['kind'],
                     'state': j['state'], 'duration': format_duration(j['duration']),
+                    'duration_seconds': j['duration'],
                 }
                 for j in plugin.jobs.recent(limit=history_limit)
             ])

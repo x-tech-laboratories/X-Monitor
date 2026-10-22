@@ -21,6 +21,7 @@ def _rows(entries: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
     return [
         {'name': e['name'], 'path': e['path'], 'dir': e['dir'],
          'size': '' if e['dir'] or e['size'] is None else _format_size(e['size']),
+         'size_bytes': None if e['dir'] else e['size'],
          'mtime': e['mtime']}
         for e in entries[:limit]
     ]
@@ -31,6 +32,7 @@ def render_browser(plugin):
     from nicegui import ui
     from nicegui import context
     from x_monitor.core.ui.components import LABEL_CLASS, action_button, card, confirmed, notify_client, on_data_event
+    from x_monitor.core.ui.tables import data_table, set_rows
 
     state = {'archive': None, 'path': ''}
     client = context.client
@@ -45,8 +47,7 @@ def render_browser(plugin):
         entries = plugin.listing(archive, path)
         if entries is None:
             status.text = 'Listing… borg reads the whole archive to list a folder, so a large one takes a while.'
-            table.rows = []
-            table.update()
+            set_rows(table, [])
             ok, content = await plugin.run_action('browse_archive', archive=archive, path=path)
             # The user may have opened another folder while this one was being listed.
             if (state['archive'], state['path']) != (archive, path):
@@ -62,8 +63,7 @@ def render_browser(plugin):
             status.text = f'Showing the first {limit} entries — raise browse_limit to see more.'
         else:
             status.text = f'{len(entries)} entries'
-        table.rows = _rows(entries, limit)
-        table.update()
+        set_rows(table, _rows(entries, limit))
 
     def draw_crumbs():
         crumbs.clear()
@@ -109,13 +109,13 @@ def render_browser(plugin):
                                on_change=lambda e: open_folder(e.value, '')).props('outlined dense').classes('min-w-[18rem]')
         crumbs = ui.row().classes('items-center gap-1')
         status = ui.label('Pick an archive to browse its files.').classes('halon-caption mb-2')
-        table = ui.table(
+        table = data_table(
             columns=[
                 {'name': 'name', 'label': 'Name', 'field': 'name', 'align': 'left', 'sortable': True},
-                {'name': 'size', 'label': 'Size', 'field': 'size', 'align': 'right'},
+                {'name': 'size', 'label': 'Size', 'field': 'size', 'align': 'right', 'sort_field': 'size_bytes'},
                 {'name': 'mtime', 'label': 'Modified', 'field': 'mtime', 'align': 'left', 'sortable': True},
             ],
-            rows=[], row_key='path', selection='multiple', on_select=count_selected,
+            row_key='path', selection='multiple', on_select=count_selected,
             pagination={'rowsPerPage': 50},
         ).classes('w-full')
         table.add_slot('body-cell-name', '''
@@ -137,8 +137,7 @@ def render_browser(plugin):
         if state['archive'] and state['archive'] not in names:
             state.update(archive=None, path='')
             crumbs.clear()
-            table.rows = []
-            table.update()
+            set_rows(table, [])
             status.text = 'That archive is gone from the list. Pick another.'
 
     on_data_event(update_archives)

@@ -8,6 +8,7 @@ from x_monitor.core.coordination.monitor_graph import iter_monitors, view_roots
 from .. import theme
 from ..theme import STATUS_COLORS, ACCENT
 from ..components import card, feed_columns, section_title, on_data_event, offload, refresh_rows
+from ..tables import data_table
 
 _STATUS_ORDER = ('online', 'failed', 'warning', 'unavailable')
 
@@ -197,7 +198,7 @@ def _render_monitor_card(plugin_by_id, switch_view: Callable):
                 clear_button = ui.button(icon='close', color=None).props('flat dense round size=sm')
         filter_row.set_visibility(False)
 
-        monitor_table = ui.table(columns=_MONITOR_COLUMNS, rows=[]).classes('w-full border-none')
+        monitor_table = data_table(columns=_MONITOR_COLUMNS).classes('w-full border-none')
         monitor_table.add_slot('body-cell-name', _NAME_CELL_SLOT)
         monitor_table.add_slot('body-cell-status', _STATUS_CELL_SLOT)
 
@@ -282,8 +283,7 @@ def _wire_charts(engine, monitors, flt: _ChartFilter, status_chart, type_chart, 
         type_chart.options['series'][0]['data'] = _treemap_tiles(type_counts, colors)
         status_chart.update()
         type_chart.update()
-        monitor_table.rows = _build_table_rows(monitors, statuses, flt)
-        monitor_table.update()
+        refresh_rows(monitor_table, _build_table_rows(monitors, statuses, flt))
 
     on_data_event(update_charts, run_now=False)
 
@@ -292,7 +292,7 @@ def _render_recent_metrics(engine):
     """Renders the recent system metrics card fed from the raw metric feed."""
     with card('flex-1 min-w-[320px]'):
         ui.label('Recent system metrics').classes('halon-label mb-2')
-        m_table = ui.table(columns=_METRIC_COLUMNS, rows=[]).classes('w-full')
+        m_table = data_table(columns=_METRIC_COLUMNS).classes('w-full')
 
         async def update_m():
             refresh_rows(m_table, await offload(engine.db.recent_metrics_raw)(limit=20))
@@ -303,7 +303,7 @@ def _render_recent_events(engine):
     """Renders the recent events card fed from the raw event feed."""
     with card('flex-1 min-w-[320px]'):
         ui.label('Recent events').classes('halon-label mb-2')
-        e_table = ui.table(columns=_RECENT_EVENT_COLUMNS, rows=[]).classes('w-full')
+        e_table = data_table(columns=_RECENT_EVENT_COLUMNS).classes('w-full')
 
         async def update_e():
             refresh_rows(e_table, await offload(engine.db.recent_events_raw)(limit=20))
