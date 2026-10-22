@@ -1,13 +1,15 @@
 """Syncthing sync health via its REST API over HTTP from the X-Monitor host:
 system config and connections each cycle, plus per-folder /rest/db/status for
 the folder IDs learned the cycle before. Config: api_url (required,
-X-Monitor-reachable), api_key / api_key_command, folders, devices, stall_warning
-(minutes, null to turn it off), api_timeout. An errored or invalid folder — including one sitting
-idle while still needing data — is failed; pull errors, folders syncing or
-scanning past stall_warning, and expected devices disconnected are warning;
-an API that did not answer, or answered with an error or something
-unparseable, is unavailable. The local device, which the config lists but the
-connections map never does, is not an expected device."""
+X-Monitor-reachable), api_key / api_key_command, folders, devices,
+stall_warning (minutes, null to turn it off), pull_errors_warning (default 1,
+null to turn it off), api_timeout. An errored or invalid folder — including
+one sitting idle while still needing data — is failed; pull errors at or above
+pull_errors_warning, folders syncing or scanning past stall_warning, and
+expected devices disconnected are warning; an API that did not answer, or
+answered with an error or something unparseable, is unavailable. The local
+device, which the config lists but the connections map never does, is not an
+expected device."""
 
 import json
 import time
@@ -205,13 +207,14 @@ def _folder_items(config: Dict[str, Any], folder_states: Dict[str, Dict[str, Any
 
 def _accumulate_problems(errored_folders: List[str], stalled_folders: List[str],
                          disconnected: List[str], total_pull_errors: int,
-                         stall_warning_secs: Optional[float]) -> StatusAccumulator:
+                         stall_warning_secs: Optional[float],
+                         pull_errors_warning: Optional[float] = 1) -> StatusAccumulator:
     """Fold errored/stalled folders, pull errors and disconnected devices into one worst-of status."""
     acc = StatusAccumulator()
     if errored_folders:
         acc.escalate('failed',
                      f"{len(errored_folders)} folder(s) errored: {', '.join(errored_folders[:3])}")
-    if total_pull_errors > 0:
+    if pull_errors_warning is not None and total_pull_errors >= pull_errors_warning:
         acc.escalate('warning', f"{total_pull_errors} pull error(s)")
     if stalled_folders:
         limit = '' if stall_warning_secs is None else f" >= {stall_warning_secs/60:.0f}m"
@@ -238,6 +241,8 @@ class Syncthing(Plugin):
         self.devices: Optional[List[str]] = config.get('devices') or None
         stall_warning = limit_from(config, 'stall_warning', 60)
         self.stall_warning_secs = None if stall_warning is None else stall_warning * 60
+        # Below this many pull errors a folder is still online; Syncthing retries them on its own.
+        self.pull_errors_warning = limit_from(config, 'pull_errors_warning', 1)
         self.api_timeout = int(config.get('api_timeout', 10))
         self._stall_since: Dict[str, float] = {}
         self._cached_folder_ids: List[str] = []
@@ -317,7 +322,8 @@ class Syncthing(Plugin):
                                 len(expected_devices), len(disconnected))
 
         acc = _accumulate_problems(errored_folders, stalled_folders, disconnected,
-                                   total_pull_errors, self.stall_warning_secs)
+                                   total_pull_errors, self.stall_warning_secs,
+                                   self.pull_errors_warning)
 
         parts = [
             f"{len(watched_ids)} folder(s)",

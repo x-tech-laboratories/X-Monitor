@@ -126,6 +126,23 @@ class TestSyncthingCollection:
         })
         assert _latest_status() == "warning"
 
+    async def test_pull_errors_below_threshold_stay_online(self, make_plugin, run_requests):
+        plugin = make_plugin(Syncthing, {**BASE_CFG, "pull_errors_warning": 5})
+        _collect_twice(plugin, run_requests, folder_statuses={
+            "docs": _folder_status(pull_errors=4),
+            "photos": _folder_status(),
+        })
+        assert _latest_status() == "online"
+        assert _latest_metric("pull_errors") == 4
+
+    async def test_pull_errors_at_threshold_set_warning(self, make_plugin, run_requests):
+        plugin = make_plugin(Syncthing, {**BASE_CFG, "pull_errors_warning": 5})
+        _collect_twice(plugin, run_requests, folder_statuses={
+            "docs": _folder_status(pull_errors=3),
+            "photos": _folder_status(pull_errors=2),
+        })
+        assert _latest_status() == "warning"
+
     async def test_local_device_is_not_expected(self, plugin, run_requests):
         cfg = {**_CONFIG, "devices": _CONFIG["devices"] + [{"deviceID": "SELF", "name": "Heimdall"}]}
         _collect_twice(plugin, run_requests, config=cfg)
