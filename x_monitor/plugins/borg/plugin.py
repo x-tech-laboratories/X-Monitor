@@ -19,7 +19,11 @@ browser (browse_limit), restore paths into restore_dir, diff an archive with
 the one before it, and run check, compact, prune and archive deletion as
 detached jobs, the destructive ones only with allow_delete. With allow_purge,
 Purge Excluded rewrites existing archives without whatever the exclude set now
-drops and compacts the space away, and Purge Preview lists what that would be."""
+drops and compacts the space away, and Purge Preview lists what that would be.
+Scheduled backups: prune_after_backup / compact_after_backup chain onto a real
+backup; skip_when_unreachable / skip_while_active skip a job that would not get
+through; job_nice, job_io_idle, inhibit_sleep and job_lock wrap every job; and
+check_kinds holds each kind of Check to a maximum age."""
 
 import json
 import shlex
@@ -35,14 +39,16 @@ from x_monitor.plugins.base.plugin_helpers import (
     KILL_GRACE_SECONDS, format_age, format_duration, parse_duration,
 )
 from x_monitor.plugins.borg.checks import (
-    _canary_verdict, _check_unit_script, _merge_unit, _observed_unit, _parse_check_units,
+    _CHECK_KINDS, _TRACKED_CHECKS, _canary_verdict, _check_job_kind, _check_unit_script, _covered_by_check_job,
+    _merge_unit, _observed_unit, _parse_check_units,
 )
 from x_monitor.plugins.borg.parsing import (
     RepoView, _LIST_FORMAT, _PRUNE_LINE, _children_filter, _decode_json, _format_size, _parse_listing,
 )
 from x_monitor.plugins.borg.shell import (
-    _CUT_SHORT, _POLL_BASE_DIR_VAR, _POLL_DEADLINE_VAR, _POLL_LEFT_FN, _POLL_RC_VAR,
-    _archive_member, _as_list, _failure_hint, _frame_line, _list_unavailable, _redact, _split_poll,
+    _CUT_SHORT, _POLL_BASE_DIR_VAR, _POLL_DEADLINE_VAR, _POLL_LEFT_FN, _POLL_RC_VAR, _STEP_MARK,
+    _archive_member, _as_list, _failure_hint, _frame_line, _list_unavailable, _preflight_script, _redact,
+    _skip_reason, _split_poll, _ssh_endpoint, _then_steps, _with_preflight, _wrap_job,
 )
 
 
@@ -119,6 +125,22 @@ class Borg(Plugin):
         self.allow_purge = bool(config.get('allow_purge', False))
         # Unset means every archive, since archives X-Monitor created share the repo with the owning tool's under a different prefix.
         self.purge_match = config.get('purge_match')
+
+        self.prune_after_backup = bool(config.get('prune_after_backup', False))
+        self.compact_after_backup = bool(config.get('compact_after_backup', False))
+        if self.prune_after_backup and not self.retention:
+            raise ValueError("prune_after_backup needs a keep_* retention policy")
+        self.skip_when_unreachable = bool(config.get('skip_when_unreachable', True))
+        self.skip_while_active = _as_list(config.get('skip_while_active'))
+        self.job_nice = int(config['job_nice']) if config.get('job_nice') is not None else None
+        self.job_io_idle = bool(config.get('job_io_idle', False))
+        self.inhibit_sleep = bool(config.get('inhibit_sleep', False))
+        self.job_lock = config.get('job_lock')
+        self.check_kinds = {str(kind): parse_duration(age) for kind, age in (config.get('check_kinds') or {}).items()}
+        unknown = sorted(set(self.check_kinds) - set(_TRACKED_CHECKS))
+        if unknown:
+            raise ValueError(f"check_kinds has unknown kinds {unknown}; use repository, archives, data or extract")
+
         self._polling_job = None
         self._poll_calls: List[str] = []
         # Archives never change once written, so a folder listed once stays true until the archive is deleted.
@@ -432,37 +454,54 @@ class Borg(Plugin):
 
     def _fold_checks(self, by_name: Dict[str, CmdResult], metrics: Dict[str, float],
                      metadata: Dict[str, str], logs: List[tuple]) -> Optional[str]:
-        """Folds the check units' journal into the stored record and returns 'failed' when any is failed or stale."""
-        if 'checks' not in by_name:
+        """Folds the check units' journal into the stored record and returns 'failed' when any check is failed or stale."""
+        if not self.check_units and not self.check_kinds:
             return None
-        result = by_name['checks']
-        seen = _parse_check_units(result.stdout)
-        if not seen:
-            logs.append((f"Could not read the check units' journal: {(result.stderr or 'no output').strip()[:200]}", "WARNING"))
-            return None
-        stored = self._stored_checks()
-        states = {unit: _merge_unit(stored.get(unit, {}), _observed_unit(seen.get(unit, {}), self.repo))
-                  for unit in self.check_units}
+        states = self._stored_checks()
+        if 'checks' in by_name:
+            result = by_name['checks']
+            seen = _parse_check_units(result.stdout)
+            if not seen:
+                logs.append((f"Could not read the check units' journal: {(result.stderr or 'no output').strip()[:200]}", "WARNING"))
+                if not self.check_kinds:
+                    return None
+            else:
+                for unit in self.check_units:
+                    states[unit] = _merge_unit(states.get(unit, {}), _observed_unit(seen.get(unit, {}), self.repo))
+        judged, problems = self._judge_checks(states, metadata, logs)
+        metrics.update(judged)
+        return 'failed' if problems else None
 
+    def _expected_checks(self) -> Dict[str, Tuple[str, int, str]]:
+        """Every check this monitor holds to an age, by its stored name: (label, max age, setting it comes from)."""
+        expected = {unit: (unit, self.check_max_age, 'check_max_age') for unit in self.check_units}
+        for kind, max_age in self.check_kinds.items():
+            expected[kind] = (f"{kind} check", max_age, f"check_kinds.{kind}")
+        return expected
+
+    def _judge_checks(self, states: Dict[str, Dict[str, Any]], metadata: Dict[str, str],
+                      logs: List[tuple]) -> Tuple[Dict[str, float], List[str]]:
+        """Judges every expected check against its maximum age, storing all the records and logging each problem."""
         now = int(time.time())
         problems = []
-        for unit, state in states.items():
+        oks = []
+        for name, (label, max_age, setting) in self._expected_checks().items():
+            state = states.get(name, {})
+            oks.append(state.get('ok') or 0)
             if state.get('failed'):
-                problems.append(f"{unit} last run failed: {state.get('error') or 'see its journal'}")
+                problems.append(f"{label} last run failed: {state.get('error') or 'see its journal'}")
             elif not state.get('ok'):
-                problems.append(f"{unit} has no successful run on record")
-            elif now - state['ok'] > self.check_max_age:
-                problems.append(f"{unit} last succeeded {format_age(now - state['ok'])}, "
-                                f"exceeds check_max_age of {format_duration(self.check_max_age)}")
-        oks = [state.get('ok') or 0 for state in states.values()]
-        metrics['check_ok_epoch'] = float(min(oks)) if oks else 0.0
-        metrics['checks_ok'] = 0.0 if problems else 1.0
+                problems.append(f"{label} has no successful run on record")
+            elif now - state['ok'] > max_age:
+                problems.append(f"{label} last succeeded {format_age(now - state['ok'])}, "
+                                f"exceeds {setting} of {format_duration(max_age)}")
         metadata['check_ok_epoch'] = json.dumps(states)
         for problem in problems:
             logs.append((f"Repository check: {problem}", "ERROR"))
-        if not problems:
+        if oks and not problems:
             logs.append((f"Repository checks passed, oldest {format_age(now - min(oks))}", "INFO"))
-        return 'failed' if problems else None
+        metrics = {'check_ok_epoch': float(min(oks)) if oks else 0.0, 'checks_ok': 0.0 if problems else 1.0}
+        return metrics, problems
 
     def _repo_detail_logs(self, view: RepoView) -> List[tuple]:
         archives, info = view.archives, view.info
@@ -630,6 +669,11 @@ class Borg(Plugin):
         kind, redacted, workdir, started = getattr(self, '_pending_launch', None) or ('job', '', '', '')
         self._pending_launch = None
 
+        skipped = _skip_reason(result.stdout) if result.exit_code == 0 else None
+        if skipped is not None:
+            message = f"{kind.capitalize()} skipped: {skipped}"
+            return CollectResult(logs=[(message, "WARNING")], metadata={'content': message}, success=True)
+
         pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
         if pid is None:
             return CollectResult.failed(
@@ -659,8 +703,28 @@ class Borg(Plugin):
         """Launches `command` as a detached job; interpret_action records the pid it prints and creates the job row."""
         token = f"{self.id}-{int(time.time())}"
         workdir = detached.workdir_for(token)
+        command = _wrap_job(command, self._job_wrappers(kind), self.job_lock)
         self._pending_launch = (kind, _redact(command), workdir, started)
-        return ActionPlan(detached.launch_command(command, workdir))
+        return ActionPlan(_with_preflight(self._preflight(), detached.launch_command(command, workdir)))
+
+    def _job_wrappers(self, kind: str) -> List[str]:
+        """The argv every job runs under: the shared job lock, the sleep inhibitor, then the lowered priority."""
+        argv = []
+        if self.job_lock:
+            argv += ["flock", self.job_lock]
+        if self.inhibit_sleep:
+            argv += ["systemd-inhibit", "--who=X-Monitor", "--what=sleep:shutdown",
+                     f"--why=X-Monitor borg {kind} for {self.name}"]
+        if self.job_nice is not None:
+            argv += ["nice", "-n", str(self.job_nice)]
+        if self.job_io_idle:
+            argv += ["ionice", "-c", "3"]
+        return argv
+
+    def _preflight(self) -> Optional[str]:
+        """Shell that finds a reason to skip a job before it starts, such as a repository server that is not answering."""
+        endpoint = _ssh_endpoint(self.repo) if self.skip_when_unreachable else None
+        return _preflight_script(endpoint, self.skip_while_active)
 
     def _job_refusal(self, what: str) -> Optional[CollectResult]:
         """The refusal for starting a job without a repo or while another one runs, else None."""
@@ -678,8 +742,14 @@ class Borg(Plugin):
         if self._running_job() is not None:
             return CollectResult.failed("A backup is already running for this monitor",
                                         level="WARNING", status=None)
-        dry_run = action_id == 'dry_run_backup'
-        return self._launch('dry-run' if dry_run else 'backup', self._backup_command(dry_run=dry_run))
+        if action_id == 'dry_run_backup':
+            return self._launch('dry-run', self._backup_command(dry_run=True))
+        steps = []
+        if self.prune_after_backup:
+            steps.append(("Pruning", self._maintenance_command(self._prune_args() + [self.repo])))
+        if self.compact_after_backup:
+            steps.append(("Compacting", self._maintenance_command(["compact", "--progress", self.repo])))
+        return self._launch('backup', _then_steps(self._backup_command(), steps))
 
     # --- Prune preview ----------------------------------------------------
 
@@ -843,12 +913,22 @@ class Borg(Plugin):
         return self._build([self.borg_bin, *args, "--log-json", "--lock-wait", str(self.backup_lock_wait)],
                            persistent_cache=True)
 
-    def _plan_check(self, **_):
+    def _plan_check(self, kind: Optional[str] = None, **_):
+        kind = kind or ('data' if self.check_verify_data else 'all')
+        if kind not in _CHECK_KINDS:
+            return self._refused(f"Unknown check kind {kind!r}: use {', '.join(_CHECK_KINDS)}")
         refusal = self._job_refusal("check the repository")
         if refusal:
             return refusal
-        args = ["check", "--progress"] + (["--verify-data"] if self.check_verify_data else [])
-        return self._launch('check', self._maintenance_command(args + [self.repo]))
+        if kind == 'extract':
+            archives, _ = self.cached_archives()
+            newest = archives[0].get('name') if archives else None
+            if not newest:
+                return self._refused("Cannot run an extract check: no archive listed yet")
+            command = self._maintenance_command(["extract", "--dry-run", "--progress", f"{self.repo}::{newest}"])
+            return self._launch(_check_job_kind(kind), command, f" on {newest}")
+        args = ["check", "--progress"] + _CHECK_KINDS[kind][0]
+        return self._launch(_check_job_kind(kind), self._maintenance_command(args + [self.repo]))
 
     def _plan_compact(self, **_):
         refusal = self._job_refusal("compact the repository")
@@ -864,10 +944,14 @@ class Borg(Plugin):
         refusal = self._job_refusal("prune")
         if refusal:
             return refusal
+        return self._launch('prune', self._maintenance_command(self._prune_args() + [self.repo]))
+
+    def _prune_args(self) -> List[str]:
+        """The prune that applies the retention policy for real, shared by the Prune action and the one that follows a backup."""
         args = ["prune", "--list", "--stats", "--glob-archives", self.prune_match]
         for key, value in self.retention.items():
             args += ["--" + key.replace('_', '-'), str(value)]
-        return self._launch('prune', self._maintenance_command(args + [self.repo]))
+        return args
 
     def _plan_delete(self, archive: Optional[str] = None, **_):
         if not self.allow_delete:
@@ -1004,10 +1088,29 @@ class Borg(Plugin):
                          error=None if state == 'succeeded' else f"Exited with status {exit_code}")
 
         if exit_code == 0:
-            return CollectResult(logs=[(f"{kind.capitalize()} completed successfully", "INFO")], success=True)
-        if exit_code == 1:
-            return CollectResult(logs=[(f"{kind.capitalize()} completed with warnings (exit 1)", "WARNING")], success=True)
-        return CollectResult.failed(f"{kind.capitalize()} failed (exit {exit_code})")
+            outcome = CollectResult(logs=[(f"{kind.capitalize()} completed successfully", "INFO")], success=True)
+        elif exit_code == 1:
+            outcome = CollectResult(logs=[(f"{kind.capitalize()} completed with warnings (exit 1)", "WARNING")], success=True)
+        else:
+            outcome = CollectResult.failed(f"{kind.capitalize()} failed (exit {exit_code})")
+        self._record_check_job(kind, state == 'succeeded', exit_code, outcome)
+        return outcome
+
+    def _record_check_job(self, kind: str, succeeded: bool, exit_code: int, outcome: CollectResult) -> None:
+        """Stores a finished Check's outcome against every tracked check it covers, so check_kinds can judge their age."""
+        covered = _covered_by_check_job(kind)
+        if not covered:
+            return
+        now = int(time.time())
+        states = self._stored_checks()
+        for name in covered:
+            state = dict(states.get(name, {}))
+            state.update(end=now, failed=not succeeded,
+                         error=None if succeeded else f"{kind} exited with status {exit_code}")
+            if succeeded:
+                state['ok'] = now
+            states[name] = state
+        outcome.metrics.update(self._judge_checks(states, outcome.metadata, outcome.logs)[0])
 
     @staticmethod
     def _progress_from_lines(lines: List[str]) -> Optional[str]:
@@ -1015,7 +1118,10 @@ class Borg(Plugin):
         archive_progress records in a batch of newly-read output lines."""
         summary = None
         for text in lines:
-            # recreate prints which archive it is on as plain text, even under --log-json.
+            # A chained job names each step it starts, and recreate prints which archive it is on as plain text, even under --log-json.
+            if text.startswith(_STEP_MARK):
+                summary = text[len(_STEP_MARK):].strip()
+                continue
             if text.startswith('Processing '):
                 summary = text.strip()
                 continue
@@ -1101,7 +1207,7 @@ class Borg(Plugin):
 
     def _checks_pair(self) -> (str, Optional[str]):
         """Returns the (text, color) pair for the repository-checks card."""
-        if not self.check_units:
+        if not self._expected_checks():
             return 'Not configured', None
         ok = self.data.latest_metric('checks_ok')
         oldest = self.data.latest_metric('check_ok_epoch')
@@ -1134,8 +1240,9 @@ class Borg(Plugin):
         newest = int(epoch) if epoch else None
         canary_ok = self.data.latest_metric('canary_ok') if self.canary_path else None
         canary_at = self.data.latest_metric('canary_checked_epoch') if self.canary_path else None
-        checks_ok = self.data.latest_metric('checks_ok') if self.check_units else None
-        check_at = self.data.latest_metric('check_ok_epoch') if self.check_units else None
+        tracked = bool(self._expected_checks())
+        checks_ok = self.data.latest_metric('checks_ok') if tracked else None
+        check_at = self.data.latest_metric('check_ok_epoch') if tracked else None
         return {
             'repo': self.repo,
             'newest_archive_epoch': newest,
