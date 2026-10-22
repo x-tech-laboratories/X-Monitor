@@ -21,12 +21,12 @@ import websockets
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from x_monitor_agent import __version__, desktop, executor, keys, protocol as proto, watchers
+from x_monitor_agent import __version__, desktop, executor, inhibit, keys, protocol as proto, watchers
 
 _BACKOFF_INITIAL = 1.0
 _BACKOFF_MAX = 60.0
 
-CAPABILITIES = sorted([*watchers.WATCHERS, proto.NOTIFY, proto.DISMISS])
+CAPABILITIES = sorted([*watchers.WATCHERS, proto.NOTIFY, proto.DISMISS, proto.INHIBIT])
 """What this agent can do, sent in the hello so a server can tell an older
 agent apart from a newer one without a version comparison."""
 
@@ -47,6 +47,8 @@ class AgentClient:
         # Kept across reconnects, so a notification can still be clicked or dismissed after a network drop.
         self._desktop = desktop.Notifier()
         self._notifications: set = set()
+        self._inhibitor = inhibit.IdleInhibitor()
+        self._server_holds: set = set()
 
     # --- Connection lifecycle ---
 
@@ -59,6 +61,7 @@ class AgentClient:
                 await self._session()
             except asyncio.CancelledError:
                 await self._stop_streams()
+                await self._inhibitor.close()
                 self._desktop.cancel_all()
                 for task in list(self._notifications):
                     task.cancel()
@@ -105,6 +108,7 @@ class AgentClient:
                 self._socket = None
                 await self._stop_streams()
                 await self._cancel_execs()
+                self._release_server_holds()
 
     async def _receive_loop(self, socket_: Any) -> None:
         async for raw in socket_:
@@ -122,6 +126,8 @@ class AgentClient:
                 task.add_done_callback(self._notifications.discard)
             elif tag == proto.SUBSCRIBE and not self.notify_only:
                 await self._apply_streams(frame.get('streams') or [])
+            elif tag == proto.INHIBIT and not self.notify_only:
+                await self._apply_server_hold(frame)
             elif tag == proto.PING:
                 await self._send({'t': proto.PONG, 'id': frame.get('id')})
 
@@ -136,7 +142,8 @@ class AgentClient:
         else:
             command = str(frame.get('cmd', ''))
             timeout = float(frame.get('timeout') or executor.DEFAULT_TIMEOUT)
-            code, out, err = await executor.run(command, timeout=timeout)
+            async with self._inhibitor.held():
+                code, out, err = await executor.run(command, timeout=timeout)
         try:
             await self._send(proto.exec_result(request_id, code, out, err))
         except Exception as e:
@@ -158,6 +165,27 @@ class AgentClient:
                 pass
         if tasks:
             logging.info(f"cancelled {len(tasks)} command(s) orphaned by the disconnect")
+
+    # --- Server holds ---
+
+    async def _apply_server_hold(self, frame: Dict[str, Any]) -> None:
+        """Take or drop the idle inhibitor for a task the server runs against this host from elsewhere."""
+        key = str(frame.get('key') or '')
+        if not key:
+            return
+        if frame.get('hold'):
+            if key not in self._server_holds:
+                self._server_holds.add(key)
+                await self._inhibitor.acquire()
+        elif key in self._server_holds:
+            self._server_holds.discard(key)
+            self._inhibitor.release()
+
+    def _release_server_holds(self) -> None:
+        """Drop every hold the server took, since a lost connection can no longer release them."""
+        for _ in self._server_holds:
+            self._inhibitor.release()
+        self._server_holds.clear()
 
     # --- Streams ---
 

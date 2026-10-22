@@ -6,7 +6,7 @@ keeps the server-side import path alongside the rest of the transport code.
 """
 
 from x_monitor_agent.protocol import (  # noqa: F401
-    CHALLENGE, DISMISS, EVENT, EXEC, HELLO, NOTIFY, PING, PONG, PROTOCOL_VERSION, RESULT,
+    CHALLENGE, DISMISS, EVENT, EXEC, HELLO, INHIBIT, NOTIFY, PING, PONG, PROTOCOL_VERSION, RESULT,
     SUBSCRIBE, WELCOME, StreamSpec, challenge, decode, dismiss, encode, event, exec_request,
-    exec_result, hello, notify, subscribe, welcome,
+    exec_result, hello, inhibit, notify, subscribe, welcome,
 )
