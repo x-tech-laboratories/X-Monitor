@@ -1,4 +1,4 @@
-"""The overview view: the status donut and type treemap, the filterable monitor table and recent activity."""
+"""The overview view: the fleet sections, the status donut and type treemap, the filterable monitor table and recent activity."""
 
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -9,6 +9,7 @@ from .. import theme
 from ..theme import STATUS_COLORS, ACCENT
 from ..components import LEVEL_CELL_SLOT, STATUS_BADGES, STATUS_CELL_SLOT, card, feed_columns, icon_button, page_header, table_block, table_heading, table_wrap, on_data_event, offload, refresh_rows
 from ..tables import data_table
+from .fleet import render_fleet
 
 _STATUS_ORDER = ('online', 'failed', 'warning', 'unavailable')
 
@@ -328,13 +329,14 @@ def _render_recent_events(engine):
 
 
 def render_overview(engine: EngineLike, switch_view: Callable):
-    """Renders the overview: the two charts, the filterable monitor table and recent activity."""
+    """Renders the overview: the fleet sections, the two charts, the filterable monitor table and recent activity."""
     monitors = _collect_leaf_monitors(engine.plugins)
     page_header('All Monitors', f"{len(monitors)} monitor{'' if len(monitors) == 1 else 's'}")
 
     plugin_by_id = {p.id: p for p in monitors}
     flt = _ChartFilter()
 
+    render_fleet(engine, switch_view)
     status_chart, type_chart = _render_charts()
     monitor_table, filter_row, filter_label, clear_button = _render_monitor_card(plugin_by_id, switch_view)
     _wire_filtering(engine, monitors, flt, status_chart, type_chart,

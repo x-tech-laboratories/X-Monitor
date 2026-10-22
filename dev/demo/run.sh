@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# Start the dashboard on the demo fleet: dev/demo/run.sh [port]
+# Start the dashboard on the demo fleet: dev/demo/run.sh [--sample] [port]
 # Without a port it takes the first free one from 8099 up, so several sessions can each run one.
+# --sample runs the homelab-shaped fleet in sample.yaml on moving sample readings instead.
 set -euo pipefail
+
+sample=false
+if [ "${1:-}" = "--sample" ]; then
+    sample=true
+    shift
+fi
 
 demo_dir=$(cd "$(dirname "$0")" && pwd)
 repo_root=$(cd "$demo_dir/../.." && pwd)
@@ -28,7 +35,9 @@ fi
 # One state folder per port, on tmpfs, so a restart keeps that demo's history and logging out clears it.
 state_dir="${XDG_RUNTIME_DIR:-/tmp}/x-monitor-demo/$port"
 mkdir -p "$state_dir"
-sed "s/__PORT__/$port/g" "$demo_dir/config.yaml" > "$state_dir/config.yaml"
+config_source="$demo_dir/config.yaml"
+if $sample; then config_source="$demo_dir/sample.yaml"; fi
+sed "s/__PORT__/$port/g" "$config_source" > "$state_dir/config.yaml"
 
 echo "X-Monitor demo: http://127.0.0.1:$port  (state in $state_dir)"
 
@@ -36,6 +45,9 @@ echo "X-Monitor demo: http://127.0.0.1:$port  (state in $state_dir)"
 
 cd "$repo_root"
 command=(python -m x_monitor --config "$state_dir/config.yaml" --db "$state_dir/x-monitor.db" --port "$port")
+if $sample; then
+    command=(python "$demo_dir/sample.py" --config "$state_dir/config.yaml" --db "$state_dir/x-monitor.db" --port "$port")
+fi
 if [ -n "${IN_NIX_SHELL:-}" ]; then
     exec "${command[@]}"
 fi
