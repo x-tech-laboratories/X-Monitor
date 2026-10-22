@@ -17,7 +17,7 @@ _RUNNING_STATES = {'running', 'up'}
 _BENIGN_STATES = {'created', 'paused'}
 
 _DEFAULT_LAYOUT = [
-    ['host_card', 'total_card', 'running_card', 'stopped_card'],
+    ['host_card', 'total_card', 'running_card'],
     ['containers'],
     ['events'],
 ]
@@ -51,12 +51,11 @@ class Containers(Plugin):
         'cards': {
             'total_card': {'metric': 'containers_total', 'title': 'CONTAINERS', 'format': 'int'},
             'running_card': {
-                'metric': 'containers_running', 'title': 'RUNNING', 'format': 'int',
-                'color': 'containers_always_online',
-            },
-            'stopped_card': {
-                'metric': 'containers_stopped', 'title': 'STOPPED', 'format': 'int',
-                'color': 'nonzero_warning',
+                'kind': 'share', 'title': 'STATE', 'format': 'int',
+                'parts': [
+                    {'metric': 'containers_running', 'label': 'Running', 'color': 'online'},
+                    {'metric': 'containers_stopped', 'label': 'Stopped', 'color': 'warning'},
+                ],
             },
         },
         'events': True,
@@ -144,14 +143,6 @@ class Containers(Plugin):
             cname = action_id.split(':', 1)[1]
             return CollectResult.failed(f"Restart of {cname} failed: {result.stderr}")
         return result.exit_code == 0
-
-
-from x_monitor.core.ui.spec import register_color_rule
-
-
-@register_color_rule('containers_always_online')
-def _running_color(v):
-    return None if v is None else 'online'
 
 
 def _shquote(s: str) -> str:

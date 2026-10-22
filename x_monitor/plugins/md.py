@@ -83,15 +83,14 @@ class Md(SignalPlugin):
     def cards(self) -> Dict[str, Dict[str, Any]]:
         return {
             'md_total_card': {'metric': 'arrays_total', 'title': 'ARRAYS', 'format': 'int'},
-            'md_ok_card': {
-                'metric': 'arrays_ok', 'title': 'CLEAN', 'format': 'int',
-                'color': 'always_online',
-            },
             'md_degraded_card': {
-                'metric': 'arrays_degraded', 'title': 'DEGRADED', 'format': 'int',
-                'color': 'nonzero_failed',
+                'kind': 'share', 'title': 'ARRAY HEALTH', 'format': 'int',
+                'parts': [
+                    {'metric': 'arrays_ok', 'label': 'Clean', 'color': 'online'},
+                    {'metric': 'arrays_degraded', 'label': 'Degraded', 'color': 'failed'},
+                ],
             },
         }
 
     def card_row(self) -> List[str]:
-        return ['md_total_card', 'md_ok_card', 'md_degraded_card']
+        return ['md_total_card', 'md_degraded_card']

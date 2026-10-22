@@ -104,3 +104,20 @@ class TestCollection:
 class TestUiSpec:
     def test_per_pool_repeat_card_is_its_own_row(self, plugin):
         assert ['zfs_pools'] in plugin.UI_SPEC['layout']
+
+    def test_pools_are_meters_ticked_at_the_warning_level(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['zfs_pools']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_marker'] == plugin.warning
+        assert repeat['item_color_by'] == plugin._item_level
+
+    def test_healthy_and_degraded_pools_share_one_bar(self, plugin):
+        health = plugin.UI_SPEC['cards']['zfs_degraded_card']
+        assert health['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in health['parts']] == [
+            ('pools_ok', 'online'), ('pools_degraded', 'failed')]
+
+    def test_the_count_cards_the_meters_replace_are_gone(self, plugin):
+        cards = plugin.UI_SPEC['cards']
+        assert not {'zfs_ok_card', 'zfs_usage_card'} & set(cards)
+        assert plugin.card_row() == ['zfs_total_card', 'zfs_degraded_card']

@@ -427,6 +427,12 @@ class TestUiSpec:
         bound.add(plugin.UI_SPEC['chart']['metric'])
         assert bound <= recorded
 
+    def test_store_use_is_a_gauge_colored_by_the_thresholds(self, plugin):
+        store = plugin.UI_SPEC['cards']['store_card']
+        assert store['kind'] == 'gauge'
+        assert store['metric'] == 'store_used_pct'
+        assert store['color'] == {'warning': plugin.warning, 'threshold': plugin.threshold}
+
     def test_the_last_yield_card_reads_the_stored_record(self, plugin):
         _collect(plugin, _probe(freed="512.0 MiB", deleted=99))
         assert plugin._freed_text == "512 MB · 99 paths"

@@ -130,7 +130,7 @@ def _assess_filesystems(filesystems: List[tuple], inode_pct: Dict[str, float],
 
 
 _DEFAULT_LAYOUT = [
-    ['host_card', 'count_card', 'worst_card'],
+    ['host_card', 'count_card'],
     ['filesystems'],
     ['events'],
 ]
@@ -230,10 +230,8 @@ class Filesystems(Plugin):
             'layout': _DEFAULT_LAYOUT,
             'cards': {
                 'count_card': {'title': 'FILESYSTEMS', 'value_attr': '_filesystem_count'},
-                'worst_card': {
-                    'metric': 'worst_used_pct', 'title': 'WORST USAGE', 'format': 'percent0_plain_dash',
-                },
                 'filesystems': {
+                    'title': 'USAGE',
                     'repeat': {
                         'source': 'metrics_prefix',
                         'fields': [
@@ -243,7 +241,9 @@ class Filesystems(Plugin):
                         'item_format_fn': self._item_text,
                         'item_color_by': self._item_color,
                         'label_transform': 'slashes',
-                        'container': 'cards',
+                        'container': 'bars',
+                        'bar_value': 'used_pct',
+                        'bar_marker': self.warning,
                         'empty_text': 'No filesystems found',
                     },
                 },

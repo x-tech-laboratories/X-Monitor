@@ -383,3 +383,10 @@ class TestActions:
             "recheck_errored", CmdResult(0, "HASHES:bbb|ccc", ""))
         assert outcome.success is True
         assert any("2" in m for m, _ in outcome.logs)
+
+
+class TestUiSpec:
+    def test_download_and_upload_share_one_mirror_chart(self, plugin):
+        chart = plugin.UI_SPEC['chart']
+        assert chart['style'] == 'mirror'
+        assert [s['metric'] for s in chart['series']] == ['dl_speed_bytes', 'up_speed_bytes']

@@ -354,3 +354,20 @@ class TestPiholeActions:
     async def test_update_gravity_uses_gravity_timeout(self, plugin):
         plan = plugin.plan_action("update_gravity")
         assert plan.timeout == plugin.gravity_timeout
+
+
+class TestUiSpec:
+    def test_block_rate_is_a_gauge_keeping_its_threshold_colour(self, plugin):
+        card = plugin.UI_SPEC['cards']['block_rate_card']
+        assert card['kind'] == 'gauge'
+        assert card['metric'] == 'block_rate_pct'
+        assert card['color'](0.4) == 'failed'
+
+    def test_queries_are_a_share_of_blocked_forwarded_and_cached(self, plugin):
+        card = plugin.UI_SPEC['cards']['queries_card']
+        assert card['kind'] == 'share'
+        assert [p['metric'] for p in card['parts']] == [
+            'queries_blocked', 'queries_forwarded', 'queries_cached']
+
+    def test_the_block_rate_history_chart_stays(self, plugin):
+        assert plugin.UI_SPEC['chart']['metric'] == 'block_rate_pct'

@@ -27,8 +27,8 @@ from x_monitor.plugins.base.plugin_helpers import (
 
 
 _DEFAULT_LAYOUT = [
-    ['host_card', 'scanner_card', 'vulnerable_card', 'suspected_card'],
-    ['last_scan_card', 'duration_card', 'open_ports_card', 'noted_card'],
+    ['host_card', 'scanner_card', 'last_scan_card', 'duration_card'],
+    ['vulnerable_card', 'open_ports_card'],
     ['findings'],
     ['ports'],
     ['chart'],
@@ -404,11 +404,14 @@ class VulnScan(Plugin):
             'layout': _DEFAULT_LAYOUT,
             'cards': {
                 'scanner_card': {'title': 'SCANNED FROM', 'value': self.scanner},
-                'vulnerable_card': {'metric': 'vulnerable', 'title': 'VULNERABLE',
-                                    'format': 'int', 'color': 'nonzero_failed'},
-                'suspected_card': {'metric': 'suspected', 'title': 'LIKELY VULNERABLE',
-                                   'format': 'int', 'color': 'nonzero_warning'},
-                'noted_card': {'metric': 'noted', 'title': 'NOTED', 'format': 'int'},
+                'vulnerable_card': {
+                    'kind': 'share', 'title': 'FINDINGS', 'format': 'int',
+                    'parts': [
+                        {'metric': 'vulnerable', 'label': 'Vulnerable', 'color': 'failed'},
+                        {'metric': 'suspected', 'label': 'Likely', 'color': 'warning'},
+                        {'metric': 'noted', 'label': 'Noted', 'color': 'neutral'},
+                    ],
+                },
                 'last_scan_card': {'title': 'LAST SCAN', 'value_attr': '_last_scan_text',
                                    'color_attr': '_last_scan_color', 'refresh': True},
                 'duration_card': {'title': 'SCAN TIME', 'value_attr': '_duration_text',

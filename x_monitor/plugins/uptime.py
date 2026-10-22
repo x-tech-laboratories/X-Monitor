@@ -15,6 +15,7 @@ from x_monitor.core.connectors.types import (
 
 _DEFAULT_LAYOUT = [
     ['host_card', 'status_card', 'latency_card'],
+    ['uptime_strip'],
     ['chart'],
     ['events'],
 ]
@@ -66,6 +67,7 @@ class Uptime(Plugin):
             'latency_card': {
                 'metric': 'latency_ms', 'title': 'LAST LATENCY', 'format': 'seconds_ms',
             },
+            'uptime_strip': {'kind': 'strip', 'metric': 'up', 'title': 'AVAILABILITY'},
         },
         'chart': {'metric': 'latency_ms', 'title': 'RESPONSE TIME HISTORY (ms)'},
         'events': True,

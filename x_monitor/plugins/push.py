@@ -15,6 +15,7 @@ from x_monitor.plugins.base.plugin_helpers import format_age, format_duration
 
 _DEFAULT_LAYOUT = [
     ['status_card', 'lastbeat_card', 'maxage_card'],
+    ['uptime_strip'],
     ['events'],
 ]
 
@@ -95,6 +96,7 @@ class Push(Plugin):
                 'lastbeat_card': {'title': 'LAST HEARTBEAT', 'value_attr': '_last_heartbeat_text',
                                   'refresh': True},
                 'maxage_card': {'title': 'MAX AGE', 'value': format_duration(self.max_age)},
+                'uptime_strip': {'kind': 'strip', 'metric': 'reported_up', 'title': 'REPORTED STATUS HISTORY'},
             },
             'events': True,
         }

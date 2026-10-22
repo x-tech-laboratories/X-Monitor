@@ -35,11 +35,17 @@ def render_page(plugin):
     ticks it itself and nothing fires between assertions.
     """
     built = {}
+    # The CPU page draws a gauge, so a plain metric card with the plugin's own thresholds is declared here.
+    metric_card_spec = {
+        'layout': [['cpu_card']],
+        'cards': {'cpu_card': {'metric': 'cpu_pct', 'title': 'CPU', 'format': 'percent1',
+                               'color': {'warning': plugin.warning, 'threshold': plugin.threshold}}},
+    }
 
     @ui.page('/')
     def _page():
         from nicegui import context
-        built['page'] = spec.generic_render(plugin, start=False)
+        built['page'] = spec.generic_render(plugin, spec=metric_card_spec, start=False)
         built['client'] = context.client
 
     return built

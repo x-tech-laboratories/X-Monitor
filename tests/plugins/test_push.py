@@ -92,3 +92,11 @@ class TestPushActions:
     async def test_on_action_always_returns_false(self, make_plugin):
         p = make_plugin(Push, _cfg())
         assert p.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_the_reported_status_is_drawn_as_an_uptime_strip(self, make_plugin):
+        spec = make_plugin(Push, _cfg()).UI_SPEC
+        assert spec['cards']['uptime_strip']['kind'] == 'strip'
+        assert spec['cards']['uptime_strip']['metric'] == 'reported_up'
+        assert ['uptime_strip'] in spec['layout']

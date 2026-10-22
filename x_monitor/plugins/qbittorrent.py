@@ -424,7 +424,13 @@ class Qbittorrent(Plugin):
                 'errored_card': {'metric': 'torrents_errored', 'title': 'ERRORED', 'format': 'int',
                                  'color': self._errored_color},
             },
-            'chart': {'metric': 'dl_speed_bytes', 'title': 'DOWNLOAD SPEED (B/s)'},
+            'chart': {
+                'title': 'TRANSFER SPEED (B/s)', 'style': 'mirror',
+                'series': [
+                    {'metric': 'dl_speed_bytes', 'label': 'Download'},
+                    {'metric': 'up_speed_bytes', 'label': 'Upload'},
+                ],
+            },
             'events': True,
         }
 

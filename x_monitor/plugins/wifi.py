@@ -46,6 +46,9 @@ class Wifi(SignalPlugin):
     def setting_key(self) -> str:
         return f"network:{self.id}:wifi_interface"
 
+    # Most drivers report link quality in /proc/net/wireless out of 70.
+    QUALITY_MAX = 70.0
+
     def _level_for_quality(self, quality: float) -> str:
         if quality <= self.quality_threshold:
             return 'failed'
@@ -91,8 +94,9 @@ class Wifi(SignalPlugin):
         return {
             'wifi_iface_card': {'title': 'WIFI INTERFACE', 'value_attr': 'active_interface_text',
                                 'refresh': True},
-            'quality_card': {'metric': 'link_quality', 'title': 'LINK QUALITY',
-                             'format': 'int_rounded', 'color': self._quality_color},
+            'quality_card': {'kind': 'gauge', 'metric': 'link_quality', 'title': 'LINK QUALITY',
+                             'format': 'int_rounded', 'color': self._quality_color,
+                             'max': self.QUALITY_MAX},
             'signal_card': {'metric': 'signal_dbm', 'title': 'SIGNAL', 'format': 'dbm0'},
         }
 

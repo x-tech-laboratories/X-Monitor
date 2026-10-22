@@ -48,7 +48,11 @@ chart           Single-chart shorthand for ``charts={'chart': ...}``.
 charts          ``{widget_name: {'metric': ..., 'title': ...}}`` history charts; the title
                 defaults to the metric name upper-cased. A plugin whose charts depend on
                 its config builds this dict (and the matching layout rows) in its
-                ``UI_SPEC`` property — see ports.py.
+                ``UI_SPEC`` property — see ports.py. A chart listing ``series``
+                (``[{'metric', 'label'}, ...]``) draws every metric on one chart in its
+                ``style``: ``'lines'`` (default) overlays them, ``'stack'`` piles them as
+                filled areas, and ``'mirror'`` hangs the second below the axis (download
+                above, upload below).
 events          True, or a kwargs dict forwarded to the plugin events table (e.g.
                 ``{'title': 'Plugin events'}``); renders into the ``events`` cell.
 tables          ``{widget_name: table spec}`` — see "Table specs".
@@ -77,8 +81,19 @@ Card specs
 Every card has a ``title`` plus one value source; generic_render dispatches on the first
 match, in this order:
 
-``repeat``      A family of dynamically discovered items rendered as chips or mini-cards
-                in place of a single value — see "Repeat specs".
+``repeat``      A family of dynamically discovered items rendered as chips, mini-cards,
+                meters or tiles in place of a single value — see "Repeat specs".
+``kind``        A chart card, drawn by ``core/ui/charts.py``:
+                ``'gauge'`` — ``metric`` printed inside an arc filled to its share of
+                ``max`` (default 100), colored by ``color`` like a metric card, with an
+                optional ``caption`` line beneath; ``'share'`` — one bar split between
+                ``parts`` (``[{'metric', 'label', 'color'}, ...]``, color a status name,
+                ``'accent'``, ``'series-1'``–``'series-3'`` or ``'neutral'``), each part's
+                value printed through ``format`` in the legend; ``'strip'`` — the last
+                ``cells`` (default 60) readings of a 0/1 ``metric`` as up and down cells,
+                up meaning above ``up_above`` (default 0.5), with the up share beside them.
+                A strip listing ``rows`` (``[{'metric', 'label'}, ...]``) draws one labeled
+                strip per row in the same panel instead.
 no ``metric``   ``value_attr``: ``getattr(plugin, value_attr)`` pushed through the
 key present:    ``value_format`` template (default ``'{}'``); otherwise static ``value``
                 text (default ``'--'``). With ``color_attr`` (a plugin attribute holding a
@@ -92,8 +107,8 @@ key present:    ``value_format`` template (default ``'{}'``); otherwise static `
                 holds ``{'warning': n, 'threshold': n}`` for banded coloring built on the
                 spot from the plugin's own thresholds.
 
-Dispatch precedence when a card carries several of these: ``metrics``, then
-``metric``, then the static/attribute forms.
+Dispatch precedence when a card carries several of these: ``kind``, then ``metrics``,
+then ``metric``, then the static/attribute forms.
 
 Reserved cards:
 
@@ -109,8 +124,12 @@ source            ``'snapshot'`` (default): the plugin's latest snapshot list;
                   ``'setting'``: a JSON list from the settings store under ``setting_key``
                   (``'{plugin_id}'`` is substituted), plain strings becoming label/value
                   items; ``'metrics_prefix'``: items discovered from metric names.
-container         ``'chips'`` (default) for label: value chips, anything else for a grid
-                  of small info cards.
+container         ``'chips'`` (default) for label: value chips; ``'bars'`` for one meter per
+                  item and ``'tiles'`` for one status tile per item, both inside one panel
+                  carrying the card's title; anything else for a grid of small info cards.
+bar_value         For ``'bars'``: the item key the meter fills from (default item_value).
+bar_max           For ``'bars'``: the value that fills a meter (default 100).
+bar_marker        For ``'bars'``: where to tick the warning level, as a percentage.
 item_label        Item key holding the label (``'key'`` for metrics_prefix, else
                   ``'label'``).
 item_value        Item key holding the value (default ``'value'``).
@@ -121,7 +140,8 @@ label_transform   ``'none'`` (default) | ``'slashes'`` (``'root'`` → ``/``, ``
                   → ``/var/log``) | ``'spaces_upper'`` (``'instance_id'`` → ``INSTANCE
                   ID``).
 item_label_prefix / item_label_suffix   Literal text wrapped around each label.
-item_color_by     ITEM_COLOR_RULES name/callable over the whole item.
+item_color_by     ITEM_COLOR_RULES name/callable over the whole item; colors a meter's
+                  fill and a tile's dot and border.
 empty_text        Shown when there are no items (default ``'No data'``).
 metrics_prefix / metrics_suffix / metrics_exclude   For source ``'metrics_prefix'``:
                   match metric names, strip the affixes, and emit one ``{'key', 'value'}``
@@ -472,7 +492,9 @@ def _page_metric_names(cards: Dict[str, Any], charts: Dict[str, Any], layout) ->
     for name, c in cards.items():
         if layout.renders(name):
             metric_names += c.get('metrics', [])
-    metric_names += [c['metric'] for name, c in charts.items() if layout.renders(name)]
+            metric_names += [p['metric'] for p in c.get('parts', [])]
+    metric_names += [c['metric'] for name, c in charts.items()
+                     if 'metric' in c and layout.renders(name)]
     return metric_names
 
 
@@ -525,10 +547,8 @@ def _card_color_rule(card_spec, widget_name: str) -> Optional[ColorRule]:
     return rule
 
 
-def _render_metric_card(page, layout, widget_name: str, title: str, card_spec):
-    """Render a card bound live to one formatted metric and return its color update, if a color rule is set."""
-    from x_monitor.core.ui.components import info_card
-    metric_name = card_spec['metric']
+def _card_formatter(card_spec, widget_name: str) -> Formatter:
+    """Resolve a card's ``format`` to a formatter, defaulting to 'int'."""
     fmt_name = card_spec.get('format', 'int')
     formatter = resolve(FORMATTERS, fmt_name)
     if formatter is None:
@@ -536,6 +556,23 @@ def _render_metric_card(page, layout, widget_name: str, title: str, card_spec):
             f"UI_SPEC card {widget_name!r} references unknown format {fmt_name!r} "
             f"— register it via spec.register_formatter first"
         )
+    return formatter
+
+
+def _render_chart_card(plugin: Any, page, layout, widget_name: str, card_spec):
+    """Render a gauge, share bar or uptime strip card and return its refresh update, if it has one."""
+    from x_monitor.core.ui import charts
+    with layout.cell(widget_name):
+        return charts.render_chart_card(plugin, page, widget_name, card_spec,
+                                        _card_formatter(card_spec, widget_name),
+                                        _card_color_rule(card_spec, widget_name))
+
+
+def _render_metric_card(page, layout, widget_name: str, title: str, card_spec):
+    """Render a card bound live to one formatted metric and return its color update, if a color rule is set."""
+    from x_monitor.core.ui.components import info_card
+    metric_name = card_spec['metric']
+    formatter = _card_formatter(card_spec, widget_name)
     with layout.cell(widget_name):
         label = info_card(title, formatter(None)).bind_text_from(
             page.model, ('metrics', metric_name), backward=formatter)
@@ -556,10 +593,12 @@ def _render_cards(plugin: Any, page, layout, cards: Dict[str, Any]) -> list:
             continue
         if 'repeat' in card_spec:
             with layout.cell(widget_name):
-                render_repeat_card(plugin, page, card_spec['repeat'])
+                render_repeat_card(plugin, page, card_spec['repeat'], title=card_spec.get('title'))
             continue
         title = card_spec['title']
-        if 'metrics' in card_spec:
+        if 'kind' in card_spec:
+            update = _render_chart_card(plugin, page, layout, widget_name, card_spec)
+        elif 'metrics' in card_spec:
             update = _render_multi_metric_card(page, layout, widget_name, title, card_spec)
         elif 'metric' in card_spec:
             update = _render_metric_card(page, layout, widget_name, title, card_spec)
@@ -593,14 +632,19 @@ def _render_status_card(plugin: Any, page, layout, cards: Dict[str, Any]):
 
 
 def _render_charts(plugin: Any, page, layout, charts: Dict[str, Any]):
-    """Render one history chart per declared chart widget."""
+    """Render one history chart per declared chart widget, drawing several metrics when it lists series."""
+    from x_monitor.core.ui.charts import series_chart
     from x_monitor.core.ui.components import history_chart
     for widget_name, cs in charts.items():
         if not layout.renders(widget_name):
             continue
         with layout.cell(widget_name):
-            history_chart(page, cs.get('title', cs['metric'].upper()),
-                          plugin.id, cs['metric'])
+            if 'series' in cs:
+                series_chart(page, cs.get('title', widget_name.upper()), plugin.id,
+                             cs['series'], style=cs.get('style', 'lines'))
+            else:
+                history_chart(page, cs.get('title', cs['metric'].upper()),
+                              plugin.id, cs['metric'])
 
 
 def _render_events(plugin: Any, page, layout, show_events):

@@ -68,7 +68,7 @@ class Memory(SignalPlugin):
 
     def cards(self) -> Dict[str, Dict[str, Any]]:
         return {
-            'mem_pct_card': {'metric': 'memory_pct', 'title': 'MEMORY',
+            'mem_pct_card': {'kind': 'gauge', 'metric': 'memory_pct', 'title': 'MEMORY',
                              'format': 'percent1_plain_dash',
                              'color': {'warning': self.warning, 'threshold': self.threshold}},
             'mem_used_card': {'title': 'MEM USED', 'metrics': ['memory_used_gb', 'memory_total_gb'],

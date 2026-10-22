@@ -28,6 +28,7 @@ _IP_ECHO_SERVICES = (
 
 _DEFAULT_LAYOUT = [
     ['status_card', 'public_ip_card', 'dns_ip_card'],
+    ['sync_strip'],
     ['lastupdate_card'],
     ['events'],
 ]
@@ -282,6 +283,7 @@ class DdnsUpdater(Plugin):
                 'dns_ip_card': {'title': 'DNS RECORD', 'value_attr': '_dns_ip_text', 'color_attr': '_dns_ip_color'},
                 'lastupdate_card': {'title': 'LAST UPDATE PUSHED', 'value_attr': '_last_update_text',
                                     'refresh': True},
+                'sync_strip': {'kind': 'strip', 'metric': 'in_sync', 'title': 'SYNC HISTORY'},
             },
             'events': True,
         }

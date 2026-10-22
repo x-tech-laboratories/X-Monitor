@@ -102,3 +102,22 @@ class TestFoldersActions:
     async def test_on_action_returns_false(self, make_plugin):
         p = make_plugin(Folders, _cfg(folders=[{"path": "/x"}]))
         assert p.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_folders_are_meters_filled_against_the_largest_folder(self, make_plugin, run_cycle):
+        p = make_plugin(Folders, _cfg(folders=[{"path": "/a"}, {"path": "/b"}]))
+        run_cycle(p, lambda c: CmdResult(0, f"{8 * _GB if '/b' in c.text else 2 * _GB}\t/x", ""))
+        repeat = p.UI_SPEC['cards']['folders']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_max'] == pytest.approx(8.0)
+        assert repeat['item_color_by'] == p._item_color
+
+    async def test_meters_are_empty_before_any_reading(self, make_plugin):
+        p = make_plugin(Folders, _cfg(folders=[{"path": "/a"}]))
+        assert p.UI_SPEC['cards']['folders']['repeat']['bar_max'] == 0.0
+
+    async def test_the_meters_make_the_largest_card_redundant(self, make_plugin):
+        spec = make_plugin(Folders, _cfg(folders=[{"path": "/a"}])).UI_SPEC
+        assert 'worst_card' not in spec['cards']
+        assert 'worst_card' not in {cell for row in spec['layout'] for cell in row}

@@ -123,3 +123,14 @@ class TestVmsActions:
         assert _latest_metric("vm_running_web") == 1.0
         assert _latest_metric("vm_running_db") == 0.0
         assert _latest_metric("vm_running_cache") is None
+
+
+class TestUiSpec:
+    async def test_running_and_stopped_vms_are_one_share(self, make_plugin):
+        spec = make_plugin(Vms, _cfg()).UI_SPEC
+        card = spec['cards']['running_card']
+        assert card['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in card['parts']] == [
+            ('vms_running', 'online'), ('vms_stopped', 'neutral')]
+        assert 'stopped_card' not in spec['cards']
+        assert ['vms'] in spec['layout']

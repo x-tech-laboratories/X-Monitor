@@ -17,7 +17,7 @@ _RUNNING_STATES = {'running'}
 _BENIGN_STATES = {'shut off', 'shutoff'}
 
 _DEFAULT_LAYOUT = [
-    ['host_card', 'total_card', 'running_card', 'stopped_card'],
+    ['host_card', 'total_card', 'running_card'],
     ['vms'],
     ['events'],
 ]
@@ -158,18 +158,12 @@ class Vms(Plugin):
         'cards': {
             'total_card': {'metric': 'vms_total', 'title': 'VMS', 'format': 'int'},
             'running_card': {
-                'metric': 'vms_running', 'title': 'RUNNING', 'format': 'int',
-                'color': 'vms_always_online',
+                'kind': 'share', 'title': 'STATE', 'format': 'int',
+                'parts': [
+                    {'metric': 'vms_running', 'label': 'Running', 'color': 'online'},
+                    {'metric': 'vms_stopped', 'label': 'Stopped', 'color': 'neutral'},
+                ],
             },
-            'stopped_card': {'metric': 'vms_stopped', 'title': 'STOPPED', 'format': 'int'},
         },
         'events': True,
     }
-
-
-from x_monitor.core.ui.spec import register_color_rule
-
-
-@register_color_rule('vms_always_online')
-def _vms_running_color(v):
-    return None if v is None else 'online'

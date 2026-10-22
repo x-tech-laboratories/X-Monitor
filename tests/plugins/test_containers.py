@@ -106,3 +106,15 @@ class TestContainersActions:
         p = make_plugin(Containers, _cfg(expect_running=["web", "db"]))
         ids = {a["action_id"] for a in p.get_actions()}
         assert ids == {"restart:web", "restart:db"}
+
+
+class TestUiSpec:
+    async def test_running_and_stopped_containers_are_one_share(self, make_plugin):
+        spec = make_plugin(Containers, _cfg()).UI_SPEC
+        card = spec['cards']['running_card']
+        assert card['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in card['parts']] == [
+            ('containers_running', 'online'), ('containers_stopped', 'warning')]
+        assert 'stopped_card' not in spec['cards']
+        assert all('stopped_card' not in row for row in spec['layout'])
+        assert ['containers'] in spec['layout']

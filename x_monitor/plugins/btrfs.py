@@ -198,20 +198,15 @@ class Btrfs(SignalPlugin):
             'btrfs_total_card': {
                 'metric': 'filesystems_total', 'title': 'FILESYSTEMS', 'format': 'int',
             },
-            'btrfs_ok_card': {
-                'metric': 'filesystems_ok', 'title': 'HEALTHY', 'format': 'int',
-                'color': 'always_online',
-            },
             'btrfs_degraded_card': {
-                'metric': 'filesystems_degraded', 'title': 'DEGRADED', 'format': 'int',
-                'color': 'nonzero_failed',
-            },
-            'btrfs_usage_card': {
-                'metric': 'btrfs_usage_max', 'title': 'FULLEST FS',
-                'format': 'percent1',
-                'color': {'warning': self.warning, 'threshold': self.threshold},
+                'kind': 'share', 'title': 'FILESYSTEM HEALTH', 'format': 'int',
+                'parts': [
+                    {'metric': 'filesystems_ok', 'label': 'Healthy', 'color': 'online'},
+                    {'metric': 'filesystems_degraded', 'label': 'Degraded', 'color': 'failed'},
+                ],
             },
             'btrfs_filesystems': {
+                'title': 'FILESYSTEM CAPACITY',
                 'repeat': {
                     'source': 'metrics_prefix',
                     'fields': [
@@ -222,14 +217,16 @@ class Btrfs(SignalPlugin):
                     'item_format_fn': self._item_text,
                     'item_color_by': self._item_level,
                     'label_transform': 'slashes',
-                    'container': 'cards',
+                    'container': 'bars',
+                    'bar_value': 'usage_pct',
+                    'bar_marker': self.warning,
                     'empty_text': 'No btrfs filesystems found',
                 },
             },
         }
 
     def card_row(self) -> List[str]:
-        return ['btrfs_total_card', 'btrfs_ok_card', 'btrfs_degraded_card', 'btrfs_usage_card']
+        return ['btrfs_total_card', 'btrfs_degraded_card']
 
     def rows(self) -> List[List[str]]:
         return [['btrfs_filesystems']]

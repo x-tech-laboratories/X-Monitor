@@ -107,3 +107,14 @@ class TestNonPhysicalDevices:
 
     def test_skips_alone_look_like_no_disks(self, plugin):
         assert plugin.parse([CmdResult(0, "SKIP /dev/zram0\nSKIP /dev/zd0", "")]).status == 'unavailable'
+
+
+class TestUiSpec:
+    async def test_healthy_failed_and_unreadable_disks_share_one_bar(self, plugin):
+        health = plugin.UI_SPEC['cards']['smart_failed_card']
+        assert health['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in health['parts']] == [
+            ('disks_ok', 'online'), ('disks_failed', 'failed'), ('disks_unknown', 'neutral')]
+
+    async def test_the_share_replaces_the_healthy_count_card(self, plugin):
+        assert set(plugin.UI_SPEC['cards']) == {'smart_total_card', 'smart_failed_card'}

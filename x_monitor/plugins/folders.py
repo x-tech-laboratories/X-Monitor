@@ -25,7 +25,7 @@ def _shquote(s: str) -> str:
 
 
 _DEFAULT_LAYOUT = [
-    ['host_card', 'count_card', 'worst_card'],
+    ['host_card', 'count_card'],
     ['folders'],
     ['events'],
 ]
@@ -120,14 +120,19 @@ class Folders(Plugin):
             return 'warning'
         return 'online'
 
+    def _largest_folder_gb(self) -> float:
+        """The largest folder's last measured size, which fills a whole meter, or zero before any reading."""
+        metric = self.data.latest_metric('worst_folder_gb') if self.data else None
+        return metric.value if metric is not None and metric.value else 0.0
+
     @property
     def UI_SPEC(self):
         return {
             'layout': _DEFAULT_LAYOUT,
             'cards': {
                 'count_card': {'title': 'FOLDERS', 'value': str(len(self.folders))},
-                'worst_card': {'metric': 'worst_folder_gb', 'title': 'LARGEST', 'format': 'bytes_gb'},
                 'folders': {
+                    'title': 'SIZES',
                     'repeat': {
                         'source': 'metrics_prefix',
                         'metrics_prefix': 'folder_', 'metrics_suffix': '_gb',
@@ -135,7 +140,8 @@ class Folders(Plugin):
                         'item_format': 'bytes_gb',
                         'item_color_by': self._item_color,
                         'label_transform': 'slashes',
-                        'container': 'cards',
+                        'container': 'bars',
+                        'bar_max': self._largest_folder_gb(),
                         'empty_text': 'No folders configured',
                     },
                 },

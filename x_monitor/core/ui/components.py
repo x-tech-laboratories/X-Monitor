@@ -361,8 +361,13 @@ _LABEL_TRANSFORMS = {
 }
 
 
-def render_repeat_card(plugin, page, repeat_spec: dict):
-    """Render one chip or card per item resolved from a repeat spec's data source."""
+REPEAT_PANELS = ('bars', 'tiles')
+
+
+def render_repeat_card(plugin, page, repeat_spec: dict, title: Optional[str] = None):
+    """Render one chip, card, meter or tile per item resolved from a repeat spec's data source;
+    meters and tiles sit together in one titled panel."""
+    from x_monitor.core.ui import charts
     from x_monitor.core.ui.spec import FORMATTERS, ITEM_COLOR_RULES, ITEM_FORMATTERS, resolve
     from x_monitor.core.ui.theme import STATUS_COLORS
 
@@ -382,16 +387,28 @@ def render_repeat_card(plugin, page, repeat_spec: dict):
     color_rule_name = repeat_spec.get('item_color_by')
     color_rule = resolve(ITEM_COLOR_RULES, color_rule_name)
     empty_text = repeat_spec.get('empty_text', 'No data')
+    bar_value = repeat_spec.get('bar_value', item_value)
+    bar_max = repeat_spec.get('bar_max', 100.0)
+    bar_marker = repeat_spec.get('bar_marker')
 
-    wrap_style = (
-        'display: flex; flex-wrap: wrap; gap: var(--space-4); width: 100%'
-        if container_kind == 'chips' else
-        'display: flex; flex-wrap: wrap; gap: var(--space-5); width: 100%'
-    )
-    container = ui.element('div').style(wrap_style)
+    if container_kind in REPEAT_PANELS:
+        with card('w-full', title=title):
+            container = ui.element('div').classes(f'halon-repeat-{container_kind}')
+    else:
+        wrap_style = (
+            'display: flex; flex-wrap: wrap; gap: var(--space-4); width: 100%'
+            if container_kind == 'chips' else
+            'display: flex; flex-wrap: wrap; gap: var(--space-5); width: 100%'
+        )
+        container = ui.element('div').style(wrap_style)
+    last_items = [None]
 
     def render():
         items = _resolve_repeat_items(plugin, repeat_spec)
+        # Rebuilding is the costly part, so a refresh that finds the same items sends nothing.
+        if items == last_items[0]:
+            return
+        last_items[0] = items
         container.clear()
         if not items:
             with container:
@@ -412,6 +429,12 @@ def render_repeat_card(plugin, page, repeat_spec: dict):
                 color = STATUS_COLORS.get(state) if state else None
                 if container_kind == 'chips':
                     chip_label(label, value, color)
+                elif container_kind == 'bars':
+                    charts.meter_row(label or '--', value,
+                                     charts.fill_percent(item.get(bar_value), bar_max),
+                                     color or charts.color_for(None), bar_marker)
+                elif container_kind == 'tiles':
+                    charts.status_tile(label or '--', value, state)
                 else:
                     info_card(label or '--', value)
 

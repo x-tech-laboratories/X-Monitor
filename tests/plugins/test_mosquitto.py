@@ -126,3 +126,12 @@ class TestMosquittoCollection:
 class TestMosquittoActions:
     async def test_on_action_always_returns_none(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_the_round_trip_is_drawn_as_an_uptime_strip(self, plugin):
+        spec = plugin.UI_SPEC
+        assert spec['cards']['uptime_strip']['kind'] == 'strip'
+        assert spec['cards']['uptime_strip']['metric'] == 'roundtrip_ok'
+        assert ['uptime_strip'] in spec['layout']
+        assert spec['chart']['metric'] == 'roundtrip_ms'

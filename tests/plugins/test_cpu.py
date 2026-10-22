@@ -62,3 +62,15 @@ class TestCollection:
 
     def test_one_command_per_cycle(self, plugin):
         assert len(plugin.commands()) == 1
+
+
+class TestUiSpec:
+    def test_the_cpu_card_is_a_gauge_banded_by_the_thresholds(self, make_plugin):
+        p = make_plugin(Cpu, dict(CFG, warning=60, threshold=85))
+        card = p.UI_SPEC['cards']['cpu_card']
+        assert card['kind'] == 'gauge'
+        assert card['metric'] == 'cpu_pct'
+        assert card['color'] == {'warning': 60.0, 'threshold': 85.0}
+
+    def test_the_history_chart_stays(self, plugin):
+        assert plugin.UI_SPEC['charts']['cpu_chart']['metric'] == 'cpu_pct'

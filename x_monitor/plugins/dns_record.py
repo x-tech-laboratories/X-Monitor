@@ -15,6 +15,7 @@ from x_monitor.core.connectors.types import (
 
 _DEFAULT_LAYOUT = [
     ['status_card', 'type_card', 'ttl_card'],
+    ['uptime_strip'],
     ['answer'],
     ['events'],
 ]
@@ -134,6 +135,7 @@ class DnsRecord(Plugin):
                                 'on_text': 'OK', 'off_text': 'FAILED'},
                 'type_card': {'title': 'RECORD TYPE', 'value': self.record_type},
                 'ttl_card': {'metric': 'ttl', 'title': 'TTL', 'format': 'ttl_seconds'},
+                'uptime_strip': {'kind': 'strip', 'metric': 'resolved', 'title': 'RESOLUTION HISTORY'},
                 'answer': {
                     'repeat': {
                         'source': 'setting',

@@ -32,6 +32,11 @@ class Temperature(SignalPlugin):
         self.warning   = float(config.get('warning',   70))
         self.threshold = float(config.get('threshold', 80))
 
+    @property
+    def scale_max(self) -> float:
+        """The reading that fills the gauge and zone meters: 100°C, or the threshold if higher."""
+        return max(100.0, self.threshold)
+
     def _item_level(self, item):
         """Color one sensor's chip by its own reading against this monitor's thresholds."""
         return level_for(item.get('value') or 0.0, self.warning, self.threshold)
@@ -83,16 +88,21 @@ class Temperature(SignalPlugin):
 
     def cards(self) -> Dict[str, Dict[str, Any]]:
         return {
-            'temp_card': {'metric': 'temp_c', 'title': 'MAX TEMP', 'format': 'temp_c1',
+            'temp_card': {'kind': 'gauge', 'metric': 'temp_c', 'title': 'MAX TEMP',
+                          'format': 'temp_c1',
+                          'max': self.scale_max,
                           'color': {'warning': self.warning, 'threshold': self.threshold}},
             'sensors': {
+                'title': 'THERMAL ZONES',
                 'repeat': {
                     'source': 'metrics_prefix',
                     'metrics_prefix': 'temp_zone_', 'metrics_suffix': '',
                     'item_format': 'temp_c1',
                     'item_color_by': self._item_level,
                     'label_transform': 'spaces_upper',
-                    'container': 'cards',
+                    'container': 'bars',
+                    'bar_max': self.scale_max,
+                    'bar_marker': self.warning / self.scale_max * 100.0,
                     'empty_text': 'No thermal zones found',
                 },
             },

@@ -144,13 +144,16 @@ class Gpu(SignalPlugin):
 
     def cards(self) -> Dict[str, Dict[str, Any]]:
         return {
-            'gpu_util_card': {'metric': 'gpu_util', 'title': 'GPU', 'format': 'percent0',
+            'gpu_util_card': {'kind': 'gauge', 'metric': 'gpu_util', 'title': 'GPU',
+                              'format': 'percent0',
                               'color': {'warning': self.util_warning, 'threshold': self.util_threshold}},
-            'gpu_mem_card': {'metric': 'gpu_mem_pct', 'title': 'VRAM', 'format': 'percent0',
+            'gpu_mem_card': {'kind': 'gauge', 'metric': 'gpu_mem_pct', 'title': 'VRAM',
+                             'format': 'percent0',
                              'color': {'warning': self.mem_warning, 'threshold': self.mem_threshold}},
             'gpu_temp_card': {'metric': 'gpu_temp', 'title': 'GPU TEMP', 'format': 'temp_c0',
                               'color': {'warning': self.temp_warning, 'threshold': self.temp_threshold}},
             'gpus': {
+                'title': 'GPUS',
                 'repeat': {
                     'source': 'metrics_prefix',
                     'metrics_prefix': 'gpu', 'metrics_suffix': '_util',
@@ -158,7 +161,8 @@ class Gpu(SignalPlugin):
                     'item_format': 'percent0',
                     'item_color_by': self._item_level,
                     'item_label_prefix': 'GPU ',
-                    'container': 'cards',
+                    'container': 'bars',
+                    'bar_marker': self.util_warning,
                     'empty_text': 'No GPUs found',
                 },
             },

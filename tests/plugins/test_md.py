@@ -87,4 +87,10 @@ class TestCollection:
         assert _latest_status() == "unavailable"
 
     async def test_it_contributes_its_cards(self, plugin):
-        assert {'md_total_card', 'md_ok_card', 'md_degraded_card'} <= set(plugin.UI_SPEC['cards'])
+        assert set(plugin.UI_SPEC['cards']) == {'md_total_card', 'md_degraded_card'}
+
+    async def test_clean_and_degraded_arrays_share_one_bar(self, plugin):
+        health = plugin.UI_SPEC['cards']['md_degraded_card']
+        assert health['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in health['parts']] == [
+            ('arrays_ok', 'online'), ('arrays_degraded', 'failed')]

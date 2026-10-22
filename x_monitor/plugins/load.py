@@ -64,14 +64,15 @@ class Load(SignalPlugin):
         )
 
     def cards(self) -> Dict[str, Dict[str, Any]]:
-        load_1m_card = {'metric': 'load_pct_1m', 'title': 'LOAD 1M', 'format': 'percent0_plain_dash'}
+        load_1m_card = {'kind': 'gauge', 'metric': 'load_pct_1m', 'title': 'LOAD 1M',
+                        'format': 'percent0_plain_dash'}
         if self.warning is not None and self.threshold is not None:
             load_1m_card['color'] = {'warning': self.warning, 'threshold': self.threshold}
-        return {
-            'load_1m_card':  load_1m_card,
-            'load_5m_card':  {'metric': 'load_pct_5m',  'title': 'LOAD 5M',  'format': 'percent0_plain_dash'},
-            'load_15m_card': {'metric': 'load_pct_15m', 'title': 'LOAD 15M', 'format': 'percent0_plain_dash'},
-        }
+        return {'load_1m_card': load_1m_card}
 
     def charts(self) -> Dict[str, Dict[str, Any]]:
-        return {'load_chart': {'metric': 'load_pct_1m', 'title': 'LOAD AVERAGE (%)'}}
+        return {'load_chart': {'title': 'LOAD AVERAGE (%)', 'style': 'lines', 'series': [
+            {'metric': 'load_pct_1m', 'label': '1m'},
+            {'metric': 'load_pct_5m', 'label': '5m'},
+            {'metric': 'load_pct_15m', 'label': '15m'},
+        ]}}

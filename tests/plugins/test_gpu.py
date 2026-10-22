@@ -78,3 +78,17 @@ class TestUiSpec:
         spec = plugin.UI_SPEC
         assert 'gpus' not in spec['layout'][0]
         assert ['gpus'] in spec['layout']
+
+    def test_utilization_and_vram_are_gauges_banded_by_their_thresholds(self, plugin):
+        cards = plugin.UI_SPEC['cards']
+        assert cards['gpu_util_card']['kind'] == 'gauge'
+        assert cards['gpu_util_card']['color'] == {'warning': 85.0, 'threshold': 95.0}
+        assert cards['gpu_mem_card']['kind'] == 'gauge'
+        assert cards['gpu_mem_card']['color'] == {'warning': 85.0, 'threshold': 95.0}
+
+    def test_each_gpu_is_a_meter_ticked_at_the_utilization_warning(self, make_plugin):
+        p = make_plugin(Gpu, dict(CFG, util_warning=70))
+        repeat = p.UI_SPEC['cards']['gpus']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_marker'] == 70.0
+        assert repeat['item_color_by'] == p._item_level
