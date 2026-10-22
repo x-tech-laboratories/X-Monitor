@@ -21,9 +21,21 @@ from x_monitor.core.connectors.types import ActionPlan, CmdResult, Command, Coll
 
 _AUTH_FAILED = "XMONITOR_AUTH_FAILED"
 
-_STALLED_STATES = {'stalledDL', 'metaDL', 'stalledUP'}
+# Each qBittorrent torrent state belongs to exactly one bucket; an unlisted state counts as stalled.
+_STATE_BUCKETS = {
+    'downloading': 'downloading', 'forcedDL': 'downloading', 'queuedDL': 'downloading',
+    'checkingDL': 'downloading', 'allocating': 'downloading', 'forcedMetaDL': 'downloading',
+    'uploading': 'seeding', 'forcedUP': 'seeding', 'queuedUP': 'seeding', 'checkingUP': 'seeding',
+    'pausedDL': 'paused', 'pausedUP': 'paused', 'stoppedDL': 'paused', 'stoppedUP': 'paused',
+    'stalledDL': 'stalled', 'stalledUP': 'stalled', 'metaDL': 'stalled',
+    'error': 'errored', 'missingFiles': 'errored',
+}
 
-_ERROR_STATES = {'error', 'missingFiles'}
+_BUCKET_NAMES = ('downloading', 'seeding', 'paused', 'stalled', 'errored')
+
+_STALLED_STATES = {state for state, bucket in _STATE_BUCKETS.items() if bucket == 'stalled'}
+
+_ERROR_STATES = {state for state, bucket in _STATE_BUCKETS.items() if bucket == 'errored'}
 
 _ACTIVE_DL_STATES = {'downloading', 'metaDL', 'stalledDL', 'queuedDL',
                      'forcedDL', 'checkingDL', 'allocating', 'downloadingMetadata'}
@@ -182,6 +194,14 @@ def _classify_torrents(torrents: List[Dict[str, Any]]):
     return stalled, errored, downloading
 
 
+def _count_state_buckets(torrents: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Count the torrents in each state bucket, every torrent landing in exactly one."""
+    counts = dict.fromkeys(_BUCKET_NAMES, 0)
+    for torrent in torrents:
+        counts[_STATE_BUCKETS.get(torrent.get('state'), 'stalled')] += 1
+    return counts
+
+
 def _accumulate_transfer_problems(connection: str, stalled: List[Dict[str, Any]],
                                   errored: List[Dict[str, Any]],
                                   downloading: List[Dict[str, Any]],
@@ -222,6 +242,7 @@ def _format_rate(bytes_per_sec: float) -> str:
 _DEFAULT_LAYOUT = [
     ['host_card', 'connection_card', 'speed_card'],
     ['torrents_card', 'stalled_card', 'errored_card'],
+    ['share_card'],
     ['chart'],
     ['events'],
 ]
@@ -293,6 +314,8 @@ class Qbittorrent(Plugin):
             'up_session_bytes': float(transfer.get('up_info_data', 0) or 0),
             'connected': 1.0 if connection == 'connected' else 0.0,
         }
+        for bucket, count in _count_state_buckets(torrents).items():
+            metrics[f'torrents_state_{bucket}'] = float(count)
 
         acc = _accumulate_transfer_problems(
             connection, stalled, errored, downloading,
@@ -423,6 +446,16 @@ class Qbittorrent(Plugin):
                                  'color': self._stalled_color},
                 'errored_card': {'metric': 'torrents_errored', 'title': 'ERRORED', 'format': 'int',
                                  'color': self._errored_color},
+                'share_card': {
+                    'kind': 'share', 'title': 'BY STATE', 'format': 'int',
+                    'parts': [
+                        {'metric': 'torrents_state_downloading', 'label': 'Downloading', 'color': 'accent'},
+                        {'metric': 'torrents_state_seeding', 'label': 'Seeding', 'color': 'online'},
+                        {'metric': 'torrents_state_paused', 'label': 'Paused', 'color': 'neutral'},
+                        {'metric': 'torrents_state_stalled', 'label': 'Stalled', 'color': 'warning'},
+                        {'metric': 'torrents_state_errored', 'label': 'Errored', 'color': 'failed'},
+                    ],
+                },
             },
             'chart': {
                 'title': 'TRANSFER SPEED (B/s)', 'style': 'mirror',

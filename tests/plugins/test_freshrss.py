@@ -129,6 +129,13 @@ class TestFreshrssCollection:
         assert _latest_status() == "online"
         assert _latest_metric("refresh_age_hours") == pytest.approx(1.0, abs=0.01)
 
+    async def test_fresh_feeds_are_the_total_less_the_stale_ones(self, plugin, run_requests):
+        _respond(plugin, run_requests,
+                 feeds=[_feed("A", 1.0), _feed("B", 2.0), _feed("C", 60.0), _feed("D", 200.0)])
+        assert _latest_metric("feeds_total") == 4
+        assert _latest_metric("feeds_stale") == 2
+        assert _latest_metric("feeds_fresh") == 2
+
     async def test_auth_failure_sets_failed(self, plugin, run_requests):
         _respond(plugin, run_requests, auth=0)
         assert _latest_status() == "failed"
@@ -152,3 +159,19 @@ class TestFreshrssCollection:
 class TestFreshrssActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    def test_fresh_and_stale_feeds_are_one_share(self, plugin):
+        spec = plugin.UI_SPEC
+        card = spec['cards']['share_card']
+        assert card['kind'] == 'share'
+        assert [(part['metric'], part['color']) for part in card['parts']] == [
+            ('feeds_fresh', 'online'), ('feeds_stale', 'warning')]
+        assert 'share_card' in {cell for row in spec['layout'] for cell in row}
+
+    def test_existing_cards_and_chart_are_kept(self, plugin):
+        spec = plugin.UI_SPEC
+        assert {'refresh_card', 'feeds_card', 'stale_card'} <= set(spec['cards'])
+        assert spec['cards']['stale_card']['color'] == 'nonzero_warning'
+        assert spec['chart']['metric'] == 'refresh_age_hours'

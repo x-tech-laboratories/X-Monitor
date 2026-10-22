@@ -14,7 +14,7 @@ pytest_plugins = ['nicegui.testing.user_plugin']
 pytestmark = pytest.mark.nicegui_main_file(None)
 
 CHART_SPEC = {
-    'layout': [['gauge', 'share'], ['strip'], ['strips'], ['bars', 'tiles'], ['lines']],
+    'layout': [['gauge', 'share'], ['strip'], ['strips'], ['bars', 'tiles'], ['sizes'], ['lines']],
     'cards': {
         'gauge': {'kind': 'gauge', 'metric': 'cpu_pct', 'title': 'CPU', 'format': 'percent1',
                   'color': {'warning': 70, 'threshold': 85}},
@@ -27,6 +27,9 @@ CHART_SPEC = {
         'bars': {'title': 'SPACE USED', 'repeat': {
             'source': 'metrics_prefix', 'metrics_prefix': 'fs_', 'metrics_suffix': '_pct',
             'container': 'bars', 'item_format': 'percent0', 'bar_marker': 85}},
+        'sizes': {'title': 'SIZES', 'repeat': {
+            'source': 'metrics_prefix', 'metrics_prefix': 'size_', 'metrics_suffix': '_gb',
+            'container': 'bars', 'item_format': 'bytes_gb', 'bar_max': 'largest'}},
         'tiles': {'title': 'DISKS', 'repeat': {
             'source': 'metrics_prefix', 'metrics_prefix': 'disk_', 'metrics_suffix': '_ok',
             'container': 'tiles', 'item_format': 'int',
@@ -178,6 +181,20 @@ class TestRepeatPanels:
         assert [t._style['--halon-tile-color'] for t in tiles] == [
             STATUS_COLORS['online'], STATUS_COLORS['failed']]
         assert _texts(built, 'halon-tile-label') == ['sda', 'sdb']
+
+    async def test_a_largest_scale_fills_the_largest_items_meter(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'size_a_gb': 2.0, 'size_b_gb': 8.0}, status='online'))
+        built = await _ticked(user, render_page)
+        widths = [e._style['width'] for e in _by_class(built, 'halon-meter-fill')]
+        assert widths == ['25.0%', '100.0%']
+
+    async def test_a_largest_scale_follows_the_items_on_each_refresh(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'size_a_gb': 2.0, 'size_b_gb': 8.0}, status='online'))
+        built = await _ticked(user, render_page)
+        plugin.storage.apply(CollectResult(metrics={'size_a_gb': 16.0, 'size_b_gb': 8.0}, status='online'))
+        await built['page']._tick()
+        widths = [e._style['width'] for e in _by_class(built, 'halon-meter-fill')]
+        assert widths == ['100.0%', '50.0%']
 
     async def test_the_panel_carries_the_cards_title(self, user: User, plugin, render_page):
         built = await _ticked(user, render_page)

@@ -93,7 +93,7 @@ def _accumulate_freshness(refresh_age_hours: float, stale_warn, stale_fail,
 
 _DEFAULT_LAYOUT = [
     ['host_card', 'refresh_card', 'feeds_card'],
-    ['stale_card'],
+    ['stale_card', 'share_card'],
     ['chart'],
     ['events'],
 ]
@@ -132,7 +132,7 @@ class Freshrss(Plugin):
 
     def parse_results(self, results: List[Result]) -> CollectResult:
         """Turns the single Fever API HTTP result into a CollectResult with
-        refresh-age and feed-count metrics, one summary log line, and a status
+        refresh-age and total, stale and fresh feed-count metrics, one summary log line, and a status
         where any feed past feed_stale_threshold is failed and a stale refresh
         cycle or aging feeds are warning."""
         if not self.api_url:
@@ -162,10 +162,13 @@ class Freshrss(Plugin):
         stale_warn, stale_fail = _survey_feeds(
             feeds, now, self.feed_stale_warning, self.feed_stale_threshold)
 
+        stale_count = len(stale_warn) + len(stale_fail)
+        # Fever's feed list carries no fetch-error field, so erroring feeds cannot be counted.
         metrics = {
             'refresh_age_hours': refresh_age_hours,
             'feeds_total': float(len(feeds)),
-            'feeds_stale': float(len(stale_warn) + len(stale_fail)),
+            'feeds_stale': float(stale_count),
+            'feeds_fresh': float(len(feeds) - stale_count),
         }
 
         acc = _accumulate_freshness(refresh_age_hours, stale_warn, stale_fail,
@@ -193,6 +196,13 @@ class Freshrss(Plugin):
                 'stale_card': {
                     'metric': 'feeds_stale', 'title': 'STALE FEEDS',
                     'format': 'int', 'color': 'nonzero_warning',
+                },
+                'share_card': {
+                    'kind': 'share', 'title': 'FRESHNESS', 'format': 'int',
+                    'parts': [
+                        {'metric': 'feeds_fresh', 'label': 'Fresh', 'color': 'online'},
+                        {'metric': 'feeds_stale', 'label': 'Stale', 'color': 'warning'},
+                    ],
                 },
             },
             'chart': {'metric': 'refresh_age_hours', 'title': 'REFRESH AGE (HOURS)'},
