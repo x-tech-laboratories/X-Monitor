@@ -5,7 +5,7 @@ from typing import Any
 from nicegui import ui
 
 from x_monitor.core.contracts import EngineLike
-from ..components import action_button, card
+from ..components import action_button, dialog_card
 
 
 def render_mute_button(engine: EngineLike, plugin: Any) -> None:
@@ -57,40 +57,45 @@ def open_notifications_dialog(engine: EngineLike) -> None:
         if not muted:
             ui.label('No monitors are muted.').classes('halon-caption')
             return
-        for plugin in muted:
-            def unmute(p=plugin) -> None:
-                notifications.set_muted(p.id, False)
-                ui.notify(f'{p.name} unmuted', type='positive')
-                muted_list.refresh()
+        with ui.column().classes('halon-list'):
+            for plugin in muted:
+                def unmute(p=plugin) -> None:
+                    notifications.set_muted(p.id, False)
+                    ui.notify(f'{p.name} unmuted', type='positive')
+                    muted_list.refresh()
 
-            with ui.row().classes('w-full items-center justify-between gap-2'):
-                ui.label(plugin.name)
-                action_button('Unmute', on_click=unmute, icon='notifications', weight='flat')
+                with ui.row().classes('halon-list-row'):
+                    ui.label(plugin.name)
+                    action_button('Unmute', on_click=unmute, icon='notifications', weight='flat')
 
-    with ui.dialog() as dialog, card('w-full').style('max-width: 32rem;'):
-        ui.label('Notifications').classes('halon-title-section mb-4')
-        ui.label('Channels').classes('halon-label')
-        for channel_id, channel in notifications.channels.items():
-            with ui.row().classes('w-full items-center justify-between gap-2'):
-                with ui.column().classes('gap-0'):
-                    ui.label(channel_id)
-                    ui.label(channel.TYPE).classes('halon-caption')
-                action_button('Send test', on_click=lambda c=channel_id: send_test(c),
-                              icon='send', weight='flat').mark(f'test-{channel_id}')
-        if notifications.windows:
-            ui.separator().classes('my-2')
-            ui.label('Maintenance').classes('halon-label')
-            active = notifications.active_windows()
-            for window in notifications.windows:
-                with ui.row().classes('w-full items-center justify-between gap-2'):
-                    with ui.column().classes('gap-0'):
-                        ui.label(window.name)
-                        ui.label(window.describe()).classes('halon-caption')
-                    if window in active:
-                        ui.label('Active now').classes('halon-caption')
-        ui.separator().classes('my-2')
-        ui.label('Muted').classes('halon-label')
-        muted_list()
-        with ui.row().classes('w-full justify-end mt-4'):
-            action_button('Close', on_click=dialog.close, icon=None, weight='flat')
+    with ui.dialog() as dialog:
+        body, footer = dialog_card('Notifications', width='32rem')
+        with body:
+            with ui.column().classes('w-full gap-0'):
+                ui.label('Channels').classes('halon-label')
+                with ui.column().classes('halon-list'):
+                    for channel_id, channel in notifications.channels.items():
+                        with ui.row().classes('halon-list-row'):
+                            with ui.column().classes('gap-0 min-w-0'):
+                                ui.label(channel_id)
+                                ui.label(channel.TYPE).classes('halon-caption')
+                            action_button('Send test', on_click=lambda c=channel_id: send_test(c),
+                                          icon='send', weight='flat').mark(f'test-{channel_id}')
+            if notifications.windows:
+                with ui.column().classes('w-full gap-0'):
+                    ui.label('Maintenance').classes('halon-label')
+                    active = notifications.active_windows()
+                    with ui.column().classes('halon-list'):
+                        for window in notifications.windows:
+                            with ui.row().classes('halon-list-row'):
+                                with ui.column().classes('gap-0 min-w-0'):
+                                    ui.label(window.name)
+                                    ui.label(window.describe()).classes('halon-caption')
+                                if window in active:
+                                    ui.label('Active now').classes('halon-badge halon-badge-warning')
+            with ui.column().classes('w-full gap-0'):
+                ui.label('Muted').classes('halon-label')
+                muted_list()
+        with footer:
+            action_button('Close', on_click=dialog.close, icon=None)
     dialog.open()

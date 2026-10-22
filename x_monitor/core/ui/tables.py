@@ -1,5 +1,6 @@
 """Tables that sort by several columns at once and filter on a typed term, done on the server so every table behaves the same."""
 import re
+from contextlib import nullcontext
 from typing import Optional
 from nicegui import ui
 
@@ -131,10 +132,11 @@ _HEADER_CELL_SLOT = '''
 
 def data_table(columns: list, rows: Optional[list] = None, filter_input: bool = True,
                filter_fields: Optional[list] = None, filter_placeholder: str = 'Filter',
-               **table_kwargs) -> ui.table:
+               filter_into=None, **table_kwargs) -> ui.table:
     """A ui.table whose columns sort on click, several at once with Shift, under an optional filter box.
 
     Columns marked 'sortable': False, such as row buttons, stay out of sorting. Feed it rows with set_rows.
+    `filter_into` is the element the filter box goes in, such as the table's heading line; without it the box sits just above the table.
     """
     sortable_names = [col['name'] for col in columns if col.get('sortable', True) is not False]
     # Quasar's own single-column sort is switched off, since the server orders the rows.
@@ -146,10 +148,11 @@ def data_table(columns: list, rows: Optional[list] = None, filter_input: bool = 
 
     filter_box = None
     if filter_input:
-        filter_box = ui.input(placeholder=filter_placeholder).props(
-            'outlined dense clearable').classes('w-full mb-2')
+        with filter_into if filter_into is not None else nullcontext():
+            filter_box = ui.input(placeholder=filter_placeholder).props(
+                'outlined dense clearable').classes('halon-table-filter')
         with filter_box.add_slot('prepend'):
-            ui.icon('search', size='xs')
+            ui.icon('search')
     table = ui.table(columns=render_columns, rows=[], **table_kwargs)
     controls = TableControls(table, fields)
     table.x_controls = controls

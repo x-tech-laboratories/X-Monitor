@@ -56,7 +56,7 @@ def make_inline_layout(
 def _row_style(all_hidden: bool) -> str:
     if all_hidden:
         return 'display: none'
-    return 'display: flex; flex-wrap: wrap; gap: 1rem; width: 100%; align-items: stretch'
+    return 'display: flex; flex-wrap: wrap; gap: var(--space-5); width: 100%; align-items: stretch'
 
 
 def _cell_style(cfg: dict) -> str:
@@ -92,7 +92,7 @@ class PluginLayout:
         self._widget_div: Dict[str, Any] = {}
 
         outer = ui.element('div').style(
-            'display: flex; flex-direction: column; gap: 1rem; width: 100%'
+            'display: flex; flex-direction: column; gap: var(--space-5); width: 100%'
         )
 
         for row in resolve_rows(raw_rows, widget_overrides):

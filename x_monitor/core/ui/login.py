@@ -94,15 +94,13 @@ body {
     padding: var(--space-8);
     background: var(--surface-default);
     border: var(--border-width) solid var(--border-default);
-    border-radius: var(--radius-window);
-    box-shadow: var(--shadow-card);
+    border-radius: var(--radius-default);
 }
 .brand { display: flex; align-items: center; gap: var(--space-4); }
 .brand h1 {
     margin: 0;
     font-size: var(--text-h2);
     font-weight: 600;
-    letter-spacing: 0.02em;
     color: var(--text-heading);
 }
 .lede {
@@ -113,10 +111,10 @@ body {
 .error {
     margin: 0 0 var(--space-6);
     padding: var(--space-4) var(--space-5);
-    border: var(--border-width) solid var(--status-danger);
+    background: color-mix(in srgb, var(--status-danger) 15%, transparent);
     border-radius: var(--radius-default);
     font-size: var(--text-control);
-    color: var(--status-danger);
+    color: var(--text-body);
 }
 form { display: flex; flex-direction: column; }
 label {
@@ -124,20 +122,22 @@ label {
     font-size: var(--text-label);
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-tertiary);
+    letter-spacing: var(--letter-spacing-caps);
+    color: var(--text-secondary);
 }
 input[type="text"], input[type="password"] {
-    height: var(--frame-height);
+    height: var(--control-height);
     margin-bottom: var(--space-6);
-    padding: 0 var(--control-padding-x);
+    padding: 7px 11px;
     background: var(--surface-default);
     color: var(--text-body);
-    border: var(--border-width) solid var(--border-control);
-    border-radius: var(--radius-default);
+    border: var(--border-width) solid var(--border-default);
+    border-radius: var(--radius-small);
+    line-height: var(--line-height-ui);
     font: inherit;
     font-size: var(--text-control);
 }
+input[type="text"]:hover, input[type="password"]:hover { border-color: var(--border-focus); }
 input[type="text"]:focus, input[type="password"]:focus {
     outline: none;
     border-color: var(--border-focus);
@@ -160,13 +160,13 @@ button {
     background: var(--accent);
     color: var(--text-on-fill);
     border: none;
-    border-radius: var(--radius-default);
+    border-radius: var(--radius-small);
     font: inherit;
     font-size: var(--text-control);
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
 }
-button:hover { filter: brightness(1.08); }
+button:hover { opacity: 0.85; }
 button:focus-visible {
     outline: none;
     box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring);

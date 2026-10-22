@@ -2,7 +2,7 @@
  * appears. Values are §3.1 (color) and §4.1 (typography, space, geometry) of
  * Halon's THEME-DESIGN-GUIDE.md, copied verbatim; the shadow tokens are §5.
  * halon.css and every Python call site may reference these names and nothing
- * else. The dark block re-declares twenty-two colors and nothing more; a
+ * else. The dark block re-declares the colors and shadows and nothing more; a
  * manual toggle writing data-theme onto <html> wins over the system
  * preference in both directions.
  */
@@ -29,17 +29,18 @@
     /* Geometry — one control height, so everything on a row aligns */
     --control-height: 32px;
     --control-padding-x: 14px;
-    --icon-button-size: 30px;
+    --icon-button-size: 32px;
     --row-height: 28px;
     --frame-height: 34px;
+    --icon-size-small: 16px;
+    --icon-size-large: 20px;
+    --sidebar-width: 248px;
     --border-width: 1px;
     --focus-ring-width: 3px;
 
+    /* Two radii: small for anything you act on, default for any surface that holds them */
     --radius-small: 4px;
-    --radius-row: 6px;
     --radius-default: 8px;
-    --radius-window: 10px;
-    --radius-pill: 9999px;
 
     --text-label: 11px;
     --text-caption: 12px;
@@ -49,9 +50,21 @@
     --text-h2: 19px;
     --text-h1: 26px;
 
+    --letter-spacing-caps: .04em;
+    --letter-spacing-display: -.01em;
+
+    --line-height-ui: 16px;
     --line-height-body: 1.55;
-    --line-height-ui: 1.2;
     --measure: 68ch;
+
+    --layer-sticky: 100;
+    --layer-menu: 200;
+    --layer-modal: 300;
+    --layer-toast: 400;
+    --layer-tooltip: 500;
+
+    --duration-fast: .12s;
+    --duration-slow: .3s;
 
     /* Surfaces */
     --surface-root: #f1f5f9;
@@ -122,7 +135,7 @@
         --text-body: #e2e8f0;
         --text-secondary: #cbd5e1;
         --text-tertiary: #94a3b8;
-        --text-on-navigation: #7dabf5;
+        --text-on-navigation: #ffffff;
 
         --text-on-fill: #0b1220;
 
@@ -139,7 +152,7 @@
         --badge-experimental: #a78bfa;
 
         --shadow-item: 0 1px 2px rgba(15, 23, 42, 0.50);
-        --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.40), 0 1px 2px rgba(15, 23, 42, 0.30);
+        --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.27), 0 1px 2px rgba(15, 23, 42, 0.20);
         --shadow-tab: 0 1px 3px rgba(15, 23, 42, 0.50);
         --shadow-floating: 0 2px 8px rgba(15, 23, 42, 0.60);
         --shadow-modal: 0 8px 32px rgba(15, 23, 42, 0.70);
@@ -159,7 +172,7 @@
     --text-body: #e2e8f0;
     --text-secondary: #cbd5e1;
     --text-tertiary: #94a3b8;
-    --text-on-navigation: #7dabf5;
+    --text-on-navigation: #ffffff;
 
     --text-on-fill: #0b1220;
 
@@ -176,7 +189,7 @@
     --badge-experimental: #a78bfa;
 
     --shadow-item: 0 1px 2px rgba(15, 23, 42, 0.50);
-    --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.40), 0 1px 2px rgba(15, 23, 42, 0.30);
+    --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.27), 0 1px 2px rgba(15, 23, 42, 0.20);
     --shadow-tab: 0 1px 3px rgba(15, 23, 42, 0.50);
     --shadow-floating: 0 2px 8px rgba(15, 23, 42, 0.60);
     --shadow-modal: 0 8px 32px rgba(15, 23, 42, 0.70);

@@ -134,6 +134,7 @@ def palette(scheme: str = 'light') -> Dict[str, str]:
         text=table['text-body'],
         text_secondary=table['text-secondary'],
         text_on_fill=table['text-on-fill'],
+        font=' '.join(table['font-family-interface'].split()),
     )
     return colors
 
@@ -220,13 +221,19 @@ def override_css() -> str:
 
 _head_installed = False
 
+# The scheme the page is showing: a pinned data-theme, else the system preference.
+_CURRENT_SCHEME_JS = (
+    'document.documentElement.dataset.theme'
+    ' || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")'
+)
+
 
 def install() -> None:
     """Load the theme into the current page and start reporting its scheme.
     The sheets and the reporting script are shared head content, which NiceGUI
     accumulates process-wide, so they are added on the first page only."""
     global _head_installed
-    from nicegui import ui
+    from nicegui import context, ui
 
     if not _head_installed:
         ui.add_css(_TOKENS_CSS.read_text(), shared=True)
@@ -238,6 +245,15 @@ def install() -> None:
         _head_installed = True
 
     ui.on('halon_scheme', lambda event: _set_scheme(event.args))
+    client = context.client
+
+    async def ask_scheme() -> None:
+        # The page script's first report goes out before the socket is open and is lost, so the server asks once connected.
+        value = await client.run_javascript(_CURRENT_SCHEME_JS)
+        with client:
+            _set_scheme(value)
+
+    client.on_connect(ask_scheme)
     ui.colors(
         primary=ACCENT, secondary=TEXT_SECONDARY, accent=ACCENT,
         positive=STATUS_COLORS['online'], negative=STATUS_COLORS['failed'],

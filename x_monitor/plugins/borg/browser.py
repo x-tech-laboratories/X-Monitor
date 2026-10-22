@@ -31,7 +31,7 @@ def render_browser(plugin):
     """An archive picker, a breadcrumb trail, the current folder's entries with tick boxes, and a restore button."""
     from nicegui import ui
     from nicegui import context
-    from x_monitor.core.ui.components import LABEL_CLASS, action_button, card, confirmed, notify_client, on_data_event
+    from x_monitor.core.ui.components import action_button, confirmed, table_block, table_heading, table_wrap, notify_client, on_data_event
     from x_monitor.core.ui.tables import data_table, set_rows
 
     state = {'archive': None, 'path': ''}
@@ -69,11 +69,11 @@ def render_browser(plugin):
         crumbs.clear()
         with crumbs:
             parts = [p for p in state['path'].split('/') if p]
-            ui.button('/', on_click=lambda: open_folder(state['archive'], '')).props('flat dense no-caps size=sm')
+            action_button('/', on_click=lambda: open_folder(state['archive'], ''), icon=None, weight='flat')
             for depth, part in enumerate(parts):
                 target = '/'.join(parts[:depth + 1])
                 ui.label('›').classes('halon-caption')
-                ui.button(part, on_click=lambda t=target: open_folder(state['archive'], t)).props('flat dense no-caps size=sm')
+                action_button(part, on_click=lambda t=target: open_folder(state['archive'], t), icon=None, weight='flat')
 
     def count_selected():
         n = len(table.selected)
@@ -102,31 +102,34 @@ def render_browser(plugin):
         if row.get('dir'):
             await open_folder(state['archive'], row.get('path', ''))
 
-    with card('w-full'):
-        with ui.row().classes('w-full items-center justify-between mb-2'):
-            ui.label('BROWSE ARCHIVE').classes(LABEL_CLASS)
-            picker = ui.select([], label='Archive',
-                               on_change=lambda e: open_folder(e.value, '')).props('outlined dense').classes('min-w-[18rem]')
-        crumbs = ui.row().classes('items-center gap-1')
-        status = ui.label('Pick an archive to browse its files.').classes('halon-caption mb-2')
-        table = data_table(
-            columns=[
-                {'name': 'name', 'label': 'Name', 'field': 'name', 'align': 'left', 'sortable': True},
-                {'name': 'size', 'label': 'Size', 'field': 'size', 'align': 'right', 'sort_field': 'size_bytes'},
-                {'name': 'mtime', 'label': 'Modified', 'field': 'mtime', 'align': 'left', 'sortable': True},
-            ],
-            row_key='path', selection='multiple', on_select=count_selected,
-            pagination={'rowsPerPage': 50},
-        ).classes('w-full')
+    with table_block():
+        with table_heading('Browse archive') as heading:
+            with ui.row().classes('halon-table-actions'):
+                ui.label('Archive').classes('halon-field-label')
+                picker = ui.select([], on_change=lambda e: open_folder(e.value, '')).props(
+                    'outlined dense options-dense').classes('min-w-[18rem]')
+        with ui.row().classes('w-full items-center justify-between no-wrap'):
+            crumbs = ui.row().classes('items-center').style('gap: var(--space-1)')
+            status = ui.label('Pick an archive to browse its files.').classes('halon-caption')
+        with table_wrap():
+            table = data_table(
+                columns=[
+                    {'name': 'name', 'label': 'Name', 'field': 'name', 'align': 'left', 'sortable': True},
+                    {'name': 'size', 'label': 'Size', 'field': 'size', 'align': 'right', 'sort_field': 'size_bytes'},
+                    {'name': 'mtime', 'label': 'Modified', 'field': 'mtime', 'align': 'left', 'sortable': True},
+                ],
+                row_key='path', selection='multiple', on_select=count_selected,
+                pagination={'rowsPerPage': 50}, filter_into=heading,
+            ).classes('w-full').props('flat color=secondary')
         table.add_slot('body-cell-name', '''
 <q-td :props="props">
   <span :class="props.row.dir ? 'cursor-pointer' : ''" @click="props.row.dir && $parent.$emit('open', props.row)">
-    <q-icon :name="props.row.dir ? 'folder' : 'description'" size="xs" class="q-mr-sm" />{{ props.row.name }}
+    <q-icon :name="props.row.dir ? 'folder' : 'description'" size="16px" style="color: var(--text-secondary); margin-right: var(--space-3)" />{{ props.row.name }}
   </span>
 </q-td>
 ''')
         table.on('open', on_open)
-        with ui.row().classes('w-full justify-end mt-2'):
+        with ui.row().classes('w-full justify-end'):
             restore_btn = action_button('Restore selected', icon='restore', weight='filled', on_click=restore)
         restore_btn.set_enabled(False)
 

@@ -24,7 +24,7 @@ def no_scheduler(monkeypatch):
                         lambda callback, run_now=True: None)
 
 
-TITLE_CLASSES = ('halon-label', 'halon-title-section')
+TITLE_CLASSES = ('halon-label', 'halon-card-title', 'halon-title-section')
 
 
 def _labels(element, classes=None):

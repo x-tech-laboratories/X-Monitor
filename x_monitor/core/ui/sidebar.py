@@ -6,7 +6,7 @@ from nicegui import ui
 from x_monitor.core.contracts import EngineLike
 from x_monitor.core.coordination.monitor_graph import View, child_label, find_monitor
 from .theme import STATUS_COLORS
-from .components import on_data_event, offload
+from .components import icon_button, on_data_event, offload
 from . import nicegui_compat as ng
 
 # Tracks the drag on the gutter and emits 'drawer_resized' with the final width in pixels.
@@ -31,10 +31,9 @@ DRAWER_RESIZE_JS = '''
 '''
 
 _TREE_HEADER_SLOT = '''
-    <span class="flex items-center gap-2">
-        <q-icon class="halon-status-dot" name="circle"
-                :style="{ color: props.node.color }" size="8px" />
-        {{ props.node.label }}
+    <span class="flex items-center no-wrap" style="gap: var(--space-3); min-width: 0">
+        <span class="halon-status-dot" :style="{ background: props.node.color }"></span>
+        <span class="ellipsis">{{ props.node.label }}</span>
     </span>
 '''
 
@@ -142,6 +141,17 @@ def monitor_for_key(nodes: list, key: str):
     return None
 
 
+def first_key_for(nodes: list, monitor_id: str):
+    """The key of the first tree node that shows this monitor, depth first, or None."""
+    for node in nodes:
+        if node['monitor'] == monitor_id:
+            return node['id']
+        found = first_key_for(node.get('children') or [], monitor_id)
+        if found:
+            return found
+    return None
+
+
 def _apply_nav_selection(nav_items: Dict[str, Any], current_view: str):
     """Marks the nav item for the current view as selected."""
     # A sidebar item is a place you are, so selection is elevation (halon-item-selected), not an accent fill.
@@ -172,9 +182,7 @@ def _render_nav_items(switch_view: Callable) -> Dict[str, Any]:
 
 def _tree_tool(icon: str, tooltip: str, on_click: Callable):
     """Renders one flat icon button of the tree toolbar."""
-    with ui.button(icon=icon, on_click=on_click, color=None).props('flat dense round size=sm') as button:
-        ui.tooltip(tooltip)
-    return button
+    return icon_button(icon, tooltip, on_click=on_click)
 
 
 def _render_tree_toolbar(engine: EngineLike, tree, current_view: Callable[[], View]):
@@ -191,7 +199,7 @@ def _render_tree_toolbar(engine: EngineLike, tree, current_view: Callable[[], Vi
         accordion.classes(add='halon-button-active' if enabled else None,
                           remove=None if enabled else 'halon-button-active')
 
-    with ui.row().classes('items-center gap-0 no-wrap'):
+    with ui.row().classes('items-center halon-sidebar-tools no-wrap'):
         _tree_tool('unfold_more', 'Expand all', lambda: set_expanded(branch_ids(ng.tree_nodes(tree))))
         _tree_tool('unfold_less', 'Collapse all', lambda: set_expanded([]))
         _tree_tool('error_outline', 'Expand failed', lambda: set_expanded(failed_branch_ids(ng.tree_nodes(tree))))
@@ -236,11 +244,13 @@ def _render_monitor_tree(engine: EngineLike, switch_view: Callable):
         ng.set_tree_expanded(tree, _load_expanded(engine, view))
         tree.update()
 
-    with ui.row().classes('w-full items-center justify-between no-wrap gap-0').style('padding-top: var(--space-5)'):
+    with ui.row().classes('halon-sidebar-heading items-center justify-between no-wrap'):
         _render_view_picker(engine, state['view'], show_view)
-        toolbar = ui.row().classes('items-center no-wrap')
+        toolbar = ui.row().classes('items-center halon-sidebar-tools no-wrap')
     tree = ui.tree(nodes=build_tree_nodes(engine, state['view'].children),
                    on_select=handle_select).classes('w-full')
+    # A second click on the monitor you are viewing must not take away the mark that says so.
+    tree.props('no-selection-unset icon=chevron_right')
     tree.add_slot('default-header', _TREE_HEADER_SLOT)
     with toolbar:
         _render_tree_toolbar(engine, tree, lambda: state['view'])
@@ -260,17 +270,29 @@ def _render_monitor_tree(engine: EngineLike, switch_view: Callable):
     ng.set_tree_expanded(tree, _load_expanded(engine, state['view']))
     tree.update()
     tree.on('update:expanded', _save_expanded)
+    return tree
 
 
 def render_sidebar(engine: EngineLike, switch_view: Callable):
-    """Renders the left drawer and returns it with a sync_nav(current_view) callback."""
+    """Renders the left drawer and returns it with a sync_nav(current_view, plugin) callback."""
     drawer_width = _load_drawer_width(engine)
     with ui.left_drawer(value=True).classes('p-0').props(f'width={drawer_width}') as left_drawer:
         _render_resize_handle(engine)
         nav_items = _render_nav_items(switch_view)
-        _render_monitor_tree(engine, switch_view)
+        tree = _render_monitor_tree(engine, switch_view)
 
-    def sync_nav(current_view: str):
+    def sync_nav(current_view: str, plugin: Any = None):
         _apply_nav_selection(nav_items, current_view)
+        # Only one place in the sidebar is where you are, so the tree lets go when a fixed view is shown.
+        # A monitor can sit under several groups; the row that was clicked keeps the mark.
+        nodes = ng.tree_nodes(tree)
+        selected = ng.tree_selected(tree)
+        if current_view != 'plugin' or plugin is None:
+            selected = None
+        elif not selected or monitor_for_key(nodes, selected) != plugin.id:
+            selected = first_key_for(nodes, plugin.id)
+        if ng.tree_selected(tree) != selected:
+            ng.set_tree_selected(tree, selected)
+            tree.update()
 
     return left_drawer, sync_nav

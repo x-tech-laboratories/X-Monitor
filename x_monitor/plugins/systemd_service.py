@@ -295,11 +295,9 @@ class SystemdService(Plugin):
         ]
 
     def _render_unit_file_controls(self):
-        from nicegui import ui
-        from x_monitor.core.ui.components import render_buttons
+        from x_monitor.core.ui.components import card, render_buttons
 
-        with ui.card().classes('p-4 h-full'):
-            ui.label('Unit File').classes('font-bold mb-2')
+        with card('w-full h-full', title='Unit file'):
             render_buttons(self, self._unit_file_buttons_spec())
 
     def render_ui(self, context: str = 'page'):
@@ -344,9 +342,8 @@ class SystemdService(Plugin):
 
     def _render_oneshot_ui(self, context: str = 'page'):
         from nicegui import ui
-        from x_monitor.core.ui.theme import STATUS_COLORS
         from x_monitor.core.ui.layout import PluginLayout, make_inline_layout
-        from x_monitor.core.ui.components import info_card
+        from x_monitor.core.ui.components import info_card, show_state
 
         layout = PluginLayout(self.config, _ONESHOT_LAYOUT if context == 'page' else make_inline_layout(_ONESHOT_LAYOUT))
         page = self.ui.page(metric_names=['is_running', 'last_run_epoch', 'last_run_success'])
@@ -362,7 +359,7 @@ class SystemdService(Plugin):
         with layout.cell('unit_file_card'):
             self._render_unit_file_controls()
         with layout.cell('history') as history_cell:
-            with ui.row().classes('gap-4'):
+            with ui.row().classes('halon-grid'):
                 result_label = info_card('LAST RESULT', '--')
                 age_label = info_card('LAST RUN', '--')
         with layout.cell('logs'):
@@ -380,14 +377,14 @@ class SystemdService(Plugin):
 
             if is_now_running:
                 state_label.text = 'RUNNING'
-                state_label.style(f"color: {STATUS_COLORS['warning']}")
+                show_state(state_label, 'warning')
                 history_cell.set_visibility(False)
             else:
                 history_cell.set_visibility(True)
 
                 if epoch_val is None:
                     state_label.text = 'UNKNOWN'
-                    state_label.style(f"color: {STATUS_COLORS['unavailable']}")
+                    show_state(state_label, 'unavailable')
                     return
 
                 is_ok = success_val is not None and success_val > 0.5
@@ -395,22 +392,21 @@ class SystemdService(Plugin):
 
                 if epoch == 0:
                     state_label.text = 'NEVER RUN'
-                    state_label.style(f"color: {STATUS_COLORS['failed']}")
+                    show_state(state_label, 'failed')
                 else:
                     state_label.text = 'IDLE'
-                    state_label.style(f"color: {STATUS_COLORS['online']}")
+                    show_state(state_label, 'online')
 
                 result_label.text = 'SUCCESS' if is_ok else 'FAILED'
-                result_label.style(f"color: {STATUS_COLORS['online' if is_ok else 'failed']}")
+                show_state(result_label, 'online' if is_ok else 'failed')
 
                 if epoch == 0:
                     age_label.text = 'Never run'
-                    age_label.style(f"color: {STATUS_COLORS['failed']}")
+                    show_state(age_label, 'failed')
                 else:
                     age = int(time.time()) - epoch
                     age_label.text = format_age(age)
-                    color = STATUS_COLORS['failed'] if age > self.max_age else STATUS_COLORS['online']
-                    age_label.style(f"color: {color}")
+                    show_state(age_label, 'failed' if age > self.max_age else 'online')
 
         page.on_refresh(update)
         update()
