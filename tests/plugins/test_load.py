@@ -70,3 +70,21 @@ class TestUiSpec:
         chart = plugin.UI_SPEC['charts']['load_chart']
         assert chart['style'] == 'lines'
         assert [s['metric'] for s in chart['series']] == ['load_pct_1m', 'load_pct_5m', 'load_pct_15m']
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Load, dict(CFG, warning=200))
+        run_cycle(p, lambda c: CmdResult(0, _loadavg(400.0, cpus=4), ""))
+        assert _latest_status() == "warning"
+        assert p.UI_SPEC['cards']['load_1m_card']['color'] == {'warning': 200.0, 'threshold': None}
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Load, dict(CFG, threshold=300))
+        run_cycle(p, lambda c: CmdResult(0, _loadavg(11.0, cpus=4), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _loadavg(12.0, cpus=4), ""))
+        assert _latest_status() == "failed"
+
+    def test_without_limits_the_gauge_has_no_bands(self, plugin):
+        assert 'color' not in plugin.UI_SPEC['cards']['load_1m_card']

@@ -7,6 +7,7 @@ config examples. For what X-Monitor is and how to run it, see the
 ## Contents
 
 - [Summary](#summary) — the one-line table of every plugin type
+- [Warning and failure limits](#warning-and-failure-limits) — turn either level of a limit pair off with `null`
 - [Scheduled actions](#scheduled-actions) — run any monitor's action on a cron schedule
 - Plugin types:
   [`uptime`](#uptime) ·
@@ -103,6 +104,17 @@ All plugin types share these common fields:
 | `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 | `schedule` | Actions to run on a cron schedule — see [Scheduled actions](#scheduled-actions) (default: none) |
+
+### Warning and failure limits
+
+Every pair of limits — `warning` / `threshold`, `cpu_warning` / `cpu_threshold`, `stale_warning` / `stale_threshold` and the rest — is two independent levels. Set either one to `null` to turn that level off while keeping the other: a monitor with `threshold: null` warns but never fails, and one with `warning: null` fails without warning first. Leaving a key out keeps its default.
+
+```yaml
+- name: Load
+  type: load
+  warning: 200
+  threshold: null    # warn on a busy box, never fail on it
+```
 
 ### Scheduled actions
 
@@ -787,11 +799,12 @@ Kernel names like `sda` are assigned in the order drives answer at boot, so one 
 ---
 
 ### `disk_space`
-Monitors disk space usage for a path or mountpoint over SSH via `df`. Works on any mounted Linux filesystem — no ZFS or other tools required. Marks the path failed when usage exceeds the configured threshold.
+Monitors disk space usage for a path or mountpoint over SSH via `df`. Works on any mounted Linux filesystem — no ZFS or other tools required. Marks the path failed when usage reaches the configured threshold, and warns first when a `warning` is set.
 
 | Option      | Description                                                       |
 |-------------|-------------------------------------------------------------------|
 | `path`      | Filesystem path or mountpoint to monitor (e.g. `/`, `/Storage`)  |
+| `warning`   | Usage percentage that triggers a `warning` status (optional)     |
 | `threshold` | Usage percentage that triggers a `failed` status (default: `90`) |
 | `interval`  | Polling frequency (default: `60`, recommend `10m`)                |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below     |
@@ -860,7 +873,7 @@ Memory use from `/proc/meminfo`, reported as the share of total memory that is *
 ---
 
 ### `load`
-Load average from `/proc/loadavg`, normalized by core count so 100% means the host is exactly at capacity. Thresholds are optional: without both, load is collected and charted but never changes the status — useful on a box where a high load average is normal.
+Load average from `/proc/loadavg`, normalized by core count so 100% means the host is exactly at capacity. Both limits are optional and independent: with neither, load is collected and charted but never changes the status — useful on a box where a high load average is normal.
 
 | Option       | Description                                                              |
 |--------------|--------------------------------------------------------------------------|
@@ -993,8 +1006,8 @@ Monitors running processes over SSH via `ps`, shown as a tree: each process sits
 |-----------------|------------------------------------------------------------------------------|
 | `max_processes` | Busiest processes kept in the tree, each with its ancestors (default: `20`); totals still count every process |
 | `require_sudo`  | Prefix kill commands with `sudo` (default: `false`)                          |
-| `cpu_warning`   | Busiest single process's own CPU % that triggers `warning` (optional — omit to disable) |
-| `cpu_threshold` | Busiest single process's own CPU % that triggers `failed`  (optional — omit to disable) |
+| `cpu_warning`   | Busiest single process's own CPU % that triggers `warning` (optional)                |
+| `cpu_threshold` | Busiest single process's own CPU % that triggers `failed` (optional)                 |
 | `interval`      | Polling frequency (default: `60`)                                             |
 | `ssh_config`    | SSH connection details — see [SSH Config](#ssh-config) below                 |
 
@@ -1223,7 +1236,7 @@ Every run is wrapped in `timeout` so a hung target can't stall the polling loop.
 | `command`           | Shell command to run on the target *(required)*                         |
 | `timeout`           | Per-run timeout in seconds (default: `30`)                              |
 | `pattern`           | *(Optional)* Regex with one capture group extracting a number           |
-| `warning` / `threshold` | Value bounds (pattern mode only)                                    |
+| `warning` / `threshold` | Value bounds, each optional (pattern mode only)                     |
 | `invert`            | If true, values *below* the bounds are bad (default: `false`)           |
 | `nonzero_is_warning`| Treat non-zero exit as warning instead of failed (default: `false`)     |
 | `value_label` / `value_unit` | UI label / unit suffix for the extracted value                 |

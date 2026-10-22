@@ -110,3 +110,30 @@ class TestActions:
     async def test_on_action_returns_false(self, make_plugin):
         p = make_plugin(CommandPlugin, _cfg(command="true"))
         assert p.plan_action("anything") is None
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(CommandPlugin, _cfg(command="x", pattern=r"temp=(\d+)", warning=70))
+        run_cycle(p, lambda c: CmdResult(0, "temp=9999", ""))
+        assert _latest_status("test-cmd") == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(CommandPlugin, _cfg(command="x", pattern=r"temp=(\d+)", threshold=80))
+        run_cycle(p, lambda c: CmdResult(0, "temp=79", ""))
+        assert _latest_status("test-cmd") == "online"
+        run_cycle(p, lambda c: CmdResult(0, "temp=80", ""))
+        assert _latest_status("test-cmd") == "failed"
+
+    async def test_inverted_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(CommandPlugin, _cfg(command="x", pattern=r"free=(\d+)", warning=20, invert=True))
+        run_cycle(p, lambda c: CmdResult(0, "free=0", ""))
+        assert _latest_status("test-cmd") == "warning"
+        assert p._value_color(0.0) == "warning"
+
+    async def test_inverted_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(CommandPlugin, _cfg(command="x", pattern=r"free=(\d+)", threshold=10, invert=True))
+        run_cycle(p, lambda c: CmdResult(0, "free=11", ""))
+        assert _latest_status("test-cmd") == "online"
+        run_cycle(p, lambda c: CmdResult(0, "free=10", ""))
+        assert _latest_status("test-cmd") == "failed"

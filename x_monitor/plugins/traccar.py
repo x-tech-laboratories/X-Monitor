@@ -2,7 +2,7 @@
 the X-Monitor host, basic-authenticated as a dedicated x-monitor account. Config:
 api_url (required, X-Monitor-reachable), username, password / password_command,
 devices (names to watch, default all enabled), stale_warning /
-stale_threshold (hours), api_timeout. A device silent past stale_warning is
+stale_threshold (hours, either null to turn it off), api_timeout. A device silent past stale_warning is
 warning; one past stale_threshold, or that never reported, is failed; no
 matching enabled devices is a warning. Transport, auth and payload errors
 mean nothing was measured, so they are unavailable."""
@@ -15,7 +15,9 @@ from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import (
     CollectResult, HttpRequest, HttpResult, Request, Result,
 )
-from x_monitor.plugins.base.plugin_helpers import StatusAccumulator, resolve_secret
+from x_monitor.plugins.base.plugin_helpers import (
+    StatusAccumulator, level_for, limit_from, resolve_secret,
+)
 
 
 def _parse_response(stdout: str) -> List[Dict[str, Any]]:
@@ -54,8 +56,8 @@ def _http_failure(result) -> Optional[CollectResult]:
     return None
 
 
-def _survey_staleness(watched: List[Dict[str, Any]], stale_warning: float,
-                      stale_threshold: float):
+def _survey_staleness(watched: List[Dict[str, Any]], stale_warning: Optional[float],
+                      stale_threshold: Optional[float]):
     """Bucket devices into warn/fail staleness lists (age -1 meaning never reported) and find the oldest update age."""
     stale_warn: List[Tuple[str, float]] = []
     stale_fail: List[Tuple[str, float]] = []
@@ -68,9 +70,10 @@ def _survey_staleness(watched: List[Dict[str, Any]], stale_warning: float,
             stale_fail.append((name, -1))
             continue
         oldest_age = max(oldest_age, age)
-        if age >= stale_threshold:
+        level = level_for(age, stale_warning, stale_threshold)
+        if level == 'failed':
             stale_fail.append((name, age))
-        elif age >= stale_warning:
+        elif level == 'warning':
             stale_warn.append((name, age))
 
     return stale_warn, stale_fail, oldest_age
@@ -78,7 +81,8 @@ def _survey_staleness(watched: List[Dict[str, Any]], stale_warning: float,
 
 def _accumulate_staleness(stale_warn: List[Tuple[str, float]],
                           stale_fail: List[Tuple[str, float]],
-                          stale_warning: float, stale_threshold: float) -> StatusAccumulator:
+                          stale_warning: Optional[float],
+                          stale_threshold: Optional[float]) -> StatusAccumulator:
     """Fold the stale-device buckets into problem lines and a worst-of status."""
     acc = StatusAccumulator()
     if stale_fail:
@@ -86,8 +90,8 @@ def _accumulate_staleness(stale_warn: List[Tuple[str, float]],
             f"{name} (never reported)" if age < 0 else f"{name} ({age:.0f}h)"
             for name, age in stale_fail[:3])
         suffix = f" (+{len(stale_fail) - 3} more)" if len(stale_fail) > 3 else ""
-        acc.escalate('failed',
-                     f"{len(stale_fail)} stale >= {stale_threshold:.0f}h: {names}{suffix}")
+        limit = '' if stale_threshold is None else f" >= {stale_threshold:.0f}h"
+        acc.escalate('failed', f"{len(stale_fail)} stale{limit}: {names}{suffix}")
     if stale_warn:
         names = ', '.join(f"{name} ({age:.0f}h)" for name, age in stale_warn[:3])
         suffix = f" (+{len(stale_warn) - 3} more)" if len(stale_warn) > 3 else ""
@@ -96,18 +100,13 @@ def _accumulate_staleness(stale_warn: List[Tuple[str, float]],
     return acc
 
 
-def _device_items(watched: List[Dict[str, Any]], stale_warning: float,
-                  stale_threshold: float) -> List[Dict[str, Any]]:
+def _device_items(watched: List[Dict[str, Any]], stale_warning: Optional[float],
+                  stale_threshold: Optional[float]) -> List[Dict[str, Any]]:
     """One snapshot item per watched device, by name, with its update age in hours and its staleness state."""
     items = []
     for device in watched:
         age = _age_hours(device.get('lastUpdate'))
-        if age is None or age >= stale_threshold:
-            state = 'failed'
-        elif age >= stale_warning:
-            state = 'warning'
-        else:
-            state = 'online'
+        state = 'failed' if age is None else level_for(age, stale_warning, stale_threshold)
         items.append({'label': device.get('name', '?'), 'age_hours': age, 'state': state})
     return sorted(items, key=lambda item: item['label'])
 
@@ -144,10 +143,15 @@ class Traccar(Plugin):
         # Resolve the secret once, on the X-Monitor host, so requests() stays pure.
         self.password = resolve_secret(config.get('password'),
                                        config.get('password_command'))
-        self.stale_warning = float(config.get('stale_warning', 24))
-        self.stale_threshold = float(config.get('stale_threshold', 72))
+        self.stale_warning = limit_from(config, 'stale_warning', 24)
+        self.stale_threshold = limit_from(config, 'stale_threshold', 72)
         self.devices: Optional[List[str]] = config.get('devices') or None
         self.api_timeout = int(config.get('api_timeout', 10))
+
+    def _bar_max(self) -> float:
+        """The device bars' full scale: twice the highest set limit, or a week when both are off."""
+        limit = self.stale_threshold if self.stale_threshold is not None else self.stale_warning
+        return 2 * limit if limit is not None else 168.0
 
     def requests(self) -> List[Request]:
         if not self.api_url or not self.username:
@@ -226,7 +230,7 @@ class Traccar(Plugin):
                         'source': 'snapshot',
                         'container': 'bars',
                         'bar_value': 'age_hours',
-                        'bar_max': 2 * self.stale_threshold,
+                        'bar_max': self._bar_max(),
                         'bar_marker': 50.0,
                         'item_format_fn': _age_text,
                         'item_color_by': _device_color,

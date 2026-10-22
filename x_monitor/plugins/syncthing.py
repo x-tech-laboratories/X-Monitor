@@ -2,7 +2,7 @@
 system config and connections each cycle, plus per-folder /rest/db/status for
 the folder IDs learned the cycle before. Config: api_url (required,
 X-Monitor-reachable), api_key / api_key_command, folders, devices, stall_warning
-(minutes), api_timeout. An errored or invalid folder — including one sitting
+(minutes, null to turn it off), api_timeout. An errored or invalid folder — including one sitting
 idle while still needing data — is failed; pull errors, folders syncing or
 scanning past stall_warning, and expected devices disconnected are warning;
 an API that did not answer, or answered with an error or something
@@ -17,7 +17,7 @@ from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import (
     CollectResult, HttpRequest, Request, Result,
 )
-from x_monitor.plugins.base.plugin_helpers import StatusAccumulator, resolve_secret
+from x_monitor.plugins.base.plugin_helpers import StatusAccumulator, limit_from, resolve_secret
 
 
 _DEFAULT_LAYOUT = [
@@ -111,7 +111,7 @@ def _sync_metrics(watched_count: int, errored: List[str], stalled: List[str],
 
 def _classify_folders(folder_states: Dict[str, Dict[str, Any]],
                       stall_since: Dict[str, float], now: float,
-                      stall_warning_secs: float):
+                      stall_warning_secs: Optional[float]):
     """Sort folders into errored/stalled and total their need bytes and pull errors, returning a rebuilt stall-start map."""
     new_stall_since = dict(stall_since)
     errored_folders: List[str] = []
@@ -140,7 +140,7 @@ def _classify_folders(folder_states: Dict[str, Dict[str, Any]],
 
         if state in ('syncing', 'scanning'):
             started = new_stall_since.setdefault(folder_id, now)
-            if now - started >= stall_warning_secs:
+            if stall_warning_secs is not None and now - started >= stall_warning_secs:
                 stalled_folders.append(folder_id)
         else:
             new_stall_since.pop(folder_id, None)
@@ -205,7 +205,7 @@ def _folder_items(config: Dict[str, Any], folder_states: Dict[str, Dict[str, Any
 
 def _accumulate_problems(errored_folders: List[str], stalled_folders: List[str],
                          disconnected: List[str], total_pull_errors: int,
-                         stall_warning_secs: float) -> StatusAccumulator:
+                         stall_warning_secs: Optional[float]) -> StatusAccumulator:
     """Fold errored/stalled folders, pull errors and disconnected devices into one worst-of status."""
     acc = StatusAccumulator()
     if errored_folders:
@@ -214,8 +214,9 @@ def _accumulate_problems(errored_folders: List[str], stalled_folders: List[str],
     if total_pull_errors > 0:
         acc.escalate('warning', f"{total_pull_errors} pull error(s)")
     if stalled_folders:
+        limit = '' if stall_warning_secs is None else f" >= {stall_warning_secs/60:.0f}m"
         acc.escalate('warning',
-                     f"{len(stalled_folders)} folder(s) stalled >= {stall_warning_secs/60:.0f}m: "
+                     f"{len(stalled_folders)} folder(s) stalled{limit}: "
                      f"{', '.join(stalled_folders[:3])}")
     if disconnected:
         acc.escalate('warning',
@@ -235,7 +236,8 @@ class Syncthing(Plugin):
                        'cat /Storage/Services/Syncthing/Config/x-monitor-api-key'))
         self.folders: Optional[List[str]] = config.get('folders') or None
         self.devices: Optional[List[str]] = config.get('devices') or None
-        self.stall_warning_secs = float(config.get('stall_warning', 60)) * 60
+        stall_warning = limit_from(config, 'stall_warning', 60)
+        self.stall_warning_secs = None if stall_warning is None else stall_warning * 60
         self.api_timeout = int(config.get('api_timeout', 10))
         self._stall_since: Dict[str, float] = {}
         self._cached_folder_ids: List[str] = []

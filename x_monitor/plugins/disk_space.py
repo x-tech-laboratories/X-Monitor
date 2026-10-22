@@ -1,13 +1,14 @@
 """Disk usage of one filesystem path, read with df over SSH — sampled locally
-by the agent on agent-backed hosts. Config: path (default /) and threshold
-(percent used, default 90). Usage at or above the threshold is failed; a df
-or parse error is unavailable. This monitor has no separate warning tier."""
+by the agent on agent-backed hosts. Config: path (default /), warning
+(percent used, default off) and threshold (percent used, default 90), either
+set to null to turn that level off. Usage at or above the warning is warning
+and at or above the threshold is failed; a df or parse error is unavailable."""
 
 from typing import Dict, Any, List
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import CmdResult, Command, CollectResult
 
-from x_monitor.plugins.base.plugin_helpers import format_bytes
+from x_monitor.plugins.base.plugin_helpers import format_bytes, level_for, limit_from, limits_text
 
 
 _DEFAULT_LAYOUT = [
@@ -22,8 +23,8 @@ class DiskSpace(Plugin):
     def __init__(self, name: str, config: Dict[str, Any]):
         super().__init__(name, config)
         self.path = config.get('path', '/')
-        self.threshold = int(config.get('threshold', 90))
-
+        self.warning = limit_from(config, 'warning')
+        self.threshold = limit_from(config, 'threshold', 90)
 
     SAMPLED = True
 
@@ -55,17 +56,22 @@ class DiskSpace(Plugin):
             'avail_gb': avail_gb,
         }
 
-        level = 'WARNING' if used_pct >= self.threshold else 'INFO'
+        status = level_for(used_pct, self.warning, self.threshold)
         return CollectResult(
             metrics=metrics,
             logs=[(
                 f"{self.path}: {used_pct:.1f}% used "
                 f"({format_bytes(used_gb)} of {format_bytes(size_gb)}, "
-                f"{format_bytes(avail_gb)} free, threshold {self.threshold}%)",
-                level,
+                f"{format_bytes(avail_gb)} free, {limits_text(self.warning, self.threshold, '%')})",
+                'INFO' if status == 'online' else 'WARNING',
             )],
-            status='failed' if used_pct >= self.threshold else 'online',
+            status=status,
         )
+
+    @property
+    def _limits_label(self) -> str:
+        """The limits card's text, such as 'warn 80% / fail 90%'."""
+        return limits_text(self.warning, self.threshold, '%')
 
     @property
     def UI_SPEC(self):
@@ -73,11 +79,12 @@ class DiskSpace(Plugin):
             'layout': _DEFAULT_LAYOUT,
             'cards': {
                 'path_card': {'title': 'PATH', 'value_attr': 'path'},
-                'threshold_card': {'title': 'THRESHOLD', 'value_attr': 'threshold', 'value_format': '{}%'},
+                'threshold_card': {'title': 'LIMITS', 'value_attr': '_limits_label'},
                 'usage_card': {
                     'kind': 'gauge', 'metric': 'used_pct', 'title': 'USAGE',
                     'format': 'percent1',
-                    'color': {'warning': self.threshold, 'threshold': self.threshold},
+                    'color': {'warning': self.warning if self.warning is not None else self.threshold,
+                              'threshold': self.threshold},
                 },
                 'avail_card': {'metric': 'avail_gb', 'title': 'AVAILABLE', 'format': 'bytes_gb'},
                 'total_card': {'metric': 'size_gb', 'title': 'TOTAL SIZE', 'format': 'bytes_gb'},

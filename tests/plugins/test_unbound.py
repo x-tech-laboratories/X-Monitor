@@ -196,3 +196,17 @@ class TestUiSpec:
 
     def test_the_servfail_chart_stays(self, plugin):
         assert plugin.UI_SPEC['chart']['metric'] == 'servfail_rate_pct'
+
+
+class TestOptionalLimits:
+    async def test_servfail_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Unbound, {**BASE_CFG, "servfail_threshold": None})
+        _respond(p, run_cycle, _stats(total=1000, servfail=900))
+        assert _latest_status() == "warning"
+
+    async def test_servfail_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Unbound, {**BASE_CFG, "servfail_warning": None})
+        _respond(p, run_cycle, _stats(total=1000, servfail=80))
+        assert _latest_status() == "online"
+        _respond(p, run_cycle, _stats(total=1000, servfail=250))
+        assert _latest_status() == "failed"

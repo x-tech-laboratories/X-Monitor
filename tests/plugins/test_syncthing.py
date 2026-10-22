@@ -266,3 +266,14 @@ class TestFolderTiles:
         cards = plugin.UI_SPEC['cards']
         assert cards['errors_card']['color'](1) == 'failed'
         assert cards['stalled_card']['color'](1) == 'warning'
+
+
+class TestOptionalLimits:
+    async def test_null_stall_warning_never_stalls(self, make_plugin, run_requests):
+        p = make_plugin(Syncthing, {**BASE_CFG, "stall_warning": None})
+        _collect_twice(p, run_requests, folder_statuses={
+            "docs": {**_folder_status(state="syncing", need_bytes=500), "globalBytes": 1000},
+            "photos": _folder_status(),
+        })
+        assert _latest_status() == "online"
+        assert _latest_metric("folders_stalled") == 0

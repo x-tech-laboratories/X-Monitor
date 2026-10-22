@@ -290,3 +290,27 @@ class TestUiSpec:
         spec = plugin.UI_SPEC
         assert 'worst_card' not in spec['cards']
         assert 'worst_card' not in {cell for row in spec['layout'] for cell in row}
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Filesystems, dict(BASE_CFG, threshold=None, inode_threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _combined(
+            _df(("/", 100, 100, 100)), _df_inodes(("/", 100))), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Filesystems, dict(BASE_CFG, warning=None, inode_warning=None))
+        run_cycle(p, lambda c: CmdResult(0, _df(("/", 100, 89, 89)), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _df(("/", 100, 90, 90)), ""))
+        assert _latest_status() == "failed"
+
+    async def test_no_limits_stay_online(self, make_plugin, run_cycle):
+        p = make_plugin(Filesystems, dict(BASE_CFG, warning=None, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _df(("/", 100, 100, 100)), ""))
+        assert _latest_status() == "online"
+
+    async def test_the_meter_tick_falls_back_to_the_threshold(self, make_plugin):
+        p = make_plugin(Filesystems, dict(BASE_CFG, warning=None))
+        assert p.UI_SPEC['cards']['filesystems']['repeat']['bar_marker'] == 90

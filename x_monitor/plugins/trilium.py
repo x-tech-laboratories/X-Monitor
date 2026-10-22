@@ -1,7 +1,7 @@
 """Trilium Notes liveness via one authenticated GET of the ETAPI metrics
 endpoint over HTTP from the X-Monitor host. Config: api_url (required,
 X-Monitor-reachable), token / token_command (the ETAPI token), stale_warning
-(hours), api_timeout. Note counts are recorded as metrics and the age of the
+(hours, null to turn it off), api_timeout. Note counts are recorded as metrics and the age of the
 last note modification drives status: older than stale_warning, or missing
 from the response, is warning; an unreachable API, a non-200 reply, or a
 malformed payload (usually a bad token) measured nothing, so it is unavailable."""
@@ -14,7 +14,7 @@ from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import (
     CollectResult, HttpRequest, HttpResult, Request, Result,
 )
-from x_monitor.plugins.base.plugin_helpers import resolve_secret
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from, resolve_secret
 
 
 def _parse_response(stdout: str) -> Dict[str, Any]:
@@ -47,10 +47,10 @@ def _format_age(hours: float) -> str:
     return f"{hours / 24:.1f}d"
 
 
-def _staleness_verdict(last_modified_age: float, stale_warning: float,
+def _staleness_verdict(last_modified_age: float, stale_warning: Optional[float],
                        total_notes: float):
     """The (status, message) pair for a known last-modified age judged against stale_warning."""
-    if last_modified_age >= stale_warning:
+    if stale_warning is not None and last_modified_age >= stale_warning:
         return 'warning', (
             f"no note modified in {_format_age(last_modified_age)} "
             f"(>= {_format_age(stale_warning)} threshold) | "
@@ -76,14 +76,14 @@ class Trilium(Plugin):
         self.api_url = config.get('api_url')
         # Resolve the ETAPI token once, on the X-Monitor host, so requests() stays pure.
         self.token = resolve_secret(config.get('token'), config.get('token_command'))
-        self.stale_warning = float(config.get('stale_warning', 72))
+        self.stale_warning = limit_from(config, 'stale_warning', 72)
         self.api_timeout = int(config.get('api_timeout', 10))
 
     def _lastmod_color(self, v):
         """Warn once the newest note's age passes the configured staleness limit."""
         if v is None:
             return None
-        return 'warning' if v >= self.stale_warning else 'online'
+        return level_for(v, self.stale_warning, None)
 
     def requests(self) -> List[Request]:
         if not self.api_url:

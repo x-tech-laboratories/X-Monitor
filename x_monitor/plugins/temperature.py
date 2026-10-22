@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 from x_monitor.plugins.base.signal_plugin import SignalPlugin
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from, limits_text
 
 
 def _sanitize_zone(name: str) -> str:
@@ -29,13 +29,13 @@ class Temperature(SignalPlugin):
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.warning   = float(config.get('warning',   70))
-        self.threshold = float(config.get('threshold', 80))
+        self.warning   = limit_from(config, 'warning',   70)
+        self.threshold = limit_from(config, 'threshold', 80)
 
     @property
     def scale_max(self) -> float:
         """The reading that fills the gauge and zone meters: 100°C, or the threshold if higher."""
-        return max(100.0, self.threshold)
+        return max(100.0, self.threshold) if self.threshold is not None else 100.0
 
     def _item_level(self, item):
         """Color one sensor's chip by its own reading against this monitor's thresholds."""
@@ -80,7 +80,7 @@ class Temperature(SignalPlugin):
             metrics=metrics,
             logs=[(
                 f"Max {max_temp:.1f}°C across {len(sensors)} zone(s) "
-                f"(warn {self.warning:g}°C / fail {self.threshold:g}°C)",
+                f"({limits_text(self.warning, self.threshold, '°C')})",
                 Status(status).log_level,
             )],
             status=status,
@@ -102,7 +102,8 @@ class Temperature(SignalPlugin):
                     'label_transform': 'spaces_upper',
                     'container': 'bars',
                     'bar_max': self.scale_max,
-                    'bar_marker': self.warning / self.scale_max * 100.0,
+                    'bar_marker': (self.warning / self.scale_max * 100.0
+                                   if self.warning is not None else None),
                     'empty_text': 'No thermal zones found',
                 },
             },

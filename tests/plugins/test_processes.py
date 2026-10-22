@@ -265,3 +265,18 @@ class TestProcessesKillAction:
 
     async def test_unknown_action_returns_false(self, plugin):
         assert plugin.plan_action('reboot') is None
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Processes, dict(BASE_CFG, cpu_warning=50.0))
+        run_cycle(p, lambda c: CmdResult(0, _PS_OUTPUT_HIGH_CPU, ""))
+        assert _latest_status() == "warning"
+        assert p.UI_SPEC['cards']['top_cpu_card']['color'] == {'warning': 50.0, 'threshold': None}
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Processes, dict(BASE_CFG, cpu_threshold=80.0))
+        run_cycle(p, lambda c: CmdResult(0, _PS_OUTPUT_WARN_CPU, ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _PS_OUTPUT_HIGH_CPU, ""))
+        assert _latest_status() == "failed"

@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 from x_monitor.plugins.base.signal_plugin import SignalPlugin
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from
 
 
 _TCP_STATES = {
@@ -48,8 +48,8 @@ class Connections(SignalPlugin):
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.warning   = int(config.get('warning',   500))
-        self.threshold = int(config.get('threshold', 1000))
+        self.warning   = limit_from(config, 'warning',   500)
+        self.threshold = limit_from(config, 'threshold', 1000)
 
 
     SAMPLED = True

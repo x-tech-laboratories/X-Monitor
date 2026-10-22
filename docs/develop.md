@@ -739,7 +739,7 @@ otherwise always the transport's, so labels match what was collected.
 
 `plugins/base/plugin_helpers.py` holds `PluginConfigMixin` (the `id` / `target` /
 `interval` derivation every plugin needs, via `_init_config`) plus shared pure
-helpers (`parse_duration`, `format_duration`, `format_bytes`, `level_for`), split
+helpers (`parse_duration`, `format_duration`, `format_bytes`, `limit_from`, `level_for`), split
 out so they're reusable without dragging in the rest of `plugin_base.py`.
 `parse_duration` accepts plain numbers or strings like `'1w'`, `'7d'`,
 `'2h30m'`, `'30s'`, including compound forms like `'1d12h'`. `format_bytes` reads

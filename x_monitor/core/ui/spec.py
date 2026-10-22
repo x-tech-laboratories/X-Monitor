@@ -426,8 +426,8 @@ def _zero_failed(v):
     return 'online' if v else 'failed'
 
 
-def threshold_color(warning: float, threshold: float):
-    """Build a color rule that maps a value onto status colors by two thresholds."""
+def threshold_color(warning: Optional[float], threshold: Optional[float]):
+    """Build a color rule that maps a value onto status colors by two thresholds, either of which may be None."""
     def rule(v):
         if v is None:
             return None

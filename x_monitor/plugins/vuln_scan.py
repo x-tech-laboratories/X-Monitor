@@ -5,8 +5,9 @@ through its firewall — rather than over loopback, where a host's own firewall
 lets everything through. Every finding the NSE vuln scripts report is one row:
 a definite `VULNERABLE` state fails the monitor, a `LIKELY VULNERABLE` one
 warns, and a `vulners` version match is graded by its CVSS score against
-`warning_cvss` / `threshold_cvss`. Open ports and their detected services are
-kept alongside so a new exposure is visible even when no script objects to it.
+`warning_cvss` / `threshold_cvss`, either null to turn it off. Open ports and
+their detected services are kept alongside so a new exposure is visible even
+when no script objects to it.
 A host that does not answer discovery, a scan that overruns `timeout`, or a
 scanning host without nmap measured nothing and is unavailable.
 Config: scan_host, ports, scripts, script_args, service_detection,
@@ -23,6 +24,7 @@ from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import CmdResult, Command, CollectResult, Status
 from x_monitor.plugins.base.plugin_helpers import (
     KILL_GRACE_SECONDS, StatusAccumulator, deadline_prefix, format_age, format_duration,
+    level_for, limit_from,
 )
 
 
@@ -96,15 +98,12 @@ def _grade_state(state: str, likely_status: str) -> Optional[str]:
     return None
 
 
-def _grade_cvss(cvss: Optional[float], warning: float, threshold: float) -> str:
+def _grade_cvss(cvss: Optional[float], warning: Optional[float],
+                threshold: Optional[float]) -> str:
     """The grade a version-matched advisory earns from its CVSS score."""
     if cvss is None:
         return _NOTED
-    if cvss >= threshold:
-        return _FAILED
-    if cvss >= warning:
-        return _WARNING
-    return _NOTED
+    return {'failed': _FAILED, 'warning': _WARNING}.get(level_for(cvss, warning, threshold), _NOTED)
 
 
 def _looks_vulnerable(text: str) -> bool:
@@ -131,8 +130,8 @@ class VulnScan(Plugin):
         self.service_detection = bool(config.get('service_detection', True))
         self.discovery_ports = [int(p) for p in config.get('discovery_ports', [22, 80, 443])]
         self.nmap_args = [str(a) for a in config.get('nmap_args', [])]
-        self.warning_cvss = float(config.get('warning_cvss', 4.0))
-        self.threshold_cvss = float(config.get('threshold_cvss', 7.0))
+        self.warning_cvss = limit_from(config, 'warning_cvss', 4.0)
+        self.threshold_cvss = limit_from(config, 'threshold_cvss', 7.0)
         self.likely_status = _severity(config.get('likely_status'), 'warning')
         self.max_findings = int(config.get('max_findings', 200))
         self.require_sudo = bool(config.get('require_sudo', False))

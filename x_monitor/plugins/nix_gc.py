@@ -10,7 +10,7 @@ not erase what was already seen. The action launches a detached
 `nix-collect-garbage` on the target, the same collection the timer runs, and
 its outcome is recorded as the last collection just as a timer run would be.
 Config: unit, timer, store, max_age, stale_status, timer_status, warning,
-threshold, max_generations, max_generation_age, require_sudo, gc_bin,
+threshold (either null to turn that level off), max_generations, max_generation_age, require_sudo, gc_bin,
 gc_args."""
 
 import json
@@ -25,7 +25,7 @@ from x_monitor.core.connectors.types import (
     ActionPlan, CmdResult, Command, CollectResult, Status,
 )
 from x_monitor.plugins.base.plugin_helpers import (
-    StatusAccumulator, format_age, format_bytes, format_duration, parse_duration,
+    StatusAccumulator, format_age, format_bytes, format_duration, level_for, limit_from, parse_duration,
 )
 
 
@@ -186,8 +186,8 @@ class NixGc(Plugin):
         self.max_age = parse_duration(config.get('max_age', '2w'))
         self.stale_status = _severity(config.get('stale_status'), 'failed')
         self.timer_status = _severity(config.get('timer_status'), 'warning')
-        self.warning = float(config.get('warning', 80))
-        self.threshold = float(config.get('threshold', 90))
+        self.warning = limit_from(config, 'warning', 80)
+        self.threshold = limit_from(config, 'threshold', 90)
         self.max_generations = (
             int(config['max_generations']) if config.get('max_generations') is not None else None
         )
@@ -332,15 +332,13 @@ class NixGc(Plugin):
             metrics['store_size_gb'] = size / (1024 ** 3)
             metrics['store_used_gb'] = used / (1024 ** 3)
             metrics['store_avail_gb'] = avail / (1024 ** 3)
-            if used_pct >= self.threshold:
-                acc.escalate('failed')
-            elif used_pct >= self.warning:
-                acc.escalate('warning')
+            level = level_for(used_pct, self.warning, self.threshold)
+            acc.escalate(level)
             logs.append((
                 f"{self.store} is {used_pct:.1f}% full "
                 f"({format_bytes(used, 'B')} of {format_bytes(size, 'B')}, "
                 f"{format_bytes(avail, 'B')} free)",
-                'WARNING' if used_pct >= self.warning else 'INFO'))
+                'INFO' if level == 'online' else 'WARNING'))
 
         for key, metric in (('paths', 'store_paths'), ('roots', 'gc_roots')):
             value = str(fields.get(key, ''))

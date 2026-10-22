@@ -213,6 +213,23 @@ class TestGrading:
         assert _latest_status() == "online"
         assert _latest_metric("noted") == 3
 
+    async def test_cvss_warning_only_never_fails(self, make_plugin):
+        p = make_plugin(VulnScan, {**BASE_CFG, "threshold_cvss": None})
+        _collect(p, _scan(_port(22, "ssh", VULNERS)))
+        assert _latest_status() == "warning"
+        assert _latest_metric("vulnerable") == 0
+        assert _latest_metric("suspected") == 2
+
+    async def test_cvss_failure_only_never_warns(self, make_plugin):
+        p = make_plugin(VulnScan, {**BASE_CFG, "warning_cvss": None, "threshold_cvss": 9.0})
+        _collect(p, _scan(_port(22, "ssh", VULNERS)))
+        assert _latest_status() == "online"
+        assert _latest_metric("noted") == 3
+        p = make_plugin(VulnScan, {**BASE_CFG, "warning_cvss": None})
+        _collect(p, _scan(_port(22, "ssh", VULNERS)))
+        assert _latest_status() == "failed"
+        assert _latest_metric("suspected") == 0
+
     async def test_findings_table_is_capped_but_counts_are_not(self, make_plugin):
         p = make_plugin(VulnScan, {**BASE_CFG, "max_findings": 1})
         _collect(p, _scan(_port(22, "ssh", VULNERS)))

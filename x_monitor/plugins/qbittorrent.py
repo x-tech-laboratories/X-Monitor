@@ -2,8 +2,8 @@
 over SSH — sampled locally by the agent on agent-backed hosts — that logs in,
 reads transfer info plus the torrent list, and logs the session out on exit.
 Config: api_url, username, password / password_command, stalled_warning,
-stalled_threshold, error_threshold, firewalled_warning, min_downloading,
-api_timeout. A DISCONNECTED connection status, errored torrents at
+stalled_threshold, error_threshold (each null to turn it off), firewalled_warning,
+min_downloading, api_timeout. A DISCONNECTED connection status, errored torrents at
 error_threshold, or stalls at stalled_threshold are failed; a firewalled
 connection or stalls at stalled_warning are warning (stall counts only apply
 while at least min_downloading torrents are downloading). An API that did
@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.plugins.base.plugin_helpers import (
-    SCRIPT_SEP, StatusAccumulator, dq, password_line,
+    SCRIPT_SEP, StatusAccumulator, dq, level_for, limit_from, password_line,
 )
 from x_monitor.core.connectors.types import ActionPlan, CmdResult, Command, CollectResult
 
@@ -205,8 +205,8 @@ def _count_state_buckets(torrents: List[Dict[str, Any]]) -> Dict[str, int]:
 def _accumulate_transfer_problems(connection: str, stalled: List[Dict[str, Any]],
                                   errored: List[Dict[str, Any]],
                                   downloading: List[Dict[str, Any]],
-                                  firewalled_warning: bool, error_threshold: int,
-                                  stalled_warning: int, stalled_threshold: int,
+                                  firewalled_warning: bool, error_threshold: Optional[int],
+                                  stalled_warning: Optional[int], stalled_threshold: Optional[int],
                                   min_downloading: int) -> StatusAccumulator:
     """Judge the connection state and stalled/errored torrent counts against the thresholds."""
     acc = StatusAccumulator()
@@ -216,15 +216,16 @@ def _accumulate_transfer_problems(connection: str, stalled: List[Dict[str, Any]]
     elif connection == 'firewalled' and firewalled_warning:
         acc.escalate('warning', "connection is firewalled (no inbound peers)")
 
-    if errored and len(errored) >= error_threshold:
+    if errored and error_threshold is not None and len(errored) >= error_threshold:
         names = ', '.join(t.get('name', '?') for t in errored[:3])
         suffix = f" (+{len(errored) - 3} more)" if len(errored) > 3 else ""
         acc.escalate('failed', f"{len(errored)} errored: {names}{suffix}")
 
     if len(downloading) >= min_downloading:
-        if len(stalled) >= stalled_threshold:
+        level = level_for(len(stalled), stalled_warning, stalled_threshold)
+        if level == 'failed':
             acc.escalate('failed', f"{len(stalled)} stalled (>= {stalled_threshold})")
-        elif len(stalled) >= stalled_warning:
+        elif level == 'warning':
             acc.escalate('warning', f"{len(stalled)} stalled (>= {stalled_warning})")
 
     return acc
@@ -237,6 +238,12 @@ def _format_rate(bytes_per_sec: float) -> str:
             return f"{value:.1f} {unit}" if unit != 'B/s' else f"{int(value)} {unit}"
         value /= 1024
     return f"{value:.1f} GiB/s"
+
+
+def _count_limit(config: Dict[str, Any], key: str, default: int) -> Optional[int]:
+    """Read a torrent-count limit as a whole number, or None when it is set to null."""
+    value = limit_from(config, key, default)
+    return None if value is None else int(value)
 
 
 _DEFAULT_LAYOUT = [
@@ -255,9 +262,9 @@ class Qbittorrent(Plugin):
         self.username = config.get('username')
         self.password = config.get('password')
         self.password_command = config.get('password_command')
-        self.stalled_warning = int(config.get('stalled_warning', 3))
-        self.stalled_threshold = int(config.get('stalled_threshold', 10))
-        self.error_threshold = int(config.get('error_threshold', 1))
+        self.stalled_warning = _count_limit(config, 'stalled_warning', 3)
+        self.stalled_threshold = _count_limit(config, 'stalled_threshold', 10)
+        self.error_threshold = _count_limit(config, 'error_threshold', 1)
         self.firewalled_warning = bool(config.get('firewalled_warning', True))
         self.min_downloading = int(config.get('min_downloading', 1))
         self.api_timeout = int(config.get('api_timeout', 10))
@@ -424,12 +431,7 @@ class Qbittorrent(Plugin):
     def _stalled_color(self, v: Optional[float]) -> Optional[str]:
         if v is None:
             return None
-        count = int(v)
-        if count >= self.stalled_threshold:
-            return 'failed'
-        if count >= self.stalled_warning:
-            return 'warning'
-        return 'online'
+        return level_for(int(v), self.stalled_warning, self.stalled_threshold)
 
     @property
     def UI_SPEC(self):

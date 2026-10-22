@@ -4,7 +4,7 @@ interval and pushes the results instead. Config: command, timeout, pattern,
 warning, threshold, invert, nonzero_is_warning, value_label, value_unit.
 Without a pattern, exit 0 is online and non-zero is failed (or warning when
 nonzero_is_warning is set); with one, the first captured number is ranked
-against warning/threshold (reversed when invert is set), and a timeout or a
+against warning and threshold, each optional (reversed when invert is set), and a timeout or a
 non-matching output is failed. A command that never ran because the host was
 unreachable is unavailable."""
 
@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional
 
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import floor_level_for, level_for, limit_from
 
 _DEFAULT_LAYOUT_METRIC = [
     ['host_card', 'exit_card', 'value_card'],
@@ -34,8 +34,8 @@ class CommandPlugin(Plugin):
         self.command_timeout = int(config.get('timeout', 30))
         pattern = config.get('pattern')
         self.pattern = re.compile(pattern) if pattern else None
-        self.warning   = config.get('warning')
-        self.threshold = config.get('threshold')
+        self.warning   = limit_from(config, 'warning')
+        self.threshold = limit_from(config, 'threshold')
         self.invert = bool(config.get('invert', False))
         self.nonzero_is_warning = bool(config.get('nonzero_is_warning', False))
         self.value_label = config.get('value_label', 'VALUE')
@@ -47,11 +47,9 @@ class CommandPlugin(Plugin):
         return '--' if v is None else f'{v:g}{self.value_unit}'
 
     def _level_for_value(self, value: float) -> str:
-        if self.warning is None or self.threshold is None:
-            return 'online'
         if self.invert:
-            return level_for(-value, -float(self.warning), -float(self.threshold))
-        return level_for(value, float(self.warning), float(self.threshold))
+            return floor_level_for(value, self.warning, self.threshold)
+        return level_for(value, self.warning, self.threshold)
 
     SAMPLED = True
 
@@ -111,11 +109,7 @@ class CommandPlugin(Plugin):
     def _value_color(self, value: Optional[float]) -> Optional[str]:
         if value is None:
             return None
-        if self.warning is None or self.threshold is None:
-            return 'online'
-        if self.invert:
-            return level_for(-value, -float(self.warning), -float(self.threshold))
-        return level_for(value, float(self.warning), float(self.threshold))
+        return self._level_for_value(value)
 
     @property
     def UI_SPEC(self):

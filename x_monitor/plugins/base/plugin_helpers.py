@@ -2,7 +2,7 @@
 password_command on the X-Monitor host at construction so requests() stays pure),
 the PluginConfigMixin that reads the shared config keys (id, interval,
 offset, schedule, ssh_config/target_host), the StatusAccumulator worst-of pattern, shell
-utilities for probe scripts, and the level_for threshold check plus the
+utilities for probe scripts, the level_for/limit_from threshold helpers, and the
 byte/duration/age formatting functions."""
 
 import re
@@ -113,13 +113,35 @@ def deadline_prefix(timeout: Optional[int]) -> List[str]:
     return ['timeout', '-k', str(KILL_GRACE_SECONDS), str(int(timeout))]
 
 
-def level_for(value: float, warning: float, threshold: float) -> str:
-    """Map a numeric reading onto online/warning/failed by its two thresholds."""
-    if value >= threshold:
+def limit_from(config: PluginConfig, key: str, default: Optional[float] = None) -> Optional[float]:
+    """Read a warning or failure limit: its default when absent, and None when set to null, which turns that level off."""
+    value = config[key] if key in config else default
+    return None if value is None else float(value)
+
+
+def level_for(value: float, warning: Optional[float], threshold: Optional[float]) -> str:
+    """Map a numeric reading onto online/warning/failed by its two limits, where a None limit never fires."""
+    if threshold is not None and value >= threshold:
         return 'failed'
-    if value >= warning:
+    if warning is not None and value >= warning:
         return 'warning'
     return 'online'
+
+
+def floor_level_for(value: float, warning: Optional[float], threshold: Optional[float]) -> str:
+    """Map a reading where lower is worse onto online/warning/failed, where a None limit never fires."""
+    if threshold is not None and value <= threshold:
+        return 'failed'
+    if warning is not None and value <= warning:
+        return 'warning'
+    return 'online'
+
+
+def limits_text(warning: Optional[float], threshold: Optional[float], unit: str = '') -> str:
+    """Describe the limits for a log line, such as 'warn 70% / fail 85%', leaving out a level that is off."""
+    parts = [f'{label} {value:g}{unit}' for label, value in (('warn', warning), ('fail', threshold))
+             if value is not None]
+    return ' / '.join(parts) or 'no limits'
 
 
 _BYTE_UNITS = {'B': 1024 ** -3, 'KB': 1024 ** -2, 'MB': 1024 ** -1, 'GB': 1.0, 'TB': 1024.0}
