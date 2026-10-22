@@ -87,10 +87,88 @@ class TestCollection:
         assert _latest_status() == "unavailable"
 
     async def test_it_contributes_its_cards(self, plugin):
-        assert set(plugin.UI_SPEC['cards']) == {'md_total_card', 'md_degraded_card'}
+        assert set(plugin.UI_SPEC['cards']) == {'md_total_card', 'md_degraded_card', 'md_array_tiles'}
 
     async def test_clean_and_degraded_arrays_share_one_bar(self, plugin):
         health = plugin.UI_SPEC['cards']['md_degraded_card']
         assert health['kind'] == 'share'
         assert [(p['metric'], p['color']) for p in health['parts']] == [
             ('arrays_ok', 'online'), ('arrays_degraded', 'failed')]
+
+
+_MDSTAT_TWO_ARRAYS = """Personalities : [raid1] [raid6] [raid5] [raid4]
+md1 : active raid5 sdd1[2] sdc1[1] sdb2[0]
+      3906764800 blocks super 1.2 level 5, 512k chunk, algorithm 2 [3/3] [UUU]
+      [========>............]  resync = 42.0% (820k/1953k) finish=60.0min speed=100000K/sec
+
+md0 : active raid1 sdb1[1] sda1[0]
+      1953382464 blocks super 1.2 [2/2] [UU]
+
+unused devices: <none>
+"""
+
+_MDSTAT_DEGRADED_RECOVERING = """Personalities : [raid1]
+md0 : active raid1 sdc1[2] sda1[0]
+      1953382464 blocks super 1.2 [2/1] [U_]
+      [==>..................]  recovery = 12.5% (244k/1953k) finish=90.0min speed=100000K/sec
+
+unused devices: <none>
+"""
+
+
+class TestArrayTiles:
+    def test_a_clean_array_is_recorded_with_its_level(self, plugin):
+        result = plugin.parse([CmdResult(0, _MDSTAT_CLEAN, "")])
+        assert result.snapshot == [
+            {'label': 'md0', 'level': 'raid1', 'state': 'clean', 'action': None, 'progress': None}]
+
+    def test_a_resyncing_array_records_its_progress(self, plugin):
+        result = plugin.parse([CmdResult(0, _MDSTAT_TWO_ARRAYS, "")])
+        assert result.snapshot == [
+            {'label': 'md1', 'level': 'raid5', 'state': 'resyncing', 'action': 'resync',
+             'progress': 42.0},
+            {'label': 'md0', 'level': 'raid1', 'state': 'clean', 'action': None, 'progress': None},
+        ]
+
+    def test_a_degraded_array_keeps_its_rebuild_progress(self, plugin):
+        result = plugin.parse([CmdResult(0, _MDSTAT_DEGRADED_RECOVERING, "")])
+        assert result.snapshot == [
+            {'label': 'md0', 'level': 'raid1', 'state': 'degraded', 'action': 'recovery',
+             'progress': 12.5}]
+        assert result.status == 'failed'
+
+    def test_an_auto_read_only_array_still_reads_its_level(self, plugin):
+        mdstat = _MDSTAT_CLEAN.replace("active raid1", "active (auto-read-only) raid1")
+        assert plugin.parse([CmdResult(0, mdstat, "")]).snapshot[0]['level'] == 'raid1'
+
+    def test_no_arrays_clears_the_tiles(self, plugin):
+        assert plugin.parse([CmdResult(0, _MDSTAT_EMPTY, "")]).snapshot == []
+
+    def test_the_tiles_are_their_own_row(self, plugin):
+        assert ['md_array_tiles'] in plugin.UI_SPEC['layout']
+        assert 'md_array_tiles' not in plugin.card_row()
+
+    def test_the_tiles_repeat_over_the_snapshot(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['md_array_tiles']['repeat']
+        assert repeat['source'] == 'snapshot'
+        assert repeat['container'] == 'tiles'
+
+    @pytest.mark.parametrize("item,caption", [
+        ({'level': 'raid1', 'state': 'clean', 'action': None, 'progress': None}, 'raid1 · clean'),
+        ({'level': 'raid5', 'state': 'resyncing', 'action': 'resync', 'progress': 42.0},
+         'raid5 · resync 42%'),
+        ({'level': 'raid1', 'state': 'degraded', 'action': None, 'progress': None},
+         'raid1 · degraded'),
+        ({'level': 'raid1', 'state': 'degraded', 'action': 'recovery', 'progress': 12.5},
+         'raid1 · degraded · recovery 12%'),
+        ({'level': None, 'state': 'clean', 'action': None, 'progress': None}, 'clean'),
+    ])
+    def test_the_caption_names_level_and_state(self, plugin, item, caption):
+        repeat = plugin.UI_SPEC['cards']['md_array_tiles']['repeat']
+        assert repeat['item_format_fn'](item) == caption
+
+    @pytest.mark.parametrize("state,color", [
+        ('clean', 'online'), ('resyncing', 'warning'), ('degraded', 'failed')])
+    def test_the_tile_color_follows_the_state(self, plugin, state, color):
+        repeat = plugin.UI_SPEC['cards']['md_array_tiles']['repeat']
+        assert repeat['item_color_by']({'state': state}) == color

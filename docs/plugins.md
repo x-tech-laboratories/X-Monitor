@@ -653,7 +653,9 @@ SMART health of every physical disk on a host, via `smartctl`. Classification is
 | `interval`   | Polling frequency (default: `60`). `smartctl` is slow and its answer changes rarely — `1h` is a sensible setting. |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below                |
 
-**Metrics**: `disks_total`, `disks_ok`, `disks_failed`
+**Metrics**: `disks_total`, `disks_ok`, `disks_failed`, `disks_unknown`
+
+**Tiles**: one per disk, showing its verdict (`PASSED`, `FAILED` or `unknown`) with its temperature and power-on hours when smartctl reports them, read in the same `smartctl -H -A` call.
 
 **Status**: `failed` if any disk fails, `unavailable` if a disk cannot be read, smartctl could not run, or the host has no SMART-capable disk, otherwise `online`.
 
@@ -680,6 +682,8 @@ ZFS pool state and capacity, via `zpool list`. Every pool's health and used perc
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below                |
 
 **Metrics**: `pools_total`, `pools_ok`, `pools_degraded`, `zfs_usage_max`, `pool_usage_<pool>`
+
+**Tiles**: one per pool, showing its health word and usage (e.g. `ONLINE · 78%`), colored failed for an unhealthy pool and otherwise by usage against the thresholds.
 
 **Status**: `failed` for any pool not `ONLINE`, or usage at `threshold`; `warning` above `warning`; `unavailable` if `zpool` could not run or the host has no pools.
 
@@ -742,6 +746,8 @@ Linux software RAID health, read from `/proc/mdstat` — the mdadm sibling of [`
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
 
 **Metrics**: `arrays_total`, `arrays_ok`, `arrays_degraded`
+
+**Tiles**: one per array, showing its RAID level and state (e.g. `raid1 · clean`), or its rebuild progress while it resyncs or recovers (e.g. `raid5 · resync 42%`).
 
 **Status**: `failed` for a degraded array, `warning` while one is rebuilding, `unavailable` on a host with no arrays or when `/proc/mdstat` cannot be read.
 
@@ -1492,9 +1498,9 @@ The same keys can instead be given as a **mapping of widget name → properties*
 | `connections`      | `host_card`, `conn_total_card`, `conn_states_card`, `conn_total_chart`, `events` |
 | `wifi`             | `host_card`, `wifi_iface_card`, `quality_card`, `signal_card`, `quality_chart`, `signal_chart`, `events` |
 | `power`            | `host_card`, `charge_card`, `power_card`, `state_card`, `health_card`, `capacity_card`, `batteries`, `charge_chart`, `capacity_chart`, `events` |
-| `smart`            | `host_card`, `smart_total_card`, `smart_failed_card`, `events`               |
-| `zfs`              | `host_card`, `zfs_total_card`, `zfs_degraded_card`, `zfs_pools`, `zfs_chart`, `events` |
-| `md`               | `host_card`, `md_total_card`, `md_degraded_card`, `events`                  |
+| `smart`            | `host_card`, `smart_total_card`, `smart_failed_card`, `smart_disk_tiles`, `events` |
+| `zfs`              | `host_card`, `zfs_total_card`, `zfs_degraded_card`, `zfs_pool_tiles`, `zfs_pools`, `zfs_chart`, `events` |
+| `md`               | `host_card`, `md_total_card`, `md_degraded_card`, `md_array_tiles`, `events` |
 | `disk_io`          | `host_card`, `io_device_card`, `read_card`, `write_card`, `read_chart`, `events` |
 | `processes`        | `host_card`, `count_card`, `top_cpu_card`, `table`, `logs`                  |
 | `disk_space`       | `host_card`, `path_card`, `threshold_card`, `usage_card`, `avail_card`, `total_card`, `chart`, `logs` |
