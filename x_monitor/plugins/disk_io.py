@@ -151,7 +151,7 @@ class DiskIo(SignalPlugin):
         }
 
     def charts(self) -> Dict[str, Dict[str, Any]]:
-        return {
-            'read_chart': {'metric': 'read_kbps', 'title': 'READ THROUGHPUT (KB/s)'},
-            'write_chart': {'metric': 'write_kbps', 'title': 'WRITE THROUGHPUT (KB/s)'},
-        }
+        return {'read_chart': {'title': 'DISK THROUGHPUT (KB/s)', 'style': 'lines', 'series': [
+            {'metric': 'read_kbps', 'label': 'Read'},
+            {'metric': 'write_kbps', 'label': 'Write'},
+        ]}}

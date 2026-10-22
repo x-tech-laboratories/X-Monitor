@@ -168,3 +168,15 @@ class TestNamedBattery:
             "STATUS=Discharging\nPOWER_SUPPLY_HEALTH=Good\nPOWER_SUPPLY_CAPACITY=27",
             "STATUS=Charging\nPOWER_SUPPLY_HEALTH=Good\nPOWER_SUPPLY_CAPACITY=27"), ""))
         assert _latest_metric("plugged_in") == 1.0
+
+
+class TestUiSpec:
+    def test_the_charge_card_is_a_gauge_with_the_on_battery_coloring(self, plugin):
+        card = plugin.UI_SPEC['cards']['charge_card']
+        assert card['kind'] == 'gauge'
+        assert card['color'] == plugin._charge_color
+
+    def test_each_battery_is_a_meter_ticked_at_the_charge_warning(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['batteries']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_marker'] == plugin.charge_warning

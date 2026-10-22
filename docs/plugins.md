@@ -1481,19 +1481,19 @@ The same keys can instead be given as a **mapping of widget name → properties*
 | `systemd_service`  | hand-written UI — not individually addressable                              |
 | `cpu`              | `host_card`, `cpu_card`, `cpu_chart`, `events`                              |
 | `memory`           | `host_card`, `mem_pct_card`, `mem_used_card`, `memory_chart`, `events`      |
-| `load`             | `host_card`, `load_1m_card`, `load_5m_card`, `load_15m_card`, `load_chart`, `events` |
+| `load`             | `host_card`, `load_1m_card`, `load_chart`, `events`                         |
 | `temperature`      | `host_card`, `temp_card`, `sensors`, `temp_chart`, `events`                 |
 | `interrupts`       | `host_card`, `irq_card`, `ctxt_card`, `irq_chart`, `ctxt_chart`, `events`   |
 | `gpu`              | `host_card`, `gpu_util_card`, `gpu_mem_card`, `gpu_temp_card`, `gpus`, `gpu_chart`, `events` |
 | `oom`              | `host_card`, `oom_total_card`, `oom_recent_card`, `oom_chart`, `events`     |
-| `throughput`       | `host_card`, `iface_card`, `rx_card`, `tx_card`, `rx_chart`, `tx_chart`, `events` |
-| `connections`      | `host_card`, `conn_total_card`, `conn_established_card`, `conn_listen_card`, `conn_timewait_card`, `conn_total_chart`, `conn_established_chart`, `events` |
+| `throughput`       | `host_card`, `iface_card`, `rx_card`, `tx_card`, `rx_chart`, `events`       |
+| `connections`      | `host_card`, `conn_total_card`, `conn_states_card`, `conn_total_chart`, `events` |
 | `wifi`             | `host_card`, `wifi_iface_card`, `quality_card`, `signal_card`, `quality_chart`, `signal_chart`, `events` |
 | `power`            | `host_card`, `charge_card`, `power_card`, `state_card`, `health_card`, `capacity_card`, `batteries`, `charge_chart`, `capacity_chart`, `events` |
 | `smart`            | `host_card`, `smart_total_card`, `smart_ok_card`, `smart_failed_card`, `events` |
 | `zfs`              | `host_card`, `zfs_total_card`, `zfs_ok_card`, `zfs_degraded_card`, `zfs_usage_card`, `zfs_pools`, `zfs_chart`, `events` |
 | `md`               | `host_card`, `md_total_card`, `md_ok_card`, `md_degraded_card`, `events`    |
-| `disk_io`          | `host_card`, `io_device_card`, `read_card`, `write_card`, `read_chart`, `write_chart`, `events` |
+| `disk_io`          | `host_card`, `io_device_card`, `read_card`, `write_card`, `read_chart`, `events` |
 | `processes`        | `host_card`, `count_card`, `top_cpu_card`, `table`, `logs`                  |
 | `disk_space`       | `host_card`, `path_card`, `threshold_card`, `usage_card`, `avail_card`, `total_card`, `chart`, `logs` |
 

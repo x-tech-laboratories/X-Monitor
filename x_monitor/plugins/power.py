@@ -196,7 +196,8 @@ class Power(SignalPlugin):
 
     def cards(self) -> Dict[str, Dict[str, Any]]:
         return {
-            'charge_card': {'metric': 'charge_pct', 'title': 'CHARGE', 'format': 'percent0',
+            'charge_card': {'kind': 'gauge', 'metric': 'charge_pct', 'title': 'CHARGE',
+                            'format': 'percent0',
                             'color': self._charge_color},
             'power_card': {'metric': 'plugged_in', 'title': 'POWER', 'format': self._plugged_text},
             'state_card': {'title': 'STATE', 'value_attr': 'state_text', 'refresh': True},
@@ -205,12 +206,14 @@ class Power(SignalPlugin):
             'capacity_card': {'metric': 'capacity_health_pct', 'title': 'CAPACITY LEFT',
                               'format': 'percent0', 'color': self._capacity_color},
             'batteries': {
+                'title': 'BATTERIES',
                 'repeat': {
                     'source': 'metrics_prefix',
                     'metrics_prefix': 'battery_', 'metrics_suffix': '_charge_pct',
                     'item_format': 'percent0',
                     'label_transform': 'spaces_upper',
-                    'container': 'cards',
+                    'container': 'bars',
+                    'bar_marker': self.charge_warning,
                     'empty_text': 'No battery found',
                 },
             },

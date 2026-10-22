@@ -109,7 +109,7 @@ class Throughput(SignalPlugin):
         }
 
     def charts(self) -> Dict[str, Dict[str, Any]]:
-        return {
-            'rx_chart': {'metric': 'rx_kbps', 'title': 'DOWNLOAD HISTORY (KB/s)'},
-            'tx_chart': {'metric': 'tx_kbps', 'title': 'UPLOAD HISTORY (KB/s)'},
-        }
+        return {'rx_chart': {'title': 'THROUGHPUT (KB/s)', 'style': 'mirror', 'series': [
+            {'metric': 'rx_kbps', 'label': 'Download'},
+            {'metric': 'tx_kbps', 'label': 'Upload'},
+        ]}}

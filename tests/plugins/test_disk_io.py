@@ -153,3 +153,14 @@ class TestCollection:
     async def test_ssh_failure_is_unavailable(self, plugin, run_cycle):
         _run(plugin, run_cycle, "", code=-1, stderr="err")
         assert _latest_status() == "unavailable"
+
+
+class TestUiSpec:
+    def test_one_chart_draws_read_and_write_as_lines(self, plugin):
+        charts = plugin.UI_SPEC['charts']
+        assert list(charts) == ['read_chart']
+        assert charts['read_chart']['style'] == 'lines'
+        assert [s['metric'] for s in charts['read_chart']['series']] == ['read_kbps', 'write_kbps']
+
+    def test_the_device_and_current_rates_stay_visible(self, plugin):
+        assert plugin.UI_SPEC['layout'][0] == ['host_card', 'io_device_card', 'read_card', 'write_card']

@@ -128,3 +128,14 @@ class TestCollection:
         run_cycle(plugin, lambda c: CmdResult(0, _two_snapshots(
             {"lo": (0, 0), "veth0": (0, 0)}, {"lo": (0, 0), "veth0": (0, 0)}), ""))
         assert _latest_status() == "unavailable"
+
+
+class TestUiSpec:
+    def test_one_mirror_chart_draws_download_above_and_upload_below(self, plugin):
+        charts = plugin.UI_SPEC['charts']
+        assert list(charts) == ['rx_chart']
+        assert charts['rx_chart']['style'] == 'mirror'
+        assert [s['metric'] for s in charts['rx_chart']['series']] == ['rx_kbps', 'tx_kbps']
+
+    def test_the_interface_and_current_rates_stay_visible(self, plugin):
+        assert plugin.UI_SPEC['layout'][0] == ['host_card', 'iface_card', 'rx_card', 'tx_card']

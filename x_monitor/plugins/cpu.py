@@ -70,7 +70,8 @@ class Cpu(SignalPlugin):
         )
 
     def cards(self) -> Dict[str, Dict[str, Any]]:
-        return {'cpu_card': {'metric': 'cpu_pct', 'title': 'CPU', 'format': 'percent1',
+        return {'cpu_card': {'kind': 'gauge', 'metric': 'cpu_pct', 'title': 'CPU',
+                             'format': 'percent1',
                              'color': {'warning': self.warning,
                                        'threshold': self.threshold}}}
 

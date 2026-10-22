@@ -61,3 +61,22 @@ class TestCollection:
 class TestUiSpec:
     def test_zone_cards_get_their_own_row(self, plugin):
         assert ['sensors'] in plugin.UI_SPEC['layout']
+
+    def test_the_max_temperature_is_a_gauge_banded_by_the_thresholds(self, plugin):
+        card = plugin.UI_SPEC['cards']['temp_card']
+        assert card['kind'] == 'gauge'
+        assert card['max'] == 100.0
+        assert card['color'] == {'warning': 70.0, 'threshold': 80.0}
+
+    def test_a_threshold_above_100_raises_the_scale(self, make_plugin):
+        p = make_plugin(Temperature, dict(CFG, warning=100, threshold=120))
+        assert p.UI_SPEC['cards']['temp_card']['max'] == 120.0
+
+    def test_zones_are_meters_ticked_at_the_warning_level(self, plugin):
+        sensors = plugin.UI_SPEC['cards']['sensors']
+        assert sensors['title'] == 'THERMAL ZONES'
+        repeat = sensors['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_max'] == 100.0
+        assert repeat['bar_marker'] == pytest.approx(70.0)
+        assert repeat['item_color_by'] == plugin._item_level

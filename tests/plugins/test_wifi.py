@@ -88,3 +88,11 @@ class TestCollection:
         run_cycle(plugin, lambda c: CmdResult(1, "", "cat: /proc/net/wireless: No such file"))
         assert _latest_status() == "unavailable"
         assert _latest_metric("link_quality") is None
+
+
+class TestUiSpec:
+    def test_link_quality_is_a_gauge_with_the_floor_coloring(self, plugin):
+        card = plugin.UI_SPEC['cards']['quality_card']
+        assert card['kind'] == 'gauge'
+        assert card['max'] == 70.0
+        assert card['color'] == plugin._quality_color

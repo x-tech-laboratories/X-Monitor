@@ -81,3 +81,23 @@ class TestCollection:
         run_cycle(plugin, lambda c: CmdResult(0, _make_tcp([]), ""))
         assert _latest_metric("conn_total") == pytest.approx(0.0)
         assert _latest_status() == "online"
+
+
+class TestUiSpec:
+    STATES = ['conn_established', 'conn_listen', 'conn_time_wait']
+
+    def test_the_total_card_keeps_its_thresholds(self, make_plugin):
+        p = make_plugin(Connections, dict(CFG, warning=100, threshold=200))
+        card = p.UI_SPEC['cards']['conn_total_card']
+        assert card['color'] == {'warning': 100.0, 'threshold': 200.0}
+
+    def test_the_states_share_one_bar(self, plugin):
+        card = plugin.UI_SPEC['cards']['conn_states_card']
+        assert card['kind'] == 'share'
+        assert [p['metric'] for p in card['parts']] == self.STATES
+
+    def test_one_chart_stacks_the_states(self, plugin):
+        charts = plugin.UI_SPEC['charts']
+        assert list(charts) == ['conn_total_chart']
+        assert charts['conn_total_chart']['style'] == 'stack'
+        assert [s['metric'] for s in charts['conn_total_chart']['series']] == self.STATES

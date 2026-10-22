@@ -58,3 +58,15 @@ class TestCollection:
     async def test_incomplete_output_is_unavailable(self, plugin, run_cycle):
         run_cycle(plugin, lambda c: CmdResult(0, "MemTotal:  100 kB\n", ""))
         assert _latest_status() == "unavailable"
+
+
+class TestUiSpec:
+    def test_the_percent_card_is_a_gauge_banded_by_the_thresholds(self, make_plugin):
+        p = make_plugin(Memory, dict(CFG, warning=60, threshold=85))
+        card = p.UI_SPEC['cards']['mem_pct_card']
+        assert card['kind'] == 'gauge'
+        assert card['metric'] == 'memory_pct'
+        assert card['color'] == {'warning': 60.0, 'threshold': 85.0}
+
+    def test_the_used_card_sits_beside_the_gauge(self, plugin):
+        assert plugin.UI_SPEC['layout'][0] == ['host_card', 'mem_pct_card', 'mem_used_card']

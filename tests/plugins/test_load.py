@@ -56,3 +56,17 @@ class TestCollection:
     async def test_unparseable_output_is_unavailable(self, plugin, run_cycle):
         run_cycle(plugin, lambda c: CmdResult(0, "LOAD:garbage\nCPUS:4\n", ""))
         assert _latest_status() == "unavailable"
+
+
+class TestUiSpec:
+    def test_the_1m_load_is_a_gauge_banded_by_the_thresholds(self, make_plugin):
+        p = make_plugin(Load, dict(CFG, warning=70, threshold=90))
+        cards = p.UI_SPEC['cards']
+        assert list(cards) == ['load_1m_card']
+        assert cards['load_1m_card']['kind'] == 'gauge'
+        assert cards['load_1m_card']['color'] == {'warning': 70.0, 'threshold': 90.0}
+
+    def test_one_chart_draws_all_three_averages_as_lines(self, plugin):
+        chart = plugin.UI_SPEC['charts']['load_chart']
+        assert chart['style'] == 'lines'
+        assert [s['metric'] for s in chart['series']] == ['load_pct_1m', 'load_pct_5m', 'load_pct_15m']

@@ -83,16 +83,20 @@ class Connections(SignalPlugin):
                                 'format': 'int_rounded',
                                 'color': {'warning': self.warning,
                                           'threshold': self.threshold}},
-            'conn_established_card': {'metric': 'conn_established', 'title': 'ESTABLISHED',
-                                      'format': 'int_rounded'},
-            'conn_listen_card': {'metric': 'conn_listen', 'title': 'LISTENING',
-                                 'format': 'int_rounded'},
-            'conn_timewait_card': {'metric': 'conn_time_wait', 'title': 'TIME_WAIT',
-                                   'format': 'int_rounded'},
+            'conn_states_card': {'kind': 'share', 'title': 'BY STATE', 'format': 'int_rounded',
+                                 'parts': [
+                                     {'metric': 'conn_established', 'label': 'Established',
+                                      'color': 'series-1'},
+                                     {'metric': 'conn_listen', 'label': 'Listening',
+                                      'color': 'series-2'},
+                                     {'metric': 'conn_time_wait', 'label': 'Time wait',
+                                      'color': 'series-3'},
+                                 ]},
         }
 
     def charts(self) -> Dict[str, Dict[str, Any]]:
-        return {
-            'conn_total_chart': {'metric': 'conn_total', 'title': 'TOTAL CONNECTIONS'},
-            'conn_established_chart': {'metric': 'conn_established', 'title': 'ESTABLISHED'},
-        }
+        return {'conn_total_chart': {'title': 'CONNECTIONS BY STATE', 'style': 'stack', 'series': [
+            {'metric': 'conn_established', 'label': 'Established'},
+            {'metric': 'conn_listen', 'label': 'Listening'},
+            {'metric': 'conn_time_wait', 'label': 'Time wait'},
+        ]}}
