@@ -90,7 +90,7 @@ config examples. For what X-Monitor is and how to run it, see the
 | [`command`](#command)                   | Arbitrary command (generic check)     | SSH (any command)                                | `exit_code` (+ `value` in pattern mode)         | — |
 | [`filesystems`](#filesystems)           | All mounted filesystems (auto-discovered) | SSH (`df`)                                    | `worst_used_pct`, `fs_<mount>_used_pct`         | — |
 | [`folders`](#folders)                   | Sizes of arbitrary directories        | SSH (`du`)                                        | `worst_folder_gb`, `folder_<path>_gb`           | — |
-| [`vms`](#vms)                           | libvirt/KVM virtual machines          | SSH (`virsh`)                                     | `vms_total`, `vms_running`, `vms_stopped`       | Start, Shutdown (per expected VM) |
+| [`vms`](#vms)                           | libvirt/KVM virtual machines          | SSH (`virsh`)                                     | `vms_total`, `vms_running`, `vms_stopped`       | Running switch (per expected VM) |
 | [`cloud`](#cloud)                       | Cloud instance metadata (AWS/GCP/Azure) | SSH (metadata endpoint)                         | `on_cloud`                                      | — |
 | [`group`](#group)                       | Container for nested monitors         | — (aggregates children)                          | —                                               | — |
 
@@ -354,7 +354,9 @@ Monitors systemd units over SSH. Operates in two modes depending on whether `max
 
 **Oneshot metrics**: `last_run_epoch` (Unix timestamp), `last_run_success` (1/0)
 
-**Actions**: Restart Service, Stop Service, Enable on Boot, Disable on Boot
+**Both modes**: `enabled` (1/0), from `systemctl is-enabled`; not recorded for units that cannot be enabled or disabled, such as static or masked ones
+
+**Actions**: Restart Service; a Running switch that starts or stops the unit (continuous mode) or a Stop Service button (oneshot mode, where starting would wait for the whole run); and a Start on Boot switch that enables or disables the unit
 
 The service detail UI also includes:
 
@@ -400,13 +402,9 @@ Lists all systemd services on a host and provides a sortable service browser wit
 
 **Actions**: Reload Daemon
 
-The service browser renders a sortable table of all units, and offers per-unit actions for:
+The service browser renders a sortable table of all units. Its Active and Enabled cells are switches: Active starts or stops the unit, and Enabled enables or disables it on boot. A value neither switch can show, such as `static` or `activating`, stays as plain text. Each row also offers:
 
-* Start Service
-* Stop Service
 * Restart Service
-* Enable on Boot
-* Disable on Boot
 * View Status
 * View Unit File
 * Edit Unit File (when enabled)
@@ -1309,16 +1307,16 @@ Monitors the size of arbitrary directories over SSH via `du` — for watching th
 ---
 
 ### `vms`
-Monitors libvirt/KVM virtual machines over SSH via `virsh list --all`, counting running vs. off. Domains in an error state (paused, crashed) drive warning; "shut off" is treated as benign. Named domains in `expect_running` are required — any not running drives status to **failed** and exposes per-VM **Start**/**Shutdown** actions (restricted to listed domains for safety).
+Monitors libvirt/KVM virtual machines over SSH via `virsh list --all`, counting running vs. off. Domains in an error state (paused, crashed) drive warning; "shut off" is treated as benign. Named domains in `expect_running` are required — any not running drives status to **failed** and exposes a per-VM **Running** switch that starts or shuts it down (restricted to listed domains for safety). `virsh shutdown` only asks the guest to stop, so the switch can show the VM running until a later poll sees it off.
 
 | Option           | Description                                                       |
 |------------------|-------------------------------------------------------------------|
 | `uri`            | libvirt connection URI (default: `qemu:///system`)               |
-| `expect_running` | *(Optional)* Domain names that must be running (→ Start/Shutdown) |
+| `expect_running` | *(Optional)* Domain names that must be running (→ Running switch) |
 | `offline_warning`| Any error-state domain => warning (default: `true`)              |
 | `ssh_config`     | SSH connection details — see [SSH Config](#ssh-config) below      |
 
-**Metrics**: `vms_total`, `vms_running`, `vms_stopped`
+**Metrics**: `vms_total`, `vms_running`, `vms_stopped`, and `vm_running_<name>` (1/0) for each domain in `expect_running`
 
 ```yaml
 - name: "Virtual Machines"

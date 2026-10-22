@@ -307,13 +307,25 @@ class TestBuildGravityScript:
 
 
 class TestPiholeActions:
-    def test_exposes_expected_actions(self, plugin):
-        ids = {a["action_id"] for a in plugin.get_actions()}
-        assert ids == {"enable_blocking", "update_gravity"}
+    def test_exposes_a_blocking_switch_and_gravity_update(self, plugin):
+        assert plugin.get_actions() == [
+            {"name": "Blocking", "kind": "toggle", "metric": "blocking_enabled",
+             "on_action_id": "enable_blocking", "off_action_id": "disable_blocking"},
+            {"name": "Update Gravity", "action_id": "update_gravity",
+             "variant": "secondary", "icon": "refresh"},
+        ]
 
-    def test_disable_blocking_is_not_offered(self, plugin):
-        blob = json.dumps(plugin.get_actions()).lower()
-        assert "disable" not in blob
+    async def test_disable_blocking_success(self, plugin):
+        plan = plugin.plan_action("disable_blocking")
+        assert '"blocking": false' in plan.command
+        outcome = plugin.interpret_action("disable_blocking", CmdResult(0, "", ""))
+        assert outcome.success is True
+        assert outcome.logs == [("Blocking disabled", "INFO")]
+
+    async def test_disable_blocking_failure(self, plugin):
+        outcome = plugin.interpret_action("disable_blocking", CmdResult(1, "", "connection refused"))
+        assert outcome.success is False
+        assert "disable" in outcome.logs[0][0]
 
     async def test_unknown_action_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None

@@ -1,4 +1,4 @@
-"""Notification controls: a monitor's mute switch, and the dialog that tests channels and lists mutes."""
+"""Notification controls: a monitor's Notifications switch, and the dialog that tests channels and lists mutes."""
 
 from typing import Any
 
@@ -9,7 +9,7 @@ from ..components import action_button, dialog_card
 
 
 def render_mute_button(engine: EngineLike, plugin: Any) -> None:
-    """The switch that mutes a monitor's notifications, or a group's for everything in it."""
+    """The Notifications switch: on sends this monitor's notifications, off mutes them, or a group's for everything in it."""
     notifications = engine.notifications
     if not notifications.channels:
         return
@@ -19,23 +19,21 @@ def render_mute_button(engine: EngineLike, plugin: Any) -> None:
         action_button(f'In maintenance: {window}', icon='construction').props('disable')
 
     @ui.refreshable
-    def button() -> None:
+    def switch() -> None:
         muter = notifications.muted_by(plugin.id)
         if muter is not None and muter != plugin.id:
             group = notifications.monitor_name(muter)
-            action_button(f'Muted by {group}', icon='notifications_off').props('disable')
+            ui.switch(f'Muted by {group}', value=False).props('dense').disable()
             return
-        muted = muter == plugin.id
 
-        def toggle() -> None:
-            notifications.set_muted(plugin.id, not muted)
-            ui.notify(f'{plugin.name} {"unmuted" if muted else "muted"}', type='positive')
-            button.refresh()
+        def flipped(event) -> None:
+            notifications.set_muted(plugin.id, not event.value)
+            ui.notify(f'{plugin.name} {"unmuted" if event.value else "muted"}', type='positive')
+            switch.refresh()
 
-        action_button('Unmute' if muted else 'Mute', on_click=toggle,
-                      icon='notifications_off' if muted else 'notifications')
+        ui.switch('Notifications', value=muter is None, on_change=flipped).props('dense')
 
-    button()
+    switch()
 
 
 def open_notifications_dialog(engine: EngineLike) -> None:

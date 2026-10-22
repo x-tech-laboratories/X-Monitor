@@ -591,7 +591,7 @@ def _color_rules(columns: list) -> list:
 
 
 def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optional[dict] = None):
-    """Render a data table with optional per-row action buttons, cell coloring and filtering."""
+    """Render a data table with optional per-row action buttons, switch cells, cell coloring and filtering."""
     from x_monitor.core.ui.spec import ENABLED_PREDICATES, resolve
     from x_monitor.core.ui.theme import STATUS_COLORS
 
@@ -603,7 +603,9 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
     ]
 
     # ui.table JSON-encodes its columns, so a callable cell_color_by must not reach it.
-    render_columns = [{k: v for k, v in col.items() if k != 'cell_color_by'} for col in columns]
+    render_columns = [{k: v for k, v in col.items() if k not in ('cell_color_by', 'toggle')} for col in columns]
+    toggle_columns = [col for col in columns if col.get('toggle')]
+    busy_toggles = set()
     if row_actions:
         render_columns = render_columns + [
             {'name': 'actions', 'label': '', 'field': 'actions', 'sortable': False, 'align': 'center'},
@@ -626,6 +628,19 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
                 <span v-if="/\\d/.test(String(props.row.{col['field']}))"
                       :style="{{ color: props.row._color_{col['name']} }}">{{{{ props.row.{col['field']} }}}}</span>
                 <span v-else class="halon-badge" :class="props.row._badge_{col['name']}">{{{{ props.row.{col['field']} }}}}</span>
+            </q-td>
+        ''')
+
+    for col in toggle_columns:
+        # A value the switch cannot show, such as a static unit's boot state, stays as plain text.
+        table.add_slot(f'body-cell-{col["name"]}', f'''
+            <q-td :props="props">
+                <q-toggle v-if="props.row._toggle_{col['name']} !== null" dense
+                          :model-value="props.row._toggle_{col['name']}"
+                          :disable="props.row._toggle_busy_{col['name']}"
+                          :label="String(props.row.{col['field']})"
+                          @update:model-value="value => $parent.$emit('toggle_{col['name']}', {{row: props.row, value}})" />
+                <span v-else>{{{{ props.row.{col['field']} }}}}</span>
             </q-td>
         ''')
 
@@ -668,6 +683,32 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
     for action in row_actions:
         table.on(action['id'], lambda e, a=action: asyncio.create_task(_handle_action(e, a)))
 
+    async def _handle_toggle(e, col: dict):
+        toggle = col['toggle']
+        row = (e.args or {}).get('row') or {}
+        wanted = bool((e.args or {}).get('value'))
+        busy_key = (col['name'], row.get(row_key))
+        if busy_key in busy_toggles:
+            return
+        busy_toggles.add(busy_key)
+        update_table()
+        params = {kwarg: row.get(field) for kwarg, field in toggle.get('params', {}).items()}
+        action_id = toggle['on_action_id'] if wanted else toggle['off_action_id']
+        success, content = False, ''
+        try:
+            success, content = await plugin.run_action(action_id, **params)
+            # The poll reads the state back, so the switch shows what the target did rather than what was asked.
+            if success:
+                await plugin.run_cycle()
+        finally:
+            busy_toggles.discard(busy_key)
+            update_table()
+        label = f"{col.get('label', col['name'])} {'on' if wanted else 'off'}: {row.get(row_key)}"
+        ui.notify(_outcome_notice(label, success, content), type='positive' if success else 'negative')
+
+    for col in toggle_columns:
+        table.on(f'toggle_{col["name"]}', lambda e, c=col: asyncio.create_task(_handle_toggle(e, c)))
+
     def _rows():
         rows_attr = table_spec.get('rows_attr')
         if rows_attr:
@@ -679,6 +720,10 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
                 state = rule(row)
                 row[f"_color_{col['name']}"] = STATUS_COLORS.get(state, STATUS_COLORS['online']) if state else STATUS_COLORS['online']
                 row[f"_badge_{col['name']}"] = STATUS_BADGES.get(state or 'online', '')
+        for col in toggle_columns:
+            for row in rows:
+                row[f"_toggle_{col['name']}"] = toggle_position(col['toggle'], row.get(col['field']))
+                row[f"_toggle_busy_{col['name']}"] = (col['name'], row.get(row_key)) in busy_toggles
         return rows
 
     def update_table():
@@ -687,6 +732,15 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
     page.on_refresh(update_table)
     update_table()
     return table
+
+
+def toggle_position(toggle: dict, value) -> Optional[bool]:
+    """Where a switch cell sits for a row value: on, off, or None when the value is neither."""
+    if value in toggle.get('on', ()):
+        return True
+    if value in toggle.get('off', ()):
+        return False
+    return None
 
 
 def render_job_panel(plugin, spec: dict):

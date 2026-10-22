@@ -1,6 +1,7 @@
 """Inventory of every systemd service on the target, from two systemctl list
-commands over SSH, rendered as a filterable table with
-start/stop/restart/enable/disable actions and unit-file view/edit dialogs.
+commands over SSH, rendered as a filterable table whose Active and Enabled
+cells are switches that start/stop and enable/disable the unit, with restart
+and unit-file view/edit actions per row.
 Config: lines, allow_unit_file_edit, and allowed_write_paths restricting
 where an edited unit file may be written back. The monitor is online whenever
 collection succeeds — failed units are surfaced as counts, not escalated —
@@ -18,6 +19,14 @@ _DEFAULT_LAYOUT = [
     ['table'],
     ['events'],
 ]
+
+# Switch positions for the table's Active and Enabled cells; any other value stays as plain text.
+_ACTIVE_TOGGLE = {'on': ['active'], 'off': ['inactive', 'failed'],
+                  'on_action_id': 'start_service', 'off_action_id': 'stop_service',
+                  'params': {'service_name': 'unit'}}
+_ENABLED_TOGGLE = {'on': ['enabled', 'enabled-runtime'], 'off': ['disabled'],
+                   'on_action_id': 'enable_service', 'off_action_id': 'disable_service',
+                   'params': {'service_name': 'unit'}}
 
 _DEFAULT_UNIT_FILE_WRITE_PATHS = (
     '/etc/systemd/system',
@@ -192,20 +201,8 @@ class ServiceList(Plugin):
     @property
     def UI_SPEC(self):
         row_actions = [
-            {'id': 'start_service', 'icon': 'play_arrow', 'color': 'positive',
-             'tooltip': 'Start Service', 'kind': 'dispatch', 'action_id': 'start_service',
-             'params': {'service_name': 'unit'}},
-            {'id': 'stop_service', 'icon': 'stop', 'color': 'warning',
-             'tooltip': 'Stop Service', 'kind': 'dispatch', 'action_id': 'stop_service',
-             'params': {'service_name': 'unit'}},
             {'id': 'restart_service', 'icon': 'replay', 'color': 'primary',
              'tooltip': 'Restart Service', 'kind': 'dispatch', 'action_id': 'restart_service',
-             'params': {'service_name': 'unit'}},
-            {'id': 'enable_service', 'icon': 'toggle_on', 'color': 'secondary',
-             'tooltip': 'Enable on Boot', 'kind': 'dispatch', 'action_id': 'enable_service',
-             'params': {'service_name': 'unit'}},
-            {'id': 'disable_service', 'icon': 'toggle_off', 'color': 'secondary',
-             'tooltip': 'Disable on Boot', 'kind': 'dispatch', 'action_id': 'disable_service',
              'params': {'service_name': 'unit'}},
             {'id': 'view_status', 'icon': 'info', 'color': 'info',
              'tooltip': 'View Status', 'kind': 'dialog', 'dialog': 'view_status'},
@@ -232,9 +229,11 @@ class ServiceList(Plugin):
                     'columns': [
                         {'name': 'unit', 'label': 'Unit', 'field': 'unit', 'sortable': True, 'align': 'left'},
                         {'name': 'load', 'label': 'Load', 'field': 'load', 'sortable': True, 'align': 'left'},
-                        {'name': 'active', 'label': 'Active', 'field': 'active', 'sortable': True, 'align': 'left'},
+                        {'name': 'active', 'label': 'Active', 'field': 'active', 'sortable': True, 'align': 'left',
+                         'toggle': _ACTIVE_TOGGLE},
                         {'name': 'sub', 'label': 'Sub', 'field': 'sub', 'sortable': True, 'align': 'left'},
-                        {'name': 'enabled', 'label': 'Enabled', 'field': 'enabled', 'sortable': True, 'align': 'left'},
+                        {'name': 'enabled', 'label': 'Enabled', 'field': 'enabled', 'sortable': True, 'align': 'left',
+                         'toggle': _ENABLED_TOGGLE},
                         {'name': 'description', 'label': 'Description', 'field': 'description',
                          'sortable': True, 'align': 'left'},
                     ],

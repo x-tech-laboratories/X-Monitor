@@ -277,17 +277,17 @@ class Pihole(Plugin):
 
     def get_actions(self) -> List[Dict[str, str]]:
         return [
-            {'name': 'Enable Blocking', 'action_id': 'enable_blocking',
-             'variant': 'primary', 'icon': 'shield'},
+            {'name': 'Blocking', 'kind': 'toggle', 'metric': 'blocking_enabled',
+             'on_action_id': 'enable_blocking', 'off_action_id': 'disable_blocking'},
             {'name': 'Update Gravity', 'action_id': 'update_gravity',
              'variant': 'secondary', 'icon': 'refresh'},
         ]
 
     def plan_action(self, action_id: str, **kwargs) -> Optional[Union[ActionPlan, CollectResult]]:
-        if action_id == 'enable_blocking':
+        if action_id in ('enable_blocking', 'disable_blocking'):
             script = _build_blocking_script(
                 self.api_url, self.api_timeout, self.api_password_command,
-                self.api_password, enabled=True,
+                self.api_password, enabled=action_id == 'enable_blocking',
             )
             return ActionPlan(script)
 
@@ -301,10 +301,11 @@ class Pihole(Plugin):
         return None
 
     def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
-        if action_id == 'enable_blocking':
+        if action_id in ('enable_blocking', 'disable_blocking'):
+            verb = 'enable' if action_id == 'enable_blocking' else 'disable'
             if result.exit_code != 0:
-                return CollectResult.failed(f"Failed to enable blocking: {result.stderr.strip()}")
-            return CollectResult(logs=[("Blocking enabled", "INFO")], success=True)
+                return CollectResult.failed(f"Failed to {verb} blocking: {result.stderr.strip()}")
+            return CollectResult(logs=[(f"Blocking {verb}d", "INFO")], success=True)
 
         if action_id == 'update_gravity':
             if result.exit_code != 0:

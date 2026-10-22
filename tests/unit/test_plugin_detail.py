@@ -113,3 +113,103 @@ class TestNotifyClient:
         client = user.client
         client.delete()
         notify_client(client, 'nobody is listening')
+
+
+class _TogglePlugin:
+    """A monitor with one toggle whose state lives in its 'enabled' metric."""
+
+    name = 'nginx'
+    id = 'nginx'
+    actions = [{'name': 'Start on Boot', 'kind': 'toggle', 'metric': 'enabled',
+                'on_action_id': 'enable_service', 'off_action_id': 'disable_service'}]
+
+    def __init__(self, enabled, succeeds=True):
+        self.enabled = enabled
+        self.succeeds = succeeds
+        self.ran = []
+        self.data = SimpleNamespace(latest_metric=self._latest_metric)
+
+    def _latest_metric(self, name):
+        return None if self.enabled is None else SimpleNamespace(value=self.enabled)
+
+    async def run_action(self, action_id):
+        self.ran.append(action_id)
+        return self.succeeds, ''
+
+    async def run_cycle(self):
+        # The poll reads back what the action did to the target.
+        self.enabled = 1.0 if self.ran[-1] == 'enable_service' else 0.0
+        return True
+
+    async def present(self):
+        return {'actions': self.actions}
+
+    def get_actions(self):
+        return self.actions
+
+    def render_ui(self, context='page'):
+        ui.label('plugin body')
+
+
+def _toggle_page(plugin):
+    engine = SimpleNamespace(notifications=SimpleNamespace(channels=[]))
+
+    @ui.page('/')
+    def _page():
+        render_plugin_detail(engine, lambda *_: None, plugin)
+
+
+def _switch(user: User):
+    return next(iter(user.find(kind=ui.switch).elements))
+
+
+class TestToggle:
+    async def test_shows_the_reported_state(self, user: User):
+        _toggle_page(_TogglePlugin(enabled=1.0))
+        await user.open('/')
+        await user.should_see('Start on Boot')
+        assert _switch(user).value is True
+
+    async def test_switching_on_runs_the_on_action_and_reads_the_state_back(self, user: User):
+        plugin = _TogglePlugin(enabled=0.0)
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('Start on Boot')
+        _switch(user).value = True
+        await user.should_see('Start on Boot: on')
+        assert plugin.ran == ['enable_service']
+        assert _switch(user).value is True
+
+    async def test_switching_off_runs_the_off_action(self, user: User):
+        plugin = _TogglePlugin(enabled=1.0)
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('Start on Boot')
+        _switch(user).value = False
+        await user.should_see('Start on Boot: off')
+        assert plugin.ran == ['disable_service']
+
+    async def test_a_failed_action_puts_the_switch_back(self, user: User):
+        plugin = _TogglePlugin(enabled=0.0, succeeds=False)
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('Start on Boot')
+        _switch(user).value = True
+        await user.should_see('Start on Boot could not be switched on')
+        assert _switch(user).value is False
+
+    async def test_an_unknown_state_disables_the_switch(self, user: User):
+        _toggle_page(_TogglePlugin(enabled=None))
+        await user.open('/')
+        await user.should_see('Start on Boot')
+        assert not _switch(user).enabled
+
+
+class TestActionNames:
+    def test_a_toggle_names_both_of_its_actions(self):
+        from x_monitor.core.ui.views.plugin_detail import action_names
+        assert action_names(_TogglePlugin.actions + [{'name': 'Restart', 'action_id': 'restart'}]) == {
+            'enable_service': 'Start on Boot: on',
+            'disable_service': 'Start on Boot: off',
+            'restart': 'Restart',
+        }

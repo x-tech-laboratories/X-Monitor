@@ -8,7 +8,10 @@ an inactive unit is warning and an unreadable journal is unavailable;
 oneshot mode: a never-ran unit, a failed last run, or one older than max_age
 is failed, and a unit whose state could not be queried is unavailable. A
 reboot clears systemd's unit timestamps, so when they are empty the last run
-is taken from the unit's journal instead of being reported as never ran."""
+is taken from the unit's journal instead of being reported as never ran.
+Both modes record whether the unit starts on boot, which drives the
+Start on Boot switch; continuous mode also has a Running switch that starts
+and stops the unit."""
 
 import os
 import shlex
@@ -43,6 +46,9 @@ _ONESHOT_LAYOUT = [
 
 _RUNNING_SUBSTATES = {'running', 'start', 'start-pre', 'start-post', 'start-chroot', 'reload'}
 
+# The is-enabled answers a boot switch can show; static, masked and the rest cannot be enabled or disabled.
+_BOOT_STATES = {'enabled': 1.0, 'enabled-runtime': 1.0, 'disabled': 0.0}
+
 
 class SystemdService(Plugin):
     def __init__(self, name: str, config: Dict[str, Any]):
@@ -58,9 +64,10 @@ class SystemdService(Plugin):
             f"journalctl -u {self.service_name} -n {self.lines} "
             f"--no-pager --output=short-iso"
         )
+        enabled_cmd = Command(f"systemctl is-enabled {self.service_name}")
         if self.max_age is not None:
-            return [Command(self._oneshot_state_cmd()), journal_cmd]
-        return [Command(f"systemctl is-active {self.service_name}"), journal_cmd]
+            return [Command(self._oneshot_state_cmd()), journal_cmd, enabled_cmd]
+        return [Command(f"systemctl is-active {self.service_name}"), journal_cmd, enabled_cmd]
 
     def subscriptions(self) -> List[StreamSpec]:
         """On an agent-backed host, follow this unit's journal live. The poll
@@ -93,10 +100,10 @@ class SystemdService(Plugin):
         return self._parse_continuous(results)
 
     def _parse_continuous(self, results: List[CmdResult]) -> CollectResult:
-        state_result, journal_result = results
+        state_result, journal_result, enabled_result = results
 
         is_active = state_result.exit_code == 0 and state_result.stdout.strip() == 'active'
-        metrics = {'active': 1.0 if is_active else 0.0}
+        metrics = {'active': 1.0 if is_active else 0.0, **self._boot_metric(enabled_result)}
 
         journal_ok, log_lines = self._parse_journal(journal_result)
         if not journal_ok:
@@ -113,7 +120,7 @@ class SystemdService(Plugin):
         )
 
     def _parse_oneshot(self, results: List[CmdResult]) -> CollectResult:
-        state_result, journal_result = results
+        state_result, journal_result, enabled_result = results
 
         if state_result.exit_code != 0:
             return CollectResult.unavailable(f"Failed to query service state: {state_result.stderr}")
@@ -143,6 +150,7 @@ class SystemdService(Plugin):
             'last_run_epoch': float(epoch),
             'last_run_success': 1.0 if is_success else 0.0,
             'is_running': 1.0 if is_running else 0.0,
+            **self._boot_metric(enabled_result),
         }
 
         if is_running:
@@ -196,6 +204,12 @@ class SystemdService(Plugin):
         )
 
     @staticmethod
+    def _boot_metric(enabled_result: CmdResult) -> Dict[str, float]:
+        """The 'enabled' metric for a unit that can be switched on or off at boot, or nothing for one that cannot."""
+        state = _BOOT_STATES.get(enabled_result.stdout.strip())
+        return {} if state is None else {'enabled': state}
+
+    @staticmethod
     def _parse_journal(journal_result: CmdResult):
         if journal_result.exit_code != 0:
             return False, []
@@ -216,15 +230,20 @@ class SystemdService(Plugin):
         return None, line
 
     def get_actions(self) -> List[Dict[str, str]]:
-        return [
-            {'name': 'Restart Service', 'action_id': 'restart_service', 'variant': 'primary', 'icon': 'play_arrow'},
-            {'name': 'Stop Service',    'action_id': 'stop_service',    'variant': 'danger',  'icon': 'stop'},
-            {'name': 'Enable on Boot',  'action_id': 'enable_service', 'variant': 'secondary', 'icon': 'toggle_on'},
-            {'name': 'Disable on Boot', 'action_id': 'disable_service','variant': 'secondary', 'icon': 'toggle_off'},
-        ]
+        actions = [{'name': 'Restart Service', 'action_id': 'restart_service', 'variant': 'primary', 'icon': 'play_arrow'}]
+        # Starting a oneshot unit blocks until its run ends, so only a continuous unit gets a Running switch.
+        if self.max_age is None:
+            actions.append({'name': 'Running', 'kind': 'toggle', 'metric': 'active',
+                            'on_action_id': 'start_service', 'off_action_id': 'stop_service'})
+        else:
+            actions.append({'name': 'Stop Service', 'action_id': 'stop_service', 'variant': 'danger', 'icon': 'stop'})
+        actions.append({'name': 'Start on Boot', 'kind': 'toggle', 'metric': 'enabled',
+                        'on_action_id': 'enable_service', 'off_action_id': 'disable_service'})
+        return actions
 
     def plan_action(self, action_id: str, **kwargs) -> Optional[Union[ActionPlan, CollectResult]]:
         command_map = {
+            'start_service': 'start',
             'restart_service': 'restart',
             'stop_service': 'stop',
             'enable_service': 'enable',
@@ -270,6 +289,7 @@ class SystemdService(Plugin):
 
         if result.exit_code != 0:
             command_map = {
+                'start_service': 'start',
                 'restart_service': 'restart',
                 'stop_service': 'stop',
                 'enable_service': 'enable',

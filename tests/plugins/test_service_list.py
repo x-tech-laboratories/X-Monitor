@@ -82,6 +82,18 @@ class TestServiceListPlugin:
     async def test_unknown_action_returns_false(self, plugin):
         assert plugin.plan_action("nuke_service", service_name="nginx.service") is None
 
+    def test_active_and_enabled_cells_are_switches(self, plugin):
+        columns = {c['name']: c for c in plugin.UI_SPEC['tables']['table']['columns']}
+        assert columns['active']['toggle']['on_action_id'] == 'start_service'
+        assert columns['active']['toggle']['off_action_id'] == 'stop_service'
+        assert columns['enabled']['toggle']['on_action_id'] == 'enable_service'
+        assert columns['enabled']['toggle']['off_action_id'] == 'disable_service'
+
+    def test_switched_actions_are_not_also_row_buttons(self, plugin):
+        ids = {a['id'] for a in plugin.UI_SPEC['tables']['table']['row_actions']}
+        assert not ids & {'start_service', 'stop_service', 'enable_service', 'disable_service'}
+        assert 'restart_service' in ids
+
     def test_get_actions_returns_reload(self, plugin):
         actions = {a['action_id'] for a in plugin.get_actions()}
         assert 'daemon_reload' in actions
