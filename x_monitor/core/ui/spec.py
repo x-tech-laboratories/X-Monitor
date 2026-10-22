@@ -52,8 +52,9 @@ charts          ``{widget_name: {'metric': ..., 'title': ...}}`` history charts;
 events          True, or a kwargs dict forwarded to the plugin events table (e.g.
                 ``{'title': 'PLUGIN EVENTS'}``); renders into the ``events`` cell.
 tables          ``{widget_name: table spec}`` — see "Table specs".
-filters         ``{widget_name: {'placeholder': ..., 'fields': [row keys]}}`` — a text
-                filter attached to the table with the same widget name.
+filters         ``{widget_name: {'placeholder': ..., 'fields': [row keys]}}`` — sets the
+                placeholder and searched fields of the filter box on the table with the
+                same widget name; every table has a box that searches all its columns anyway.
 buttons         ``{widget_name: [button spec, ...]}`` — one row of action buttons per cell.
                 A button spec: ``{'id', 'label', 'icon', 'color', 'flat' (default True),
                 'visible_if' (ENABLED_PREDICATES), 'kind', 'dialog', 'notify' (default
@@ -132,8 +133,10 @@ fields            ``[{'name', 'prefix', 'suffix'}, ...]`` merges several metric 
 Table specs (tables[widget_name])
 =================================
 row_key         Unique row field (default ``'id'``).
-columns         ``[{'name', 'label', 'field', 'align', 'sortable', 'cell_color_by'
-                (ITEM_COLOR_RULES name/callable over the row)}, ...]``.
+columns         ``[{'name', 'label', 'field', 'align', 'sortable', 'sort_field', 'cell_color_by'
+                (ITEM_COLOR_RULES name/callable over the row)}, ...]``. Every column sorts
+                (Shift+click adds it to a multi-column sort) unless ``'sortable': False``;
+                ``sort_field`` names a raw row field to sort on in place of a formatted one.
 row_actions     ``[{'id', 'icon', 'color', 'tooltip', 'visible_if' (ENABLED_PREDICATES),
                 'kind', 'dialog', 'action_id' (default id), 'params' (kwarg name -> row
                 field), 'notify' (default True), 'confirm'}, ...]``; kind ``'dialog'``

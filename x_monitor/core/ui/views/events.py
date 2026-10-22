@@ -5,6 +5,7 @@ from nicegui import ui
 from x_monitor.core.contracts import EngineLike
 from ..theme import STATUS_COLORS, TEXT_SECONDARY
 from ..components import card, feed_columns, section_title, on_data_event, offload, refresh_rows
+from ..tables import data_table
 
 _EVENT_COLUMNS = feed_columns(target_label='Target',
                               sortable=('timestamp', 'level', 'target'))
@@ -40,8 +41,9 @@ def render_events(engine: EngineLike, switch_view: Callable):
     level_sel, target_in, search_in = _render_filter_bar()
 
     with card('w-full'):
-        events_table = ui.table(columns=_EVENT_COLUMNS, rows=[], row_key='timestamp',
-                                pagination=25).classes('w-full')
+        # The filter bar above already narrows this table, so it needs no filter box of its own.
+        events_table = data_table(columns=_EVENT_COLUMNS, filter_input=False, row_key='timestamp',
+                                  pagination=25).classes('w-full')
         events_table.add_slot('body-cell-level', _LEVEL_CELL_SLOT)
 
     async def refresh_events():

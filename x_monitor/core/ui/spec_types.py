@@ -76,7 +76,8 @@ class ColumnSpec(TypedDict, total=False):
     label: str
     field: str
     align: str
-    sortable: bool
+    sortable: bool                 # False keeps the column out of sorting; every other column sorts
+    sort_field: str                # raw row field to sort on in place of the shown one
     cell_color_by: str             # ITEM_COLOR_RULES key, applied per-row
 
 
