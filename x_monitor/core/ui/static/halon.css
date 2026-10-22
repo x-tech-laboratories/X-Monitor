@@ -360,8 +360,9 @@ a, .q-link { color: var(--accent); }
 
 .halon-card-header .nicegui-row { gap: var(--space-2); flex-wrap: nowrap; align-items: center; }
 
-/* A labelled value: the label pinned to the top and the value to the bottom, both flush left. */
-.halon-stat { justify-content: space-between; gap: var(--space-2); min-height: 92px; }
+/* A labelled value: the label pinned to the top and the value centred in the space below it, both flush left. */
+.halon-stat { justify-content: flex-start; gap: var(--space-2); min-height: 84px; }
+.halon-stat > .halon-value, .halon-gauge-text > .halon-value { margin-block: auto; }
 
 .halon-label {
     font-size: var(--text-label);
@@ -867,7 +868,7 @@ a, .q-link { color: var(--accent); }
 
 /* A gauge is a stat panel with a small arc beside its value, so it stands as tall as any other stat. */
 .halon-gauge-row { flex: 1 1 auto; width: 100%; align-items: stretch; justify-content: space-between; gap: var(--space-5); }
-.halon-gauge-text { justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.halon-gauge-text { justify-content: flex-start; gap: var(--space-2); min-width: 0; }
 
 /* The arc is a 6px ring, a meter's thickness, drawn by a conic gradient and masked to its edge. */
 .halon-gauge-arc {
@@ -938,10 +939,11 @@ a, .q-link { color: var(--accent); }
 .halon-strip-share { font-size: var(--text-caption); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* A share bar splits one whole; every part's value is printed in the legend beneath it. */
-.halon-share-card { gap: var(--space-4); }
+.halon-share-card { gap: var(--space-3); }
 
-/* The bar and its legend sit at the bottom of the panel, where a stat's value would. */
+/* The bar and its legend are centred together in the space below the label, where a stat's value would be. */
 .halon-share-card > .halon-share { margin-top: auto; }
+.halon-share-card > .halon-legend { margin-bottom: auto; }
 
 .halon-share {
     display: flex;
