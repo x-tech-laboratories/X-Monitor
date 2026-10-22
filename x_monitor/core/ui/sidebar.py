@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable, Dict
 from nicegui import ui
 from x_monitor.core.contracts import EngineLike
+from x_monitor.core.coordination.monitor_graph import View, child_label, find_monitor
 from .theme import STATUS_COLORS
 from .components import on_data_event, offload
 from . import nicegui_compat as ng
@@ -51,10 +52,28 @@ def _save_drawer_width(engine: EngineLike, width: int):
     engine.db.set_setting('drawer_width', str(width))
 
 
-def _load_expanded(engine: EngineLike) -> list:
-    """Reads the persisted set of expanded tree node ids."""
+def _views(engine: EngineLike) -> list:
+    """The engine's views, or the plugin tree alone as one view for an engine that has none."""
+    views = getattr(engine, 'views', None)
+    return views if isinstance(views, list) and views else [View('Monitors', engine.plugins)]
+
+
+def _load_view(engine: EngineLike) -> View:
+    """The view the tree last showed, falling back to the primary view."""
+    views = _views(engine)
+    chosen = engine.db.get_setting('tree_view')
+    return next((v for v in views if v.name == chosen), views[0])
+
+
+def _expanded_setting(engine: EngineLike, view: View) -> str:
+    """The setting holding one view's expanded nodes; the primary view keeps the original key."""
+    return 'tree_expanded' if view is _views(engine)[0] else f'tree_expanded:{view.name}'
+
+
+def _load_expanded(engine: EngineLike, view: View) -> list:
+    """Reads the persisted set of expanded tree node keys for one view."""
     try:
-        return json.loads(engine.db.get_setting('tree_expanded') or '[]')
+        return json.loads(engine.db.get_setting(_expanded_setting(engine, view)) or '[]')
     except ValueError:
         return []
 
@@ -88,31 +107,36 @@ def failed_branch_ids(nodes: list) -> list:
     return ids
 
 
-def build_tree_nodes(engine: EngineLike, plugins, statuses=None) -> list:
-    """Builds the ui.tree node dicts for the plugin hierarchy with status colors."""
+def build_tree_nodes(engine: EngineLike, plugins, statuses=None, parent=None, path: str = '') -> list:
+    """Builds the ui.tree node dicts for the plugin hierarchy with status colors.
+
+    A monitor linked under several groups appears once per place, so each node's
+    key is its path of ids from the root, and `monitor` names the monitor it shows."""
     if statuses is None:
         statuses = engine.db.latest_statuses()
     nodes = []
     for p in plugins:
         status = statuses.get(p.id, 'unavailable')
+        key = f'{path}/{p.id}' if path else p.id
         node = {
-            'id': p.id,
-            'label': p.name,
+            'id': key,
+            'monitor': p.id,
+            'label': child_label(parent, p),
             'icon': 'circle',
             'color': STATUS_COLORS[status],
         }
         if p.children:
-            node['children'] = build_tree_nodes(engine, p.children, statuses)
+            node['children'] = build_tree_nodes(engine, p.children, statuses, parent=p, path=key)
         nodes.append(node)
     return nodes
 
 
-def find_plugin_by_id(plugins, target_id):
-    """Finds a plugin anywhere in the hierarchy by its id."""
-    for p in plugins:
-        if p.id == target_id:
-            return p
-        found = find_plugin_by_id(p.children, target_id)
+def monitor_for_key(nodes: list, key: str):
+    """The monitor id a tree node key points at, or None."""
+    for node in nodes:
+        if node['id'] == key:
+            return node['monitor']
+        found = monitor_for_key(node.get('children') or [], key)
         if found:
             return found
     return None
@@ -153,12 +177,12 @@ def _tree_tool(icon: str, tooltip: str, on_click: Callable):
     return button
 
 
-def _render_tree_toolbar(engine: EngineLike, tree):
+def _render_tree_toolbar(engine: EngineLike, tree, current_view: Callable[[], View]):
     """Renders the expand, collapse, accordion and expand-failed controls above the tree."""
     def set_expanded(ids: list):
         ng.set_tree_expanded(tree, ids)
         tree.update()
-        engine.db.set_setting('tree_expanded', json.dumps(ids))
+        engine.db.set_setting(_expanded_setting(engine, current_view()), json.dumps(ids))
 
     def toggle_accordion():
         enabled = not _load_accordion(engine)
@@ -167,7 +191,7 @@ def _render_tree_toolbar(engine: EngineLike, tree):
         accordion.classes(add='halon-button-active' if enabled else None,
                           remove=None if enabled else 'halon-button-active')
 
-    with ui.row().classes('items-center gap-0'):
+    with ui.row().classes('items-center gap-0 no-wrap'):
         _tree_tool('unfold_more', 'Expand all', lambda: set_expanded(branch_ids(ng.tree_nodes(tree))))
         _tree_tool('unfold_less', 'Collapse all', lambda: set_expanded([]))
         _tree_tool('error_outline', 'Expand failed', lambda: set_expanded(failed_branch_ids(ng.tree_nodes(tree))))
@@ -177,24 +201,52 @@ def _render_tree_toolbar(engine: EngineLike, tree):
         accordion.classes('halon-button-active')
 
 
+def _render_view_picker(engine: EngineLike, current: View, on_change: Callable[[View], None]):
+    """Renders the tree's heading: the view's name, or a picker between views when there are several."""
+    views = _views(engine)
+    if len(views) == 1:
+        ui.label(current.name).classes('halon-sidebar-label').style('padding-top: 0')
+        return
+    def pick(view: View):
+        button.text = view.name
+        on_change(view)
+
+    with ui.button(current.name, color=None).props(
+            'flat dense icon-right=arrow_drop_down').classes('halon-view-picker') as button:
+        with ui.menu():
+            for view in views:
+                ui.menu_item(view.name, on_click=lambda v=view: pick(v))
+
+
 def _render_monitor_tree(engine: EngineLike, switch_view: Callable):
-    """Renders the monitor tree with its toolbar, live status dots and persisted expansion."""
+    """Renders the monitor tree with its view picker, toolbar, live status dots and persisted expansion."""
+    state = {'view': _load_view(engine)}
+
     def handle_select(e):
         if e.value:
-            target_plugin = find_plugin_by_id(engine.plugins, e.value)
+            monitor_id = monitor_for_key(ng.tree_nodes(tree), e.value)
+            target_plugin = find_monitor(engine, monitor_id) if monitor_id else None
             if target_plugin:
                 switch_view('plugin', target_plugin)
 
-    with ui.row().classes('w-full items-center justify-between no-wrap').style('padding-top: var(--space-5)'):
-        ui.label('Monitors').classes('halon-sidebar-label').style('padding-top: 0')
-        toolbar = ui.row().classes('items-center')
-    tree = ui.tree(nodes=build_tree_nodes(engine, engine.plugins), on_select=handle_select).classes('w-full')
+    def show_view(view: View):
+        state['view'] = view
+        engine.db.set_setting('tree_view', view.name)
+        ng.set_tree_nodes(tree, build_tree_nodes(engine, view.children))
+        ng.set_tree_expanded(tree, _load_expanded(engine, view))
+        tree.update()
+
+    with ui.row().classes('w-full items-center justify-between no-wrap gap-0').style('padding-top: var(--space-5)'):
+        _render_view_picker(engine, state['view'], show_view)
+        toolbar = ui.row().classes('items-center no-wrap')
+    tree = ui.tree(nodes=build_tree_nodes(engine, state['view'].children),
+                   on_select=handle_select).classes('w-full')
     tree.add_slot('default-header', _TREE_HEADER_SLOT)
     with toolbar:
-        _render_tree_toolbar(engine, tree)
+        _render_tree_toolbar(engine, tree, lambda: state['view'])
 
     async def refresh_tree():
-        new_nodes = await offload(build_tree_nodes)(engine, engine.plugins)
+        new_nodes = await offload(build_tree_nodes)(engine, state['view'].children)
         if new_nodes != ng.tree_nodes(tree):
             ng.set_tree_nodes(tree, new_nodes)
             tree.update()
@@ -203,9 +255,9 @@ def _render_monitor_tree(engine: EngineLike, switch_view: Callable):
 
     def _save_expanded(e):
         ids = e.args if isinstance(e.args, list) else []
-        engine.db.set_setting('tree_expanded', json.dumps(ids))
+        engine.db.set_setting(_expanded_setting(engine, state['view']), json.dumps(ids))
 
-    ng.set_tree_expanded(tree, _load_expanded(engine))
+    ng.set_tree_expanded(tree, _load_expanded(engine, state['view']))
     tree.update()
     tree.on('update:expanded', _save_expanded)
 

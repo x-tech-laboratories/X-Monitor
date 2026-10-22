@@ -33,6 +33,7 @@ from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import CollectResult, DispatchResult, Status, unreachable
 from x_monitor.core.coordination.data_view import PluginDataView
 from x_monitor.core.coordination.jobs import JobsGateway
+from x_monitor.core.coordination.monitor_graph import Link, View, iter_monitors, resolve_links, view_roots
 from x_monitor.core.settings.config_file import ConfigFileManager as XMonitorConfig
 from x_monitor.core.database.database import DatabaseManager as XMonitorDatabase
 from x_monitor.core.exporters import ExporterEngine
@@ -82,6 +83,8 @@ class XMonitorEngine:
         self.config_loader = XMonitorConfig(config_path)
         self.config = self.config_loader.data
         self.plugins: List[Plugin] = []
+        # The primary view first, whose roots are self.plugins, then each entry of config `views`.
+        self.views: List[View] = []
         self.log_retention_days = self.config_loader.log_retention_days
         self.metric_retention_days = self.config_loader.metric_retention_days
         self.metric_downsample_days = self.config_loader.metric_downsample_days
@@ -236,7 +239,7 @@ class XMonitorEngine:
         if not self.ready:
             self._early_agents.add(agent_id)
             return
-        monitors = [p for p in self._flatten(self.plugins)
+        monitors = [p for p in self.all_monitors()
                     if getattr(self._exec_context_for(p), 'conn', None) is not None
                     and getattr(self._exec_context_for(p).conn, 'agent_id', None) == agent_id]
         if not monitors:
@@ -285,6 +288,9 @@ class XMonitorEngine:
         target_cfg = plugins_cfg if plugins_cfg is not None else self.config_loader.plugins
 
         for plugin_cfg in target_cfg:
+            if 'ref' in plugin_cfg:
+                current_level_plugins.append(Link(str(plugin_cfg['ref']), plugin_cfg.get('name')))
+                continue
             name = plugin_cfg.get('name')
             p_type = plugin_cfg.get('type')
             plugin_cfg = self._apply_ssh_defaults(plugin_cfg)
@@ -311,20 +317,31 @@ class XMonitorEngine:
                 logging.error(f"Failed to load plugin '{name}' ({p_type}) — this monitor will not run: {e}")
 
         if plugins_cfg is None:
-            self.plugins = current_level_plugins
-            logging.info(f"Plugin registry built with {len(self.plugins)} root-level monitors.")
+            self._build_views(current_level_plugins)
+            logging.info(f"Plugin registry built with {len(self.plugins)} root-level monitors "
+                         f"in {len(self.views)} view(s).")
             self._warn_on_duplicate_ids()
             self._wire_self_monitor()
 
         return current_level_plugins
 
+    def _build_views(self, primary_roots: List[Any]) -> None:
+        """Load each configured view's own monitors, then resolve every link across all views."""
+        self.views = [View(self.config_loader.view_name, primary_roots)]
+        for view_cfg in self.config_loader.views:
+            self.views.append(View(view_cfg['name'], self.setup_modules(view_cfg.get('plugins') or [])))
+        resolve_links(self.views)
+        self.plugins = self.views[0].children
+
+    def all_monitors(self) -> List[Plugin]:
+        """Every monitor in every view, once each, parents before children."""
+        return list(iter_monitors(view_roots(self)))
+
     def _warn_on_duplicate_ids(self):
         seen = {}
         duplicates = {}
-        stack = list(self.plugins)
-        while stack:
-            p = stack.pop()
-            stack.extend(p.children)
+        # A linked monitor is the same instance in every place, so only separate definitions can collide.
+        for p in self.all_monitors():
             if p.id in seen:
                 duplicates.setdefault(p.id, [seen[p.id]]).append(p.name)
             else:
@@ -356,9 +373,7 @@ class XMonitorEngine:
 
     @staticmethod
     def _flatten(plugins: List[Plugin]):
-        for p in plugins:
-            yield p
-            yield from XMonitorEngine._flatten(p.children)
+        return iter_monitors(plugins)
 
     async def _run_cycle(self, plugin: Plugin) -> bool:
         """The collection loop: all async/IO lives here; the plugin's
@@ -552,11 +567,11 @@ class XMonitorEngine:
         self._start_exporters()
         # Broken notification settings must not stop monitoring.
         try:
-            self.notifications.start(self.plugins)
+            self.notifications.start(view_roots(self))
         except Exception as e:
             logging.error(f"Failed to start notifications — none will be sent: {e}")
 
-        monitors = list(self._flatten(self.plugins))
+        monitors = self.all_monitors()
         polled = [p for p in monitors if not self._is_event_driven(p)]
         pushed = len(monitors) - len(polled)
         logging.info(

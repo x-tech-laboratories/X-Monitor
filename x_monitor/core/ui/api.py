@@ -6,16 +6,11 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from x_monitor.core.exporters import prometheus
 from x_monitor.core.contracts import EngineLike, PushablePlugin
+from x_monitor.core.coordination.monitor_graph import all_monitors, find_monitor
 
 
 def _tokens_match(given: str, expected: str) -> bool:
     return hmac.compare_digest(given, expected)
-
-
-def _flatten(plugins):
-    for p in plugins:
-        yield p
-        yield from _flatten(p.children)
 
 
 def _register_notification_routes(app: Any, engine: EngineLike) -> None:
@@ -38,7 +33,7 @@ def register_api(app: Any, engine: EngineLike) -> None:
 
     def _monitor_summary(statuses):
         out = []
-        for p in _flatten(engine.plugins):
+        for p in all_monitors(engine):
             out.append({
                 'id': p.id,
                 'name': p.name,
@@ -58,7 +53,7 @@ def register_api(app: Any, engine: EngineLike) -> None:
         """Counts of leaf monitors by status, for a dashboard tile that cannot aggregate a list itself."""
         statuses = db.latest_statuses()
         counts = {'online': 0, 'warning': 0, 'failed': 0, 'offline': 0, 'unavailable': 0}
-        for p in _flatten(engine.plugins):
+        for p in all_monitors(engine):
             if p.children:
                 continue
             state = statuses.get(p.id, 'unavailable')
@@ -71,7 +66,7 @@ def register_api(app: Any, engine: EngineLike) -> None:
         """Every backup monitor's health in one list, stalest first, for a dashboard tile or a daily digest."""
         statuses = db.latest_statuses()
         rows = []
-        for p in _flatten(engine.plugins):
+        for p in all_monitors(engine):
             summarize = getattr(p, 'backup_summary', None)
             if p.children or not callable(summarize):
                 continue
@@ -89,7 +84,7 @@ def register_api(app: Any, engine: EngineLike) -> None:
     @app.get('/api/monitors/{monitor_id}')
     def monitor_detail(monitor_id: str):
         statuses = db.latest_statuses()
-        target = next((p for p in _flatten(engine.plugins) if p.id == monitor_id), None)
+        target = find_monitor(engine, monitor_id)
         if target is None:
             return JSONResponse({'error': 'not found'}, status_code=404)
         metrics = [m for m in db.latest_metrics() if m['plugin_id'] == target.id]
@@ -123,7 +118,7 @@ def register_api(app: Any, engine: EngineLike) -> None:
     @app.post('/api/push/{monitor_id}/{token}')
     def push(monitor_id: str, token: str, status: str = 'up',
              msg: Optional[str] = None, value: Optional[float] = None):
-        plugin = next((p for p in _flatten(engine.plugins) if p.id == monitor_id), None)
+        plugin = find_monitor(engine, monitor_id)
         if plugin is None or not isinstance(plugin, PushablePlugin):
             return JSONResponse({'error': 'not found'}, status_code=404)
         if not plugin.token or not _tokens_match(token, plugin.token):

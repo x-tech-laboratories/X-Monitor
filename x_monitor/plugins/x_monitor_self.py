@@ -69,10 +69,8 @@ class XMonitorSelfPlugin(Plugin):
     def _walk_monitors(self):
         if self.engine is None:
             return
-        stack = list(self.engine.plugins)
-        while stack:
-            p = stack.pop()
-            stack.extend(p.children)
+        from x_monitor.core.coordination.monitor_graph import all_monitors
+        for p in all_monitors(self.engine):
             if p is not self:
                 yield p
 

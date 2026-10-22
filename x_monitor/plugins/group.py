@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import CollectResult, Status
 from x_monitor.core.ui.spec_types import UISpec
+from x_monitor.core.coordination.monitor_graph import child_label
 
 # Group-provided pseudo-widget: a status card for a child that has none of its own.
 STATUS_WIDGET = 'status'
@@ -75,12 +76,9 @@ class Group(Plugin):
         return await super().run_cycle()
 
     def _descendants(self) -> Iterator[Any]:
-        """Every monitor under this group, depth-first, so a layout can address a nested group's children."""
-        stack = list(reversed(self.children))
-        while stack:
-            plugin = stack.pop()
-            yield plugin
-            stack.extend(reversed(getattr(plugin, 'children', []) or []))
+        """Every monitor under this group once each, depth-first, so a layout can address a nested group's children."""
+        from x_monitor.core.coordination.monitor_graph import iter_monitors
+        yield from iter_monitors(self.children)
 
     def _setting_key(self) -> str:
         return f'group_expanded_{self.id}'
@@ -234,7 +232,7 @@ class Group(Plugin):
                 f'width: 8px; height: 8px; border-radius: 50%; '
                 f'background: {child_color}; flex-shrink: 0'
             )
-            ui.label(child.name).classes('halon-title-row flex-1')
+            ui.label(child_label(self, child)).classes('halon-title-row flex-1')
             chevron = ui.icon('expand_more', size='sm').style(
                 _chevron_style(TEXT_SECONDARY, is_open))
         return header_row, chevron

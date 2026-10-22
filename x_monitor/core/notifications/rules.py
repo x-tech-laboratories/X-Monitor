@@ -12,6 +12,7 @@ from typing import Any, Deque, Dict, FrozenSet, Iterable, List, Mapping, Optiona
 import logging
 
 from x_monitor.core.connectors.types import Status
+from x_monitor.core.coordination.monitor_graph import is_link
 from x_monitor.plugins.base.plugin_helpers import parse_duration
 
 PROBLEM_STATUSES = (Status.FAILED, Status.WARNING, Status.UNAVAILABLE)
@@ -98,8 +99,10 @@ def resolve_rules(roots: Iterable[Any], defaults: Mapping[str, Any],
                   channel_ids: List[str]) -> Dict[str, Rule]:
     """Every monitor's rule, keyed by monitor id.
 
-    A group's `notify:` settings pass down to everything beneath it. A group
-    never notifies for itself, because its status only repeats its children's.
+    A group's `notify:` settings pass down to everything defined beneath it,
+    not to monitors it only links to, so each monitor has one rule however many
+    views show it. A group never notifies for itself, because its status only
+    repeats its children's.
     """
     rules: Dict[str, Rule] = {}
 
@@ -112,7 +115,7 @@ def resolve_rules(roots: Iterable[Any], defaults: Mapping[str, Any],
                 rule = _rule(settings, channel_ids, f"monitor {plugin.id!r}")
                 if rule is not None:
                     rules[plugin.id] = rule
-            walk(plugin.children, settings)
+            walk([c for c in plugin.children if not is_link(plugin, c)], settings)
 
     walk(roots, dict(defaults))
     return rules

@@ -56,6 +56,14 @@ class TestResolveRules:
     def test_no_channels_means_no_rules(self):
         assert resolve_rules([_plugin('a')], {}, []) == {}
 
+    def test_a_group_passes_its_settings_only_to_what_it_defines_not_what_it_links(self):
+        cpu = _plugin('cpu')
+        host = _plugin('host', [cpu], type_='group', notify={'after': 2})
+        domain = _plugin('compute', [cpu], type_='group', notify=False)
+        domain.links = {'cpu': 'Host'}
+        rules = resolve_rules([host, domain], {}, ['desk'])
+        assert rules['cpu'].after == 2
+
 
 class TestTracker:
     def _tracker(self, **rule):
@@ -288,6 +296,17 @@ class TestEngine:
         await self._set(db_manager, 'failed')
         assert self._titles(engine) == []
         assert [p.id for p in engine.muted_monitors()] == ['storage']
+
+    async def test_muting_a_group_mutes_what_it_only_links_to(self, engine, db_manager):
+        nas = _plugin('nas')
+        host = _plugin('host', [nas], type_='group')
+        storage = _plugin('storage', [nas], type_='group')
+        storage.links = {'nas': 'Host'}
+        engine.start([host, storage])
+        engine.set_muted('storage', True)
+        assert engine.muted_by('nas') == 'storage'
+        await self._set(db_manager, 'failed')
+        assert self._titles(engine) == []
 
     async def test_a_problem_held_before_restart_still_announces_its_recovery(
             self, engine, db_manager):

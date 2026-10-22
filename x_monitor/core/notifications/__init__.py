@@ -20,6 +20,7 @@ from x_monitor.core.notifications.oncall import OpsgenieChannel, PagerDutyChanne
 from x_monitor.core.notifications.rules import (
     FLAPPING, PROBLEM, RECOVERED, SETTLED, Alert, Tracker, resolve_rules,
 )
+from x_monitor.core.coordination.monitor_graph import iter_monitors, parent_ids
 from x_monitor.core.state import changes
 from x_monitor.core.state.changes import CHANGES
 from x_monitor.plugins.base.plugin_helpers import format_duration, parse_duration
@@ -77,7 +78,7 @@ class NotificationEngine:
         self._held: Set[str] = set()
         self._pending: Dict[str, List[Message]] = {}
         self._monitors: Dict[str, Any] = {}
-        self._parents: Dict[str, str] = {}
+        self._parents: Dict[str, Set[str]] = {}
         self._announced: Set[str] = set()
         self._tracker = Tracker({})
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -90,12 +91,8 @@ class NotificationEngine:
             return
         rules = resolve_rules(roots, self._defaults, list(self.channels))
         self._tracker = Tracker(rules)
-        stack = list(roots)
-        while stack:
-            plugin = stack.pop()
-            for child in plugin.children:
-                self._parents[child.id] = plugin.id
-            stack.extend(plugin.children)
+        self._parents = parent_ids(roots)
+        for plugin in iter_monitors(roots):
             self._monitors[plugin.id] = plugin
 
         now = time.time()
@@ -132,19 +129,17 @@ class NotificationEngine:
 
     def muted_by(self, plugin_id: str) -> Optional[str]:
         """The monitor or group whose mute silences this monitor, or None."""
-        current: Optional[str] = plugin_id
-        while current is not None:
-            if self._db.get_setting(MUTE_SETTING.format(current)) == "1":
-                return current
-            current = self._parents.get(current)
-        return None
+        return next((current for current in self._lineage(plugin_id)
+                     if self._db.get_setting(MUTE_SETTING.format(current)) == "1"), None)
 
     def _lineage(self, plugin_id: str) -> List[str]:
-        """A monitor's id followed by the ids of the groups it sits in."""
-        ids, current = [], plugin_id
-        while current is not None:
-            ids.append(current)
-            current = self._parents.get(current)
+        """A monitor's id followed by the ids of every group above it in any view, nearest first."""
+        ids, queue = [plugin_id], [plugin_id]
+        while queue:
+            for parent in sorted(self._parents.get(queue.pop(0), ())):
+                if parent not in ids:
+                    ids.append(parent)
+                    queue.append(parent)
         return ids
 
     def maintenance_for(self, plugin_id: str, now: Optional[datetime] = None) -> Optional[str]:

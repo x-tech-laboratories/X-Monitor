@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional
 from urllib.parse import quote
 from nicegui import app, ui
 from x_monitor.core.contracts import EngineLike
+from x_monitor.core.coordination.monitor_graph import find_monitor
 from . import theme
 from .auth import LOGOUT_PATH, AuthConfig
 from .sidebar import render_sidebar
@@ -33,17 +34,6 @@ def view_path(view_type: str, plugin: Optional[Any] = None) -> str:
     if view_type == 'plugin' and plugin is not None:
         return f"/monitor/{quote(plugin.id, safe='')}"
     return '/'
-
-
-def _find_monitor(plugins: list, monitor_id: str) -> Optional[Any]:
-    """The monitor with this id anywhere in the tree, or None."""
-    stack = list(plugins)
-    while stack:
-        plugin = stack.pop()
-        if plugin.id == monitor_id:
-            return plugin
-        stack.extend(plugin.children)
-    return None
 
 
 # The views switch in place, so going back re-renders the page for the address it returns to.
@@ -176,7 +166,7 @@ def init_gui(engine: EngineLike, port: int = 8080):
 
     @ui.page('/monitor/{monitor_id}')
     def monitor_page(monitor_id: str):
-        plugin = _find_monitor(engine.plugins, monitor_id)
+        plugin = find_monitor(engine, monitor_id)
         if plugin is None:
             _render_index(engine, auth_config)
             ui.notify(f'No monitor with id {monitor_id!r}', type='warning')
