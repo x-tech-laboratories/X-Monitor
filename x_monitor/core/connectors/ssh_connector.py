@@ -204,7 +204,7 @@ def workdir_for(token: str) -> str:
     """Per-job working dir on the target, keyed by an opaque token the plugin
     picks (it names the dir before the Job row's id exists)."""
     safe = "".join(c for c in token if c.isalnum() or c in "-_.")
-    return f"$HOME/.cache/x_monitor/jobs/{safe}"
+    return f"$HOME/.cache/x-monitor/jobs/{safe}"
 
 
 def launch_command(command: str, workdir: str) -> str:

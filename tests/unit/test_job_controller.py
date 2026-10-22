@@ -30,7 +30,7 @@ class TestLaunch:
         assert (workdir / "exit").read_text().strip() == "3"
 
     def test_launch_command_detaches_and_echoes_pid(self):
-        cmd = jobs.launch_command("borg create repo::x /data", "$HOME/.cache/x_monitor/jobs/tok")
+        cmd = jobs.launch_command("borg create repo::x /data", "$HOME/.cache/x-monitor/jobs/tok")
         assert "setsid" in cmd
         assert "borg create repo::x /data" in cmd
         assert 'echo $!' in cmd            # prints the remote pid
@@ -62,7 +62,7 @@ class TestPoll:
         )
 
     def test_poll_command_uses_offset_and_pid(self):
-        cmd = jobs.poll_command("$HOME/.cache/x_monitor/jobs/tok", 4242, offset=100)
+        cmd = jobs.poll_command("$HOME/.cache/x-monitor/jobs/tok", 4242, offset=100)
         assert "kill -0 4242" in cmd
         assert "tail -c +101" in cmd       # offset+1 (tail -c is 1-indexed)
         assert "wc -c" in cmd
