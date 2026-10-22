@@ -186,3 +186,13 @@ class TestServfailThresholds:
 class TestUnboundActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    def test_cache_hit_rate_is_a_gauge(self, plugin):
+        card = plugin.UI_SPEC['cards']['cache_card']
+        assert card['kind'] == 'gauge'
+        assert card['metric'] == 'cache_hit_rate_pct'
+
+    def test_the_servfail_chart_stays(self, plugin):
+        assert plugin.UI_SPEC['chart']['metric'] == 'servfail_rate_pct'

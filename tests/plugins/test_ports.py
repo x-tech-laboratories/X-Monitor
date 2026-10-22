@@ -98,3 +98,22 @@ class TestPortsCollection:
 class TestPortsActions:
     async def test_on_action_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_every_check_gets_an_uptime_strip_of_its_up_metric(self, plugin):
+        cards = plugin.UI_SPEC['cards']
+        assert cards['strip_ssh'] == {'kind': 'strip', 'metric': 'ssh_up', 'title': 'SSH AVAILABILITY'}
+        assert cards['strip_api'] == {'kind': 'strip', 'metric': 'api_up', 'title': 'API AVAILABILITY'}
+
+    async def test_each_strip_sits_above_its_latency_chart(self, plugin):
+        layout = plugin.UI_SPEC['layout']
+        assert layout == [
+            ['host_card', 'up_card', 'down_card'],
+            ['strip_ssh'], ['chart_ssh'],
+            ['strip_api'], ['chart_api'],
+            ['events'],
+        ]
+
+    async def test_the_reachable_and_down_counts_stay(self, plugin):
+        assert {'up_card', 'down_card'} <= set(plugin.UI_SPEC['cards'])

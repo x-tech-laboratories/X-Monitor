@@ -152,17 +152,19 @@ class HttpCheck(Plugin):
             'metric': 'probe_ok', 'title': self.check_title,
             'format': 'probe_ok_text', 'color': 'probe_ok_color',
         }
+        uptime_strip = {'kind': 'strip', 'metric': 'probe_ok', 'title': f'{self.check_title} HISTORY'}
         if self.is_ws:
             return {
-                'layout': [['host_card', 'probe_card'], ['chart'], ['events']],
-                'cards': {'probe_card': probe_card},
+                'layout': [['host_card', 'probe_card'], ['uptime_strip'], ['chart'], ['events']],
+                'cards': {'probe_card': probe_card, 'uptime_strip': uptime_strip},
                 'chart': {'metric': 'probe_ok', 'title': f'{self.check_title} OK'},
                 'events': True,
             }
         return {
-            'layout': [['host_card', 'probe_card', 'latency_card'], ['chart'], ['events']],
+            'layout': [['host_card', 'probe_card', 'latency_card'], ['uptime_strip'], ['chart'], ['events']],
             'cards': {
                 'probe_card': probe_card,
+                'uptime_strip': uptime_strip,
                 'latency_card': {'metric': 'probe_latency_ms', 'title': 'LATENCY', 'format': 'ms0'},
             },
             'chart': {'metric': 'probe_latency_ms', 'title': f'{self.check_title} LATENCY (ms)'},

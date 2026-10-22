@@ -64,6 +64,7 @@ def _build_probe_script(host: str, port: int, topic: str, timeout: int,
 
 _DEFAULT_LAYOUT = [
     ['host_card', 'roundtrip_card', 'latency_card'],
+    ['uptime_strip'],
     ['chart'],
     ['events'],
 ]
@@ -128,6 +129,7 @@ class Mosquitto(Plugin):
                 'format': 'mosquitto_ok_text', 'color': 'mosquitto_ok_color',
             },
             'latency_card': {'metric': 'roundtrip_ms', 'title': 'LATENCY', 'format': 'ms0'},
+            'uptime_strip': {'kind': 'strip', 'metric': 'roundtrip_ok', 'title': 'ROUND TRIP HISTORY'},
         },
         'chart': {'metric': 'roundtrip_ms', 'title': 'ROUND TRIP LATENCY (ms)'},
         'events': True,

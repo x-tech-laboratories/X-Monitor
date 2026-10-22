@@ -172,19 +172,32 @@ class Ports(Plugin):
 
     @property
     def UI_SPEC(self):
+        checks = self._checks
+        strips = {
+            f"strip_{check['metric']}": {
+                'kind': 'strip',
+                'metric': f"{check['metric']}_up",
+                'title': f"{check['name']} AVAILABILITY",
+            }
+            for check in checks
+        }
         charts = {
             f"chart_{check['metric']}": {
                 'metric': f"{check['metric']}_latency_ms",
                 'title': f"{check['name']} LATENCY (ms)",
             }
-            for check in self._checks
+            for check in checks
         }
-        layout = [_DEFAULT_LAYOUT[0], *([name] for name in charts), _DEFAULT_LAYOUT[1]]
+        # Each check's uptime strip sits directly above its latency chart.
+        check_rows = [row for check in checks
+                      for row in ([f"strip_{check['metric']}"], [f"chart_{check['metric']}"])]
+        layout = [_DEFAULT_LAYOUT[0], *check_rows, _DEFAULT_LAYOUT[1]]
         return {
             'layout': layout,
             'cards': {
                 'up_card': {'title': 'REACHABLE', 'value_attr': '_up_text', 'refresh': True},
                 'down_card': {'title': 'DOWN', 'value_attr': '_down_text', 'color_attr': '_down_color'},
+                **strips,
             },
             'charts': charts,
             'events': True,

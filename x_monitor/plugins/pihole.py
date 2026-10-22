@@ -348,9 +348,16 @@ class Pihole(Plugin):
         return {
             'layout': _DEFAULT_LAYOUT,
             'cards': {
-                'block_rate_card': {'metric': 'block_rate_pct', 'title': 'BLOCK RATE', 'format': 'percent1',
-                                    'color': self._block_rate_color},
-                'queries_card': {'metric': 'queries_total', 'title': 'QUERIES', 'format': 'count_comma'},
+                'block_rate_card': {'kind': 'gauge', 'metric': 'block_rate_pct', 'title': 'BLOCK RATE',
+                                    'format': 'percent1', 'color': self._block_rate_color},
+                'queries_card': {
+                    'kind': 'share', 'title': 'QUERIES', 'format': 'count_comma',
+                    'parts': [
+                        {'metric': 'queries_blocked', 'label': 'Blocked', 'color': 'accent'},
+                        {'metric': 'queries_forwarded', 'label': 'Forwarded', 'color': 'series-2'},
+                        {'metric': 'queries_cached', 'label': 'Cached', 'color': 'series-3'},
+                    ],
+                },
                 'gravity_card': {'title': 'BLOCKLIST', 'metrics': ['gravity_domains', 'gravity_age_seconds'],
                                  'format_fn': self._gravity_text, 'color_fn': self._gravity_color},
                 'clients_card': {'metric': 'clients_active', 'title': 'ACTIVE CLIENTS', 'format': 'int'},

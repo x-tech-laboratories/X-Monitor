@@ -173,7 +173,7 @@ class Unbound(Plugin):
                 },
                 'queries_card': {'metric': 'queries_total', 'title': 'QUERIES', 'format': 'count_comma'},
                 'cache_card': {
-                    'metric': 'cache_hit_rate_pct', 'title': 'CACHE HIT RATE',
+                    'kind': 'gauge', 'metric': 'cache_hit_rate_pct', 'title': 'CACHE HIT RATE',
                     'format': 'percent1_plain_dash',
                 },
                 'uptime_card': {'metric': 'uptime_seconds', 'title': 'UPTIME', 'format': 'unbound_uptime'},

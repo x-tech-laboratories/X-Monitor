@@ -234,3 +234,11 @@ class TestForceUpdateAction:
         p = make_plugin(DdnsUpdater, _cfg())
         action_ids = [a['action_id'] for a in p.get_actions()]
         assert 'force_update' in action_ids
+
+
+class TestUiSpec:
+    async def test_sync_state_is_drawn_as_an_uptime_strip(self, make_plugin):
+        spec = make_plugin(DdnsUpdater, _cfg()).UI_SPEC
+        assert spec['cards']['sync_strip']['kind'] == 'strip'
+        assert spec['cards']['sync_strip']['metric'] == 'in_sync'
+        assert ['sync_strip'] in spec['layout']

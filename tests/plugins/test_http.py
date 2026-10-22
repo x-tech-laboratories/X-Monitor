@@ -174,3 +174,17 @@ class TestWsParsing:
 class TestActions:
     async def test_on_action_always_returns_none(self, feed_plugin):
         assert feed_plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    def test_an_http_probe_draws_an_uptime_strip_beside_its_latency_chart(self, feed_plugin):
+        spec = feed_plugin.UI_SPEC
+        assert spec['cards']['uptime_strip']['kind'] == 'strip'
+        assert spec['cards']['uptime_strip']['metric'] == 'probe_ok'
+        assert ['uptime_strip'] in spec['layout']
+        assert spec['chart']['metric'] == 'probe_latency_ms'
+
+    def test_a_websocket_probe_draws_an_uptime_strip(self, ws_plugin):
+        spec = ws_plugin.UI_SPEC
+        assert spec['cards']['uptime_strip']['metric'] == 'probe_ok'
+        assert ['uptime_strip'] in spec['layout']

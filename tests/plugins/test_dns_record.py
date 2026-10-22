@@ -152,3 +152,11 @@ class TestDnsQueryDeclaration:
     async def test_no_domain_emits_no_query(self, make_plugin):
         p = make_plugin(DnsRecord, _cfg(domain=None))
         assert p.requests() == []
+
+
+class TestUiSpec:
+    async def test_resolution_is_drawn_as_an_uptime_strip(self, make_plugin):
+        spec = make_plugin(DnsRecord, _cfg()).UI_SPEC
+        assert spec['cards']['uptime_strip']['kind'] == 'strip'
+        assert spec['cards']['uptime_strip']['metric'] == 'resolved'
+        assert ['uptime_strip'] in spec['layout']

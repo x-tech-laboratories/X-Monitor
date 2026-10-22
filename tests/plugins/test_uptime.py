@@ -85,3 +85,15 @@ class TestUptimeActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("restart") is None
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_the_up_metric_is_drawn_as_an_uptime_strip(self, plugin):
+        spec = plugin.UI_SPEC
+        assert spec['cards']['uptime_strip'] == {'kind': 'strip', 'metric': 'up', 'title': 'AVAILABILITY'}
+        assert ['uptime_strip'] in spec['layout']
+
+    async def test_the_status_card_and_latency_chart_stay(self, plugin):
+        spec = plugin.UI_SPEC
+        assert spec['cards']['status_card']['metric'] == 'up'
+        assert spec['chart']['metric'] == 'latency_ms'

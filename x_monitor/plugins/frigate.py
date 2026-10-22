@@ -114,7 +114,7 @@ def _survey_cameras(watched: Dict[str, Any], camera_configs: Dict[str, Any],
 
 _DEFAULT_LAYOUT = [
     ['host_card', 'state_card', 'fps_card'],
-    ['detector_card', 'armed_card', 'disarmed_card'],
+    ['detector_card', 'armed_card'],
     ['chart'],
     ['events'],
 ]
@@ -293,10 +293,11 @@ class Frigate(Plugin):
                 'metric': 'detector_inference_ms', 'title': 'INFERENCE', 'format': 'ms1',
             },
             'armed_card': {
-                'metric': 'cameras_armed', 'title': 'ARMED', 'format': 'int',
-            },
-            'disarmed_card': {
-                'metric': 'cameras_disarmed', 'title': 'DISARMED', 'format': 'int',
+                'kind': 'share', 'title': 'ARMING', 'format': 'int',
+                'parts': [
+                    {'metric': 'cameras_armed', 'label': 'Armed', 'color': 'online'},
+                    {'metric': 'cameras_disarmed', 'label': 'Disarmed', 'color': 'neutral'},
+                ],
             },
         },
         'chart': {'metric': 'camera_fps_total', 'title': 'CAMERA FPS'},

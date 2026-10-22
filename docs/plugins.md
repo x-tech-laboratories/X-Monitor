@@ -1477,7 +1477,7 @@ The same keys can instead be given as a **mapping of widget name → properties*
 
 | Plugin             | Widget names                                                                 |
 |--------------------|------------------------------------------------------------------------------|
-| `uptime`           | `host_card`, `status_card`, `latency_card`, `chart`, `events`               |
+| `uptime`           | `host_card`, `status_card`, `latency_card`, `uptime_strip`, `chart`, `events` |
 | `systemd_service`  | hand-written UI — not individually addressable                              |
 | `cpu`              | `host_card`, `cpu_card`, `cpu_chart`, `events`                              |
 | `memory`           | `host_card`, `mem_pct_card`, `mem_used_card`, `memory_chart`, `events`      |

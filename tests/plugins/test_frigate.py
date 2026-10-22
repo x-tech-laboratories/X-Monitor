@@ -376,3 +376,14 @@ class TestRecordingsSyncActions:
         outcome = p.interpret_action(
             'sync_recordings', p.plan_action('sync_recordings').call())
         assert outcome.success is False
+
+
+class TestUiSpec:
+    async def test_armed_and_disarmed_cameras_are_one_share(self, plugin):
+        spec = plugin.UI_SPEC
+        card = spec['cards']['armed_card']
+        assert card['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in card['parts']] == [
+            ('cameras_armed', 'online'), ('cameras_disarmed', 'neutral')]
+        assert 'disarmed_card' not in spec['cards']
+        assert all('disarmed_card' not in row for row in spec['layout'])
