@@ -18,7 +18,7 @@ Unlike most network and system monitors, X-Monitor is designed to be highly exte
 - **Notifications**: Notifies you when a monitor starts failing, keeps failing or recovers, with per-monitor rules. Sends to the desktop through the agent, to your phone through ntfy, by email, to any webhook, or to around a hundred services through Apprise, and each notification links straight to the monitor's page. See [docs/notifications.md](docs/notifications.md).
 - **Target Control**: Trigger actions on monitored targets (e.g. restarting systemd services) directly from the UI.
 - **Plugin Architecture**: Core features are implemented through plugins called "monitors" which handle specific domains (systemd services, host uptime, hardware parameters, etc.).
-- **Hierarchical Organization**: Organize monitors into nested groups by location, service, or environment. A monitor can sit in several groups at once, and named views show the same monitors arranged different ways — by host, say, and by domain.
+- **Hierarchical Organization**: Organize monitors into nested groups by location, service, or environment. A monitor can sit in several groups at once, so one tree can hold the same monitors arranged different ways — by host, say, and by domain.
 - **Lightweight**: Minimal dependencies and low resource footprint.
 - **Easy Development**: Fully written in Python.
 
@@ -168,7 +168,7 @@ plugins:
           user: "x-monitor"
 ```
 
-### Views and links
+### Links
 
 Monitors form a graph rather than a strict tree. A monitor is **defined** once,
 where its config nests it, and any other group can hold it too through a
@@ -176,26 +176,27 @@ where its config nests it, and any other group can hold it too through a
 `name`, which labels that one place; the monitor keeps a single id, status,
 history and page however many groups hold it.
 
-`views:` adds more trees beside the one `plugins` builds, and the sidebar shows
-one at a time with a picker in its heading. A view's entries may define new
-monitors (usually the groups that make up its shape) or link to existing ones.
-`view_name` labels the `plugins` tree (default `Monitors`).
+That lets one tree show the same monitors several ways, each under its own root:
 
 ```yaml
-view_name: "By host"
 plugins:
-  - name: "Heimdall"
-    id: "heimdall"
+  - name: "By host"
+    id: "by-host"
     type: "group"
     children:
-      - name: "Availability"
-        id: "heimdall-up"
-        type: "uptime"
-        target_host: "heimdall.lan"
+      - name: "Heimdall"
+        id: "heimdall"
+        type: "group"
+        children:
+          - name: "Availability"
+            id: "heimdall-up"
+            type: "uptime"
+            target_host: "heimdall.lan"
 
-views:
   - name: "By domain"
-    plugins:
+    id: "by-domain"
+    type: "group"
+    children:
       - name: "Availability"
         id: "availability"
         type: "group"
@@ -206,10 +207,10 @@ views:
 
 A group's status is the worst of everything it holds, links included. Muting a
 group or covering it with a maintenance window reaches every monitor beneath
-it in that view, while `notify:` settings pass down only to the monitors a
+it, linked or defined, while `notify:` settings pass down only to the monitors a
 group defines, so each monitor has one notification rule wherever it is shown.
-A link to an unknown id, or one that would put a group inside itself, is logged
-and ignored.
+A link must sit inside a group; one at the top level, one to an unknown id, or
+one that would put a group inside itself is logged and ignored.
 
 Every monitor type, its config keys, and its `ssh_config` / layout options are
 documented in the [plugin reference](docs/plugins.md). Agent declaration and

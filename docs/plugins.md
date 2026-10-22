@@ -1358,7 +1358,7 @@ A logical container for other monitors. Aggregates the worst-case status of all 
 
 | Option          | Description                                                                                     |
 |-----------------|-------------------------------------------------------------------------------------------------|
-| `children`      | A list of nested plugin definitions, or links (`ref: <id>`, optional `name`) to monitors defined elsewhere — see [Views and links](../README.md#views-and-links) |
+| `children`      | A list of nested plugin definitions, or links (`ref: <id>`, optional `name`) to monitors defined elsewhere — see [Links](../README.md#links) |
 | `layout`        | Rows of widget references. Present ⇒ composite layout; absent ⇒ collapsible cards.               |
 | `grid_min_width`| Card mode only: minimum width of a child card before it wraps (default: `"320px"`)               |
 

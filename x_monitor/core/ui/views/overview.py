@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 from nicegui import ui
 from x_monitor.core.contracts import EngineLike
-from x_monitor.core.coordination.monitor_graph import iter_monitors, view_roots
+from x_monitor.core.coordination.monitor_graph import iter_monitors
 from .. import theme
 from ..theme import STATUS_COLORS, ACCENT
 from ..components import LEVEL_CELL_SLOT, STATUS_BADGES, STATUS_CELL_SLOT, card, feed_columns, icon_button, page_header, table_block, table_heading, table_wrap, on_data_event, offload, refresh_rows
@@ -329,7 +329,7 @@ def _render_recent_events(engine):
 
 def render_overview(engine: EngineLike, switch_view: Callable):
     """Renders the overview: the two charts, the filterable monitor table and recent activity."""
-    monitors = _collect_leaf_monitors(view_roots(engine))
+    monitors = _collect_leaf_monitors(engine.plugins)
     page_header('All Monitors', f"{len(monitors)} monitor{'' if len(monitors) == 1 else 's'}")
 
     plugin_by_id = {p.id: p for p in monitors}
