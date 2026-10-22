@@ -1,6 +1,7 @@
 """The plugin detail view: header, action buttons and the plugin's own UI."""
 
 import asyncio
+from datetime import datetime
 from typing import Any, Callable
 from nicegui import ui
 from x_monitor.core.contracts import EngineLike
@@ -14,11 +15,25 @@ def render_plugin_detail(engine: EngineLike, switch_view: Callable, plugin: Any)
     with header:
         with ui.column().classes('min-w-0'):
             ui.label(plugin.name).classes('halon-title-page break-words')
+            _render_schedule(plugin)
         actions_row = ui.row().classes('gap-2 items-center').style('flex-wrap: wrap;')
 
     asyncio.create_task(_render_actions(engine, plugin, actions_row))
 
     plugin.render_ui()
+
+
+def _render_schedule(plugin: Any):
+    """Renders one caption per scheduled action, naming it as its button does and giving its next run."""
+    entries = getattr(plugin, 'scheduled_actions', [])
+    if not entries:
+        return
+    names = {a['action_id']: a['name'] for a in plugin.get_actions()}
+    for entry in entries:
+        upcoming = entry.cron.next_after(datetime.now())
+        when = f"next {upcoming:%a %d %b %H:%M}" if upcoming else 'never'
+        ui.label(f"Scheduled: {names.get(entry.action, entry.action)} · {entry.cron.expression} · {when}") \
+            .classes('halon-caption')
 
 
 async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):

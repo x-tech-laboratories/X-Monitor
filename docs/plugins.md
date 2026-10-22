@@ -7,6 +7,7 @@ config examples. For what X-Monitor is and how to run it, see the
 ## Contents
 
 - [Summary](#summary) — the one-line table of every plugin type
+- [Scheduled actions](#scheduled-actions) — run any monitor's action on a cron schedule
 - Plugin types:
   [`uptime`](#uptime) ·
   [`push`](#push) ·
@@ -101,6 +102,30 @@ All plugin types share these common fields:
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
 | `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
+| `schedule` | Actions to run on a cron schedule — see [Scheduled actions](#scheduled-actions) (default: none) |
+
+### Scheduled actions
+
+Any action a monitor offers can run on its own at set times, the way cron runs a job. Each `schedule` entry names the action and a cron expression; `args` passes the same parameters a dialog would.
+
+```yaml
+- name: Borg Home
+  type: borg
+  schedule:
+    - action: run_backup      # the action_id behind the Run Backup button
+      cron: "0 3 * * *"       # 03:00 every day
+    - action: verify_restore
+      cron: "30 4 * * sun"    # 04:30 on Sundays
+- name: Frigate
+  type: frigate
+  schedule:
+    - action: sync_recordings
+      cron: "@weekly"
+```
+
+The expression has the usual five fields (minute, hour, day of month, month, day of week) in the X-Monitor host's local time, with `*`, ranges, lists, `/` steps, month and day names, and the aliases `@hourly`, `@daily`, `@weekly`, `@monthly` and `@yearly`. As in cron, an expression restricting both the day of month and the day of week runs on either.
+
+A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a backup that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
 
 ---
 
