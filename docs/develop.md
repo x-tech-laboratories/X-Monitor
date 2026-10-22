@@ -699,11 +699,10 @@ strip for a run of up/down checks, meters or status tiles for repeated items, an
 chart holding several series. `core/ui/charts.py` draws them; `spec.py`'s docstring lists the
 keys.
 
-Everything except the history chart is plain DOM painted with Halon's CSS variables: a conic
-gradient for the gauge's arc, hard gradient stops for the strip's cells, flex children for the
-share bar. They follow the client's scheme with no repaint and send one style string per
-change. The multi-series chart is ECharts like `history_chart`, so it repaints its literal
-colors through `theme.on_scheme_change`; `palette()['series']` gives it the three
+Everything except the history chart is plain DOM painted with Halon's CSS variables: an inline
+SVG ring with round caps for the gauge, one rounded element per strip cell, flex children for the
+share bar. They follow the client's scheme with no repaint and send only what changed. The
+multi-series chart is ECharts like `history_chart`, so it repaints its literal colors through `theme.on_scheme_change`; `palette()['series']` gives it the three
 `--series-*` tokens, the first of which is the accent itself.
 
 Every widget prints its value next to its shape. A bar on its own track can be too faint to

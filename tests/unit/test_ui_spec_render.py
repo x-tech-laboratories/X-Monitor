@@ -94,6 +94,19 @@ class TestInlineThresholdColoring:
         built = await _ticked(user, render_page)
         assert STATUS_COLORS['warning'] in _cpu_label(built)._style['color']
 
+    async def test_a_reading_past_the_threshold_tints_the_card(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'cpu_pct': 97.5}, status='failed'))
+        built = await _ticked(user, render_page)
+        from x_monitor.core.ui.components import card_of
+        assert 'halon-card--failed' in card_of(_cpu_label(built))._classes
+
+    async def test_a_reading_under_the_warning_leaves_the_card_plain(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'cpu_pct': 12.0}, status='online'))
+        built = await _ticked(user, render_page)
+        from x_monitor.core.ui.components import card_of
+        classes = card_of(_cpu_label(built))._classes
+        assert 'halon-card--failed' not in classes and 'halon-card--warning' not in classes
+
     async def test_no_reading_leaves_the_card_uncolored(self, user: User, render_page):
         built = await _ticked(user, render_page)
         label = _cpu_label(built)
