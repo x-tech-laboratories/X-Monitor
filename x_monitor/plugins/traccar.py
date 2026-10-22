@@ -96,8 +96,40 @@ def _accumulate_staleness(stale_warn: List[Tuple[str, float]],
     return acc
 
 
+def _device_items(watched: List[Dict[str, Any]], stale_warning: float,
+                  stale_threshold: float) -> List[Dict[str, Any]]:
+    """One snapshot item per watched device, by name, with its update age in hours and its staleness state."""
+    items = []
+    for device in watched:
+        age = _age_hours(device.get('lastUpdate'))
+        if age is None or age >= stale_threshold:
+            state = 'failed'
+        elif age >= stale_warning:
+            state = 'warning'
+        else:
+            state = 'online'
+        items.append({'label': device.get('name', '?'), 'age_hours': age, 'state': state})
+    return sorted(items, key=lambda item: item['label'])
+
+
+def _age_text(item: Dict[str, Any]) -> str:
+    """One device's update age in minutes under an hour and in hours past it."""
+    age = item.get('age_hours')
+    if age is None:
+        return 'never'
+    if age < 1:
+        return f"{age * 60:.0f} min"
+    return f"{age:.1f} h"
+
+
+def _device_color(item: Dict[str, Any]) -> Optional[str]:
+    """One device's meter color, which is its staleness state."""
+    return item.get('state')
+
+
 _DEFAULT_LAYOUT = [
     ['host_card', 'stale_card', 'devices_card'],
+    ['device_bars'],
     ['chart'],
     ['events'],
 ]
@@ -174,20 +206,37 @@ class Traccar(Plugin):
             parts.append("| " + "; ".join(acc.problems))
 
         return CollectResult(metrics=metrics, logs=[(' | '.join(parts), acc.log_level)],
-                             status=acc.status)
+                             status=acc.status,
+                             snapshot=_device_items(watched, self.stale_warning,
+                                                    self.stale_threshold))
 
-    UI_SPEC = {
-        'layout': _DEFAULT_LAYOUT,
-        'cards': {
-            'stale_card': {
-                'metric': 'devices_stale', 'title': 'STALE DEVICES',
-                'format': 'int', 'color': 'traccar_nonzero_failed',
+    @property
+    def UI_SPEC(self):
+        return {
+            'layout': _DEFAULT_LAYOUT,
+            'cards': {
+                'stale_card': {
+                    'metric': 'devices_stale', 'title': 'STALE DEVICES',
+                    'format': 'int', 'color': 'traccar_nonzero_failed',
+                },
+                'devices_card': {'metric': 'devices_total', 'title': 'DEVICES', 'format': 'int'},
+                'device_bars': {
+                    'title': 'LAST UPDATE BY DEVICE',
+                    'repeat': {
+                        'source': 'snapshot',
+                        'container': 'bars',
+                        'bar_value': 'age_hours',
+                        'bar_max': 2 * self.stale_threshold,
+                        'bar_marker': 50.0,
+                        'item_format_fn': _age_text,
+                        'item_color_by': _device_color,
+                        'empty_text': 'No devices reported yet',
+                    },
+                },
             },
-            'devices_card': {'metric': 'devices_total', 'title': 'DEVICES', 'format': 'int'},
-        },
-        'chart': {'metric': 'oldest_update_hours', 'title': 'OLDEST UPDATE (HOURS)'},
-        'events': True,
-    }
+            'chart': {'metric': 'oldest_update_hours', 'title': 'OLDEST UPDATE (HOURS)'},
+            'events': True,
+        }
 
 
 from x_monitor.core.ui.spec import register_color_rule

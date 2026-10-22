@@ -139,3 +139,43 @@ class TestTraccarCollection:
 class TestTraccarActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestDeviceSnapshot:
+    async def test_each_watched_device_is_one_item_with_its_age(self, plugin, run_requests):
+        _run(plugin, run_requests, [_device(name="Tablet", hours_ago=30.0),
+                                    _device(name="Phone", hours_ago=0.2),
+                                    _device(name="Old", hours_ago=900.0, disabled=True)])
+        items = plugin.data.latest_snapshot()
+        assert [item["label"] for item in items] == ["Phone", "Tablet"]
+        assert items[0]["age_hours"] == pytest.approx(0.2, abs=0.01)
+        assert items[0]["state"] == "online"
+        assert items[1]["state"] == "warning"
+
+    async def test_device_past_the_stale_threshold_or_never_reporting_is_failed(
+            self, plugin, run_requests):
+        _run(plugin, run_requests, [_device(name="Lost", hours_ago=100.0),
+                                    {"name": "NoFix", "disabled": False, "lastUpdate": None}])
+        items = {item["label"]: item for item in plugin.data.latest_snapshot()}
+        assert items["Lost"]["state"] == "failed"
+        assert items["NoFix"]["state"] == "failed"
+        assert items["NoFix"]["age_hours"] is None
+
+
+class TestDeviceBars:
+    async def test_device_bars_fill_to_twice_the_stale_threshold(self, plugin):
+        spec = plugin.UI_SPEC
+        repeat = spec['cards']['device_bars']['repeat']
+        assert repeat['source'] == 'snapshot'
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_value'] == 'age_hours'
+        assert repeat['bar_max'] == 144.0
+        assert repeat['bar_marker'] == 50.0
+        assert repeat['item_color_by']({"state": "warning"}) == "warning"
+        assert any('device_bars' in row for row in spec['layout'])
+
+    async def test_device_age_reads_in_minutes_then_hours(self, plugin):
+        format_item = plugin.UI_SPEC['cards']['device_bars']['repeat']['item_format_fn']
+        assert format_item({"age_hours": 0.2}) == "12 min"
+        assert format_item({"age_hours": 8.44}) == "8.4 h"
+        assert format_item({"age_hours": None}) == "never"
