@@ -111,9 +111,9 @@ class TestVmsActions:
     async def test_each_expected_vm_gets_a_running_switch(self, make_plugin):
         p = make_plugin(Vms, _cfg(expect_running=["web", "db"]))
         assert p.get_actions() == [
-            {"name": "db", "kind": "toggle", "metric": "vm_running_db",
+            {"name": "db", "kind": "toggle", "metric": "vm_running_db", "icon": "computer",
              "on_action_id": "start:db", "off_action_id": "shutdown:db"},
-            {"name": "web", "kind": "toggle", "metric": "vm_running_web",
+            {"name": "web", "kind": "toggle", "metric": "vm_running_web", "icon": "computer",
              "on_action_id": "start:web", "off_action_id": "shutdown:web"},
         ]
 

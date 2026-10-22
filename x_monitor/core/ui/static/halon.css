@@ -599,6 +599,12 @@ a, .q-link { color: var(--accent); }
     color: var(--accent) !important;
 }
 
+/* A bordered toggle button that is on: glyph, label and border all take the accent. */
+.q-btn.halon-button.halon-button-active {
+    border-color: var(--accent);
+    color: var(--accent) !important;
+}
+
 .q-btn:disabled, .q-btn.disabled { opacity: 0.5 !important; }
 
 /* An icon-only button is a control that happens to be square, not a circle. */
@@ -623,6 +629,10 @@ a, .q-link { color: var(--accent); }
 .q-table .q-btn.q-btn--flat { color: var(--text-secondary) !important; }
 .q-table .q-btn.q-btn--flat:hover { color: var(--accent) !important; }
 .q-table .q-btn.q-btn--flat.halon-button-danger { color: var(--status-danger) !important; }
+
+/* A toggle button in a cell carries its value as text, so it sizes to the word rather than to a glyph. */
+.q-table .q-btn.halon-cell-toggle { width: auto; padding: 0 var(--space-2); }
+.q-table .q-btn.q-btn--flat.halon-button-active { color: var(--accent) !important; }
 
 .halon-row-actions { gap: var(--space-1); flex-wrap: nowrap; }
 

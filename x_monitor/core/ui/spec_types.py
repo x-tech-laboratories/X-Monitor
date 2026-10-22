@@ -102,11 +102,11 @@ class ColumnSpec(TypedDict, total=False):
     sortable: bool                 # False keeps the column out of sorting; every other column sorts
     sort_field: str                # raw row field to sort on in place of the shown one
     cell_color_by: str             # ITEM_COLOR_RULES key, applied per-row
-    toggle: 'ToggleCellSpec'       # shows the cell as a switch that runs an action per row
+    toggle: 'ToggleCellSpec'       # shows the cell as a toggle button that runs an action per row
 
 
 class ToggleCellSpec(TypedDict, total=False):
-    on: List[Any]                  # row values that show the switch on
+    on: List[Any]                  # row values that show the toggle pressed
     off: List[Any]                 # row values that show it off; anything else stays plain text
     on_action_id: str
     off_action_id: str

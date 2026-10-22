@@ -82,6 +82,25 @@ class TestPollNow:
         plugin.release.set()
         await user.should_see('Vault polled')
 
+    async def test_is_a_regular_button_until_clicked(self, user: User, page, plugin):
+        await user.open('/')
+        await user.should_see('Poll Now')
+        button = _button(user, 'Poll Now')
+        assert 'halon-button' in button.classes
+        assert 'halon-button-filled' not in button.classes
+
+    async def test_takes_the_accent_and_says_polling_while_the_poll_runs(self, user: User, page, plugin):
+        await user.open('/')
+        await _poll_and_wait(user, plugin)
+        await user.should_see('Polling...')
+        button = _button(user, 'Polling...')
+        assert 'halon-button-filled' in button.classes
+        plugin.release.set()
+        await user.should_see('Vault polled')
+        assert button.text == 'Poll Now'
+        assert 'halon-button-filled' not in button.classes
+        assert 'halon-button' in button.classes
+
 
 def _orphaned_slot(client):
     """A slot whose element has been deleted and collected: where a handler stands once its page is gone."""
@@ -159,50 +178,62 @@ def _toggle_page(plugin):
         render_plugin_detail(engine, lambda *_: None, plugin)
 
 
-def _switch(user: User):
-    return next(iter(user.find(kind=ui.switch).elements))
+def _button(user: User, label='Start on Boot'):
+    return next(iter(user.find(kind=ui.button, content=label).elements))
+
+
+def _pressed(button) -> bool:
+    return 'halon-button-active' in button.classes and button.props.get('aria-pressed') == 'true'
 
 
 class TestToggle:
-    async def test_shows_the_reported_state(self, user: User):
+    async def test_is_pressed_while_the_state_is_on(self, user: User):
         _toggle_page(_TogglePlugin(enabled=1.0))
         await user.open('/')
         await user.should_see('Start on Boot')
-        assert _switch(user).value is True
+        assert _pressed(_button(user))
 
-    async def test_switching_on_runs_the_on_action_and_reads_the_state_back(self, user: User):
+    async def test_is_released_while_the_state_is_off(self, user: User):
+        _toggle_page(_TogglePlugin(enabled=0.0))
+        await user.open('/')
+        await user.should_see('Start on Boot')
+        assert not _pressed(_button(user))
+        assert _button(user).props.get('aria-pressed') == 'false'
+
+    async def test_clicking_a_released_button_runs_the_on_action_and_reads_the_state_back(self, user: User):
         plugin = _TogglePlugin(enabled=0.0)
         _toggle_page(plugin)
         await user.open('/')
         await user.should_see('Start on Boot')
-        _switch(user).value = True
+        user.find(kind=ui.button, content='Start on Boot').click()
         await user.should_see('Start on Boot: on')
         assert plugin.ran == ['enable_service']
-        assert _switch(user).value is True
+        assert _pressed(_button(user))
 
-    async def test_switching_off_runs_the_off_action(self, user: User):
+    async def test_clicking_a_pressed_button_runs_the_off_action(self, user: User):
         plugin = _TogglePlugin(enabled=1.0)
         _toggle_page(plugin)
         await user.open('/')
         await user.should_see('Start on Boot')
-        _switch(user).value = False
+        user.find(kind=ui.button, content='Start on Boot').click()
         await user.should_see('Start on Boot: off')
         assert plugin.ran == ['disable_service']
+        assert not _pressed(_button(user))
 
-    async def test_a_failed_action_puts_the_switch_back(self, user: User):
+    async def test_a_failed_action_leaves_it_released(self, user: User):
         plugin = _TogglePlugin(enabled=0.0, succeeds=False)
         _toggle_page(plugin)
         await user.open('/')
         await user.should_see('Start on Boot')
-        _switch(user).value = True
-        await user.should_see('Start on Boot could not be switched on')
-        assert _switch(user).value is False
+        user.find(kind=ui.button, content='Start on Boot').click()
+        await user.should_see('Start on Boot could not be turned on')
+        assert not _pressed(_button(user))
 
-    async def test_an_unknown_state_disables_the_switch(self, user: User):
+    async def test_an_unknown_state_disables_it(self, user: User):
         _toggle_page(_TogglePlugin(enabled=None))
         await user.open('/')
         await user.should_see('Start on Boot')
-        assert not _switch(user).enabled
+        assert not _button(user).enabled
 
 
 class TestActionNames:

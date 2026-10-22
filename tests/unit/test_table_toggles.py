@@ -1,4 +1,4 @@
-"""A spec table column shown as switches, rendered inside a real NiceGUI client."""
+"""A spec table column shown as toggle buttons, rendered inside a real NiceGUI client."""
 
 import asyncio
 from types import SimpleNamespace
@@ -11,6 +11,20 @@ from x_monitor.core.ui.components import render_table_with_actions, toggle_posit
 
 pytest_plugins = ['nicegui.testing.user_plugin']
 pytestmark = pytest.mark.nicegui_main_file(None)
+
+@pytest.fixture(autouse=True)
+def notify_finds_its_client(monkeypatch):
+    """The test harness records notifications without looking up a client, so this restores the lookup the real ui.notify starts with."""
+    from nicegui import context
+    from nicegui.testing.user_notify import UserNotify
+    record = UserNotify.__call__
+
+    def notify(self, *args, **kwargs):
+        context.client
+        return record(self, *args, **kwargs)
+
+    monkeypatch.setattr(UserNotify, '__call__', notify)
+
 
 _TOGGLE = {'on': ['enabled'], 'off': ['disabled'],
            'on_action_id': 'enable_service', 'off_action_id': 'disable_service',
@@ -76,6 +90,10 @@ class TestToggleColumn:
         table = await _render(user, _Plugin())
         json.dumps(table.props)
         assert 'toggle' not in table.props['columns'][1]
+        assert 'q-btn' in table.slots['body-cell-enabled'].template
+        assert 'aria-pressed' in table.slots['body-cell-enabled'].template
+        # Doubled braces in a bound attribute stop Vue compiling the page, which then renders blank.
+        assert "{{ 'halon-button-active'" not in table.slots['body-cell-enabled'].template
         assert _row(table, 'nginx.service')['_toggle_enabled'] is False
         assert _row(table, 'tmp.mount')['_toggle_enabled'] is None
 

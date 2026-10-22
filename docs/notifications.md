@@ -103,9 +103,9 @@ monitor recovers and closes when the last one does.
 
 ## Muting
 
-Switching off **Notifications** on a monitor's page mutes it until you switch it back on, for
+Releasing the **Notifications** toggle button on a monitor's page mutes it until you press it again, for
 example during maintenance. Muting a group mutes everything in it, and each monitor in the group
-shows a disabled switch naming the group that muted it. The bell icon in the dashboard's header lists everything that is muted,
+shows a disabled button naming the group that muted it. The bell icon in the dashboard's header lists everything that is muted,
 with a button to unmute each one.
 
 A mute is saved, so it survives a restart. A failure that happens while a monitor is muted is not

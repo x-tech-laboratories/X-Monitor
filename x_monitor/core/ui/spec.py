@@ -158,9 +158,9 @@ columns         ``[{'name', 'label', 'field', 'align', 'sortable', 'sort_field',
                 (Shift+click adds it to a multi-column sort) unless ``'sortable': False``;
                 ``sort_field`` names a raw row field to sort on in place of a formatted one.
                 ``toggle`` (``{'on', 'off', 'on_action_id', 'off_action_id', 'params'}``)
-                shows the cell as a switch labelled with its value: a value in ``on`` or
-                ``off`` sets its position, any other value stays plain text, and flipping
-                it runs the matching action with ``params`` then polls to read it back.
+                shows the cell as a toggle button labelled with its value: a value in ``on``
+                or ``off`` sets whether it is pressed, any other value stays plain text, and
+                clicking it runs the matching action with ``params`` then polls to read it back.
 row_actions     ``[{'id', 'icon', 'color', 'tooltip', 'visible_if' (ENABLED_PREDICATES),
                 'kind', 'dialog', 'action_id' (default id), 'params' (kwarg name -> row
                 field), 'notify' (default True), 'confirm'}, ...]``; kind ``'dialog'``

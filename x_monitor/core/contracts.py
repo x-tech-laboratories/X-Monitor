@@ -62,8 +62,8 @@ class ActionButtonSpec(TypedDict, total=False):
     detail header. Distinct from spec.py's ButtonSpec (a UI_SPEC-embedded
     button rendered inline in the page body via render_buttons); this one
     is always rendered in the fixed header regardless of UI_SPEC. With
-    kind 'toggle' it is a switch instead: its position is the latest value
-    of `metric`, and flipping it runs `on_action_id` or `off_action_id`."""
+    kind 'toggle' it is a toggle button instead: it is pressed while the latest
+    value of `metric` is on, and clicking it runs `on_action_id` or `off_action_id`."""
     action_id: str
     name: str
     icon: str

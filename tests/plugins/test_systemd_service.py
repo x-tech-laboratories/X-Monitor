@@ -312,9 +312,9 @@ class TestActions:
     def test_continuous_unit_gets_restart_and_two_switches(self, plugin):
         assert plugin.get_actions() == [
             {"name": "Restart Service", "action_id": "restart_service", "variant": "primary", "icon": "play_arrow"},
-            {"name": "Running", "kind": "toggle", "metric": "active",
+            {"name": "Running", "kind": "toggle", "metric": "active", "icon": "play_circle",
              "on_action_id": "start_service", "off_action_id": "stop_service"},
-            {"name": "Start on Boot", "kind": "toggle", "metric": "enabled",
+            {"name": "Start on Boot", "kind": "toggle", "metric": "enabled", "icon": "power_settings_new",
              "on_action_id": "enable_service", "off_action_id": "disable_service"},
         ]
 
