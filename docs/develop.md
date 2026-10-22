@@ -617,7 +617,7 @@ Two hazards are worth knowing before editing either sheet:
 
 ## The overview's fleet sections
 
-Above its charts the overview draws the fleet: a tile per top-level group of the first view, tinted
+Above its charts the overview draws the fleet: a tile per root of the monitor tree, tinted
 by the worst state among its monitors and opening that group's page; reachability strips for every
 uptime, http, mosquitto, dns_record and push monitor, grouped by host; a meter per borg repository
 of the time since its newest archive, half full at its max age; a tile per NixOS deployment; and a
