@@ -183,13 +183,8 @@ def render_strip(page, title: str, plugin_id: str, rows: List[dict],
     with card('w-full', title=title):
         with ui.element('div').classes('halon-strip-rows'):
             for row in rows:
-                with ui.row().classes('halon-strip-row no-wrap'):
-                    if labeled:
-                        ui.label(row.get('label', row['metric'])).classes('halon-strip-label')
-                    with ui.element('div').classes('halon-strip') as strip:
-                        cell_elements = [ui.element('div').classes('halon-strip-cell') for _ in range(cells)]
-                    share_label = ui.label('--').classes('halon-strip-share')
-                drawn.append((row['metric'], strip, cell_elements, share_label, [None]))
+                label = row.get('label', row['metric']) if labeled else None
+                drawn.append((row['metric'], *strip_row(label, cells), [None]))
 
     def read():
         return [[m.value for m in page.plugin.data.metric_history(plugin_id, metric, limit=cells)]
@@ -197,20 +192,35 @@ def render_strip(page, title: str, plugin_id: str, rows: List[dict],
 
     async def update():
         for (_, strip, cell_elements, share_label, last), values in zip(drawn, await offload(read)()):
-            states = strip_states(values, up_above, cells)
-            if states == last[0]:
-                continue
-            previous = last[0] or [None] * cells
-            last[0] = states
-            # Only the cells whose state changed are restyled, so a scrolling strip sends little.
-            for cell, state, before in zip(cell_elements, states, previous):
-                if state != before:
-                    cell.style(f'background: {strip_cell_color(state)}')
-            share = up_share(states)
-            share_label.text = '--' if share is None else f'{share:.1f}% up'
-            strip.props(f'aria-label="{share_label.text} over the last {cells} checks" role="img"')
+            show_strip(strip, cell_elements, share_label, last, strip_states(values, up_above, cells))
 
     page.on_refresh(update)
+
+
+def strip_row(label: Optional[str], cells: int = STRIP_CELLS):
+    """One row of an uptime strip: an optional label, `cells` empty cells and the up share beside
+    them; returns (strip, cells, share label) for show_strip to fill."""
+    with ui.row().classes('halon-strip-row no-wrap'):
+        if label is not None:
+            ui.label(label).classes('halon-strip-label')
+        with ui.element('div').classes('halon-strip') as strip:
+            cell_elements = [ui.element('div').classes('halon-strip-cell') for _ in range(cells)]
+        share_label = ui.label('--').classes('halon-strip-share')
+    return strip, cell_elements, share_label
+
+
+def show_strip(strip, cell_elements, share_label, last: list, states: List[str]) -> None:
+    """Paint a strip row with these states, restyling only the cells whose state changed since `last`."""
+    if states == last[0]:
+        return
+    previous = last[0] or [None] * len(cell_elements)
+    last[0] = states
+    for cell, state, before in zip(cell_elements, states, previous):
+        if state != before:
+            cell.style(f'background: {strip_cell_color(state)}')
+    share = up_share(states)
+    share_label.text = '--' if share is None else f'{share:.1f}% up'
+    strip.props(f'aria-label="{share_label.text} over the last {len(cell_elements)} checks" role="img"')
 
 
 # ============================================================================
@@ -233,13 +243,14 @@ def meter_row(label: str, value_text: str, percent: float, color: str,
 
 
 def status_tile(label: str, value_text: str, state: Optional[str]):
-    """One item as a small tile: a status dot and its name, with its value as the caption."""
+    """One item as a small tile: a status dot and its name, with its value as the caption; returns the tile."""
     color = STATUS_COLORS.get(state or 'unavailable', STATUS_COLORS['unavailable'])
-    with ui.element('div').classes('halon-tile').style(f'--halon-tile-color: {color}'):
+    with ui.element('div').classes('halon-tile').style(f'--halon-tile-color: {color}') as tile:
         with ui.row().classes('halon-tile-head no-wrap'):
             ui.element('span').classes('halon-tile-dot')
             ui.label(label).classes('halon-tile-label')
         ui.label(value_text).classes('halon-caption')
+    return tile
 
 
 # ============================================================================

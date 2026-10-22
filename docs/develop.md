@@ -615,6 +615,19 @@ Two hazards are worth knowing before editing either sheet:
   literals are parsed out of the token sheet at import, so they are not a
   second copy of the palette.
 
+## The overview's fleet sections
+
+Above its charts the overview draws the fleet: a tile per top-level group of the first view, tinted
+by the worst state among its monitors and opening that group's page; reachability strips for every
+uptime, http, mosquitto, dns_record and push monitor, grouped by host; a meter per borg repository
+of the time since its newest archive, half full at its max age; a tile per NixOS deployment; and a
+bar per vulnerability scan. A section appears only when the fleet has monitors of its kind.
+
+`core/ui/views/fleet.py` builds each section with a pure function over monitors and readings,
+which is what its tests exercise, and redraws a section only when its rows changed. Everything it
+shows is read from the latest metrics and the in-memory metric history; nothing queries the
+status history on disk, so the strips cover the last 60 readings rather than a fixed time span.
+
 ## Overview charts: a donut for status, a treemap for type
 
 The overview's two cards look alike but carry different data, and only one of
