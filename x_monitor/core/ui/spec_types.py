@@ -31,6 +31,12 @@ class CardSpec(TypedDict, total=False):
     refresh: bool                  # re-read value_attr/color_attr every page tick
     value: str                     # static text, computed once at page load
     repeat: "RepeatSpec"           # render_repeat_card instead of a single value
+    kind: str                      # 'gauge' | 'share' | 'strip': a chart card from charts.py
+    max: float                     # gauge: the value that fills the arc (default 100)
+    caption: str                   # gauge: a line beneath the arc
+    parts: List["SharePartSpec"]   # share: the metrics the bar splits between
+    cells: int                     # strip: how many past readings to draw (default 60)
+    up_above: float                # strip: a reading above this is up (default 0.5)
     # status_card only:
     on_text: str
     off_text: str
@@ -41,7 +47,10 @@ class RepeatSpec(TypedDict, total=False):
     GPUs, ...) rendered as repeated chips or mini-cards. `source` selects
     which of the three resolution strategies _resolve_repeat_items uses."""
     source: str                    # 'snapshot' (default) | 'setting' | 'metrics_prefix'
-    container: str                 # 'chips' (default) | anything else -> info_card grid
+    container: str                 # 'chips' (default) | 'bars' | 'tiles' | anything else -> info_card grid
+    bar_value: str                 # bars: item key the meter fills from (default item_value)
+    bar_max: float                 # bars: the value that fills a meter (default 100)
+    bar_marker: float              # bars: the warning tick, as a percentage
     item_label: str
     item_value: str
     item_format: str               # FORMATTERS key
@@ -66,9 +75,22 @@ class MetricFieldSpec(TypedDict):
     suffix: str
 
 
+class SharePartSpec(TypedDict, total=False):
+    metric: str
+    label: str
+    color: str                     # a status name, 'accent', 'series-1'..'series-3' or 'neutral'
+
+
+class SeriesSpec(TypedDict, total=False):
+    metric: str
+    label: str
+
+
 class ChartSpec(TypedDict, total=False):
     title: str
-    metric: str
+    metric: str                    # one metric, drawn by history_chart
+    series: List[SeriesSpec]       # several metrics on one chart, drawn by charts.series_chart
+    style: str                     # with series: 'lines' (default) | 'stack' | 'mirror'
 
 
 class ColumnSpec(TypedDict, total=False):

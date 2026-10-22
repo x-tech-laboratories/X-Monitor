@@ -135,6 +135,8 @@ def palette(scheme: str = 'light') -> Dict[str, str]:
         text_secondary=table['text-secondary'],
         text_on_fill=table['text-on-fill'],
         font=' '.join(table['font-family-interface'].split()),
+        # The first series is the accent itself, so a primary override recolors it too.
+        series=[table['accent'], table['series-2'], table['series-3']],
     )
     return colors
 

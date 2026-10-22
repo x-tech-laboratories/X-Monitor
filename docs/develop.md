@@ -690,6 +690,26 @@ the child plugin has no idea it is being taken apart. Only a plugin with a
 `UI_SPEC` can be addressed this way; `systemd_service` and a nested group are
 referenced by a bare id and render whole.
 
+## Chart widgets
+
+A page of value cards says what a monitor reads now but not how it got there, and three cards
+for three related numbers read slower than one picture of them. So a spec can ask for a chart
+in place of a card: a gauge for one percentage, a share bar for parts of a whole, an uptime
+strip for a run of up/down checks, meters or status tiles for repeated items, and a history
+chart holding several series. `core/ui/charts.py` draws them; `spec.py`'s docstring lists the
+keys.
+
+Everything except the history chart is plain DOM painted with Halon's CSS variables: a conic
+gradient for the gauge's arc, hard gradient stops for the strip's cells, flex children for the
+share bar. They follow the client's scheme with no repaint and send one style string per
+change. The multi-series chart is ECharts like `history_chart`, so it repaints its literal
+colors through `theme.on_scheme_change`; `palette()['series']` gives it the three
+`--series-*` tokens, the first of which is the accent itself.
+
+Every widget prints its value next to its shape. A bar on its own track can be too faint to
+read (§3.6 of Halon's guide), and a printed number makes the shape reinforcement rather than
+the only carrier of the value.
+
 ## Plugin config & helpers
 
 A monitor's `type` is the module name under `x_monitor/plugins/`, and
