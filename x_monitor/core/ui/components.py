@@ -132,6 +132,17 @@ def action_button(text: str, on_click=None, icon: str = 'play_arrow',
     return ui.button(text, icon=icon, on_click=on_click, color=None).props('no-caps').classes(classes)
 
 
+def toggle_button(text: str, icon: str, on_click=None):
+    """A bordered button that stays pressed while what it controls is on; set_pressed shows which."""
+    return action_button(text, on_click=on_click, icon=icon).props('aria-pressed=false')
+
+
+def set_pressed(button, pressed: bool):
+    """Shows a toggle button as on, with its glyph and label in the accent, or as off."""
+    button.classes(add='halon-button-active' if pressed else None, remove=None if pressed else 'halon-button-active')
+    button.props(f'aria-pressed={"true" if pressed else "false"}')
+
+
 def icon_button(icon: str, tooltip: str, on_click=None):
     """A square flat button holding only a glyph, with its name as a tooltip."""
     with ui.button(icon=icon, on_click=on_click, color=None).props('flat no-caps').classes('halon-icon-button') as button:
@@ -591,7 +602,7 @@ def _color_rules(columns: list) -> list:
 
 
 def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optional[dict] = None):
-    """Render a data table with optional per-row action buttons, switch cells, cell coloring and filtering."""
+    """Render a data table with optional per-row action buttons, toggle-button cells, cell coloring and filtering."""
     from x_monitor.core.ui.spec import ENABLED_PREDICATES, resolve
     from x_monitor.core.ui.theme import STATUS_COLORS
 
@@ -632,14 +643,16 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
         ''')
 
     for col in toggle_columns:
-        # A value the switch cannot show, such as a static unit's boot state, stays as plain text.
+        # A value the toggle button cannot show, such as a static unit's boot state, stays as plain text.
         table.add_slot(f'body-cell-{col["name"]}', f'''
             <q-td :props="props">
-                <q-toggle v-if="props.row._toggle_{col['name']} !== null" dense
-                          :model-value="props.row._toggle_{col['name']}"
-                          :disable="props.row._toggle_busy_{col['name']}"
-                          :label="String(props.row.{col['field']})"
-                          @update:model-value="value => $parent.$emit('toggle_{col['name']}', {{row: props.row, value}})" />
+                <q-btn v-if="props.row._toggle_{col['name']} !== null" flat dense no-caps
+                       class="halon-cell-toggle"
+                       :class="{{ 'halon-button-active': props.row._toggle_{col['name']} }}"
+                       :aria-pressed="String(props.row._toggle_{col['name']})"
+                       :disable="props.row._toggle_busy_{col['name']}"
+                       :label="String(props.row.{col['field']})"
+                       @click="$parent.$emit('toggle_{col['name']}', {{row: props.row, value: !props.row._toggle_{col['name']}}})" />
                 <span v-else>{{{{ props.row.{col['field']} }}}}</span>
             </q-td>
         ''')
@@ -675,10 +688,8 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
         success, content = await plugin.run_action(action_id, **params)
         if action.get('notify', True):
             label = action.get('tooltip', action_id).replace('_', ' ').title()
-            ui.notify(
-                _outcome_notice(label, success, content),
-                type='positive' if success else 'negative',
-            )
+            notify_client(table.client, _outcome_notice(label, success, content),
+                          type='positive' if success else 'negative')
 
     for action in row_actions:
         table.on(action['id'], lambda e, a=action: asyncio.create_task(_handle_action(e, a)))
@@ -697,14 +708,15 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
         success, content = False, ''
         try:
             success, content = await plugin.run_action(action_id, **params)
-            # The poll reads the state back, so the switch shows what the target did rather than what was asked.
+            # The poll reads the state back, so the button shows what the target did rather than what was asked.
             if success:
                 await plugin.run_cycle()
         finally:
             busy_toggles.discard(busy_key)
             update_table()
         label = f"{col.get('label', col['name'])} {'on' if wanted else 'off'}: {row.get(row_key)}"
-        ui.notify(_outcome_notice(label, success, content), type='positive' if success else 'negative')
+        notify_client(table.client, _outcome_notice(label, success, content),
+                      type='positive' if success else 'negative')
 
     for col in toggle_columns:
         table.on(f'toggle_{col["name"]}', lambda e, c=col: asyncio.create_task(_handle_toggle(e, c)))
@@ -735,7 +747,7 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
 
 
 def toggle_position(toggle: dict, value) -> Optional[bool]:
-    """Where a switch cell sits for a row value: on, off, or None when the value is neither."""
+    """Whether a toggle cell shows pressed for a row value: on, off, or None when the value is neither."""
     if value in toggle.get('on', ()):
         return True
     if value in toggle.get('off', ()):

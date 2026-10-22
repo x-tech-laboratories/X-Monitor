@@ -1,5 +1,5 @@
 """Libvirt VM states via `virsh list --all` over SSH — sampled locally by the
-agent on agent-backed hosts — with a running switch for each expected VM.
+agent on agent-backed hosts — with a running toggle for each expected VM.
 Config: uri (the libvirt connection), expect_running, offline_warning. Any VM
 named in expect_running that is not running makes the status failed; VMs in
 other unexpected states are warning when offline_warning is on, while cleanly
@@ -24,7 +24,7 @@ _DEFAULT_LAYOUT = [
 
 
 def _running_metric(name: str) -> str:
-    """The metric that is 1 while the expected VM `name` runs, which its switch shows."""
+    """The metric that is 1 while the expected VM `name` runs, which its toggle shows."""
     return f'vm_running_{name}'
 
 
@@ -129,7 +129,7 @@ class Vms(Plugin):
         )
 
     def get_actions(self) -> List[Dict[str, str]]:
-        return [{'name': name, 'kind': 'toggle', 'metric': _running_metric(name),
+        return [{'name': name, 'kind': 'toggle', 'metric': _running_metric(name), 'icon': 'computer',
                  'on_action_id': f'start:{name}', 'off_action_id': f'shutdown:{name}'}
                 for name in sorted(self.expect_running)]
 

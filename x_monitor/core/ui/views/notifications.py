@@ -1,15 +1,15 @@
-"""Notification controls: a monitor's Notifications switch, and the dialog that tests channels and lists mutes."""
+"""Notification controls: a monitor's Notifications toggle button, and the dialog that tests channels and lists mutes."""
 
 from typing import Any
 
 from nicegui import ui
 
 from x_monitor.core.contracts import EngineLike
-from ..components import action_button, dialog_card
+from ..components import action_button, dialog_card, set_pressed, toggle_button
 
 
 def render_mute_button(engine: EngineLike, plugin: Any) -> None:
-    """The Notifications switch: on sends this monitor's notifications, off mutes them, or a group's for everything in it."""
+    """The Notifications toggle button: pressed sends this monitor's notifications, released mutes them, or a group's for everything in it."""
     notifications = engine.notifications
     if not notifications.channels:
         return
@@ -19,21 +19,24 @@ def render_mute_button(engine: EngineLike, plugin: Any) -> None:
         action_button(f'In maintenance: {window}', icon='construction').props('disable')
 
     @ui.refreshable
-    def switch() -> None:
+    def toggle() -> None:
         muter = notifications.muted_by(plugin.id)
         if muter is not None and muter != plugin.id:
             group = notifications.monitor_name(muter)
-            ui.switch(f'Muted by {group}', value=False).props('dense').disable()
+            toggle_button(f'Muted by {group}', icon='notifications_off').disable()
             return
+        sending = muter is None
 
-        def flipped(event) -> None:
-            notifications.set_muted(plugin.id, not event.value)
-            ui.notify(f'{plugin.name} {"unmuted" if event.value else "muted"}', type='positive')
-            switch.refresh()
+        def clicked() -> None:
+            notifications.set_muted(plugin.id, sending)
+            toggle.refresh()
+            ui.notify(f'{plugin.name} {"muted" if sending else "unmuted"}', type='positive')
 
-        ui.switch('Notifications', value=muter is None, on_change=flipped).props('dense')
+        button = toggle_button('Notifications', icon='notifications' if sending else 'notifications_off',
+                               on_click=clicked)
+        set_pressed(button, sending)
 
-    switch()
+    toggle()
 
 
 def open_notifications_dialog(engine: EngineLike) -> None:

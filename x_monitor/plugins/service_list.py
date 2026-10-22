@@ -1,6 +1,6 @@
 """Inventory of every systemd service on the target, from two systemctl list
 commands over SSH, rendered as a filterable table whose Active and Enabled
-cells are switches that start/stop and enable/disable the unit, with restart
+cells are toggle buttons that start/stop and enable/disable the unit, with restart
 and unit-file view/edit actions per row.
 Config: lines, allow_unit_file_edit, and allowed_write_paths restricting
 where an edited unit file may be written back. The monitor is online whenever
@@ -20,7 +20,7 @@ _DEFAULT_LAYOUT = [
     ['events'],
 ]
 
-# Switch positions for the table's Active and Enabled cells; any other value stays as plain text.
+# Toggle states for the table's Active and Enabled cells; any other value stays as plain text.
 _ACTIVE_TOGGLE = {'on': ['active'], 'off': ['inactive', 'failed'],
                   'on_action_id': 'start_service', 'off_action_id': 'stop_service',
                   'params': {'service_name': 'unit'}}

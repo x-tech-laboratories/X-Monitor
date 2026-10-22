@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from nicegui import ui
 from x_monitor.core.contracts import ActionButtonSpec, EngineLike
-from ..components import action_button, notify_client, on_data_event, page_header
+from ..components import action_button, notify_client, on_data_event, page_header, set_pressed, toggle_button
 from .notifications import render_mute_button
 
 
@@ -41,15 +41,29 @@ def _lede(plugin: Any) -> str:
 
 
 async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
-    """Renders the Poll Now button, the mute switch and the plugin's declared action buttons."""
+    """Renders the Poll Now button, the Notifications toggle and the plugin's declared action buttons."""
     # A poll or action can outlast the view it was started from, so its notice goes through the client instead of the view's slot.
     client = actions_row.client
     with actions_row:
+        polling = False
+
         async def poll_now():
-            await plugin.run_cycle()
+            nonlocal polling
+            if polling:
+                return
+            polling = True
+            # The button takes the accent only while a poll runs, so the fill means "working" rather than "click me".
+            poll_button.text = 'Polling...'
+            poll_button.classes(add='halon-button-filled', remove='halon-button')
+            try:
+                await plugin.run_cycle()
+            finally:
+                polling = False
+                poll_button.text = 'Poll Now'
+                poll_button.classes(add='halon-button', remove='halon-button-filled')
             notify_client(client, f'{plugin.name} polled', type='positive')
-        # The one filled button on the view; everything else is a bordered ghost so the accent keeps meaning "the action".
-        action_button('Poll Now', on_click=poll_now, icon='refresh', weight='filled')
+
+        poll_button = action_button('Poll Now', on_click=poll_now, icon='refresh')
         render_mute_button(engine, plugin)
 
         info = await plugin.present()
@@ -81,26 +95,27 @@ def action_names(actions: List[ActionButtonSpec]) -> Dict[str, str]:
 
 
 def _render_toggle(plugin: Any, action: ActionButtonSpec, client: Any):
-    """A switch that shows the toggle's state metric and runs its on or off action when flipped."""
+    """A toggle button, pressed while the toggle's state metric is on, that runs its on or off action when clicked."""
     busy = False
 
     def reported() -> Optional[bool]:
         record = plugin.data.latest_metric(action['metric'])
         return None if record is None else record.value > 0.5
 
-    async def flipped(event):
+    async def clicked():
         nonlocal busy
-        # Syncing the switch to the metric also fires this, and then there is nothing to do.
-        if busy or event.value == reported():
+        state = reported()
+        if busy or state is None:
             return
+        wanted = not state
         busy = True
-        switch.disable()
-        action_id = action['on_action_id'] if event.value else action['off_action_id']
-        word = 'on' if event.value else 'off'
+        button.disable()
+        action_id = action['on_action_id'] if wanted else action['off_action_id']
+        word = 'on' if wanted else 'off'
         success = False
         try:
             success, _ = await plugin.run_action(action_id)
-            # The poll reads the state back, so the switch shows what the target did rather than what was asked.
+            # The poll reads the state back, so the button shows what the target did rather than what was asked.
             if success:
                 await plugin.run_cycle()
         finally:
@@ -109,15 +124,15 @@ def _render_toggle(plugin: Any, action: ActionButtonSpec, client: Any):
         if success:
             notify_client(client, f"{action['name']}: {word}", type='positive')
         else:
-            notify_client(client, f"{action['name']} could not be switched {word}", type='negative')
+            notify_client(client, f"{action['name']} could not be turned {word}", type='negative')
 
     def sync():
         if busy:
             return
         state = reported()
-        switch.value = bool(state)
-        # A monitor that has not reported the state yet has nothing for the switch to show.
-        switch.set_enabled(state is not None)
+        set_pressed(button, bool(state))
+        # A monitor that has not reported the state yet has nothing for the button to show.
+        button.set_enabled(state is not None)
 
-    switch = ui.switch(action['name'], on_change=flipped).props('dense')
+    button = toggle_button(action['name'], icon=action.get('icon', 'toggle_on'), on_click=clicked)
     on_data_event(sync)

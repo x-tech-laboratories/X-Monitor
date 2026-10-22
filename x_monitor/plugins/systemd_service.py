@@ -10,7 +10,7 @@ is failed, and a unit whose state could not be queried is unavailable. A
 reboot clears systemd's unit timestamps, so when they are empty the last run
 is taken from the unit's journal instead of being reported as never ran.
 Both modes record whether the unit starts on boot, which drives the
-Start on Boot switch; continuous mode also has a Running switch that starts
+Start on Boot toggle button; continuous mode also has a Running toggle that starts
 and stops the unit."""
 
 import os
@@ -46,7 +46,7 @@ _ONESHOT_LAYOUT = [
 
 _RUNNING_SUBSTATES = {'running', 'start', 'start-pre', 'start-post', 'start-chroot', 'reload'}
 
-# The is-enabled answers a boot switch can show; static, masked and the rest cannot be enabled or disabled.
+# The is-enabled answers a boot toggle can show; static, masked and the rest cannot be enabled or disabled.
 _BOOT_STATES = {'enabled': 1.0, 'enabled-runtime': 1.0, 'disabled': 0.0}
 
 
@@ -231,13 +231,13 @@ class SystemdService(Plugin):
 
     def get_actions(self) -> List[Dict[str, str]]:
         actions = [{'name': 'Restart Service', 'action_id': 'restart_service', 'variant': 'primary', 'icon': 'play_arrow'}]
-        # Starting a oneshot unit blocks until its run ends, so only a continuous unit gets a Running switch.
+        # Starting a oneshot unit blocks until its run ends, so only a continuous unit gets a Running toggle.
         if self.max_age is None:
-            actions.append({'name': 'Running', 'kind': 'toggle', 'metric': 'active',
+            actions.append({'name': 'Running', 'kind': 'toggle', 'metric': 'active', 'icon': 'play_circle',
                             'on_action_id': 'start_service', 'off_action_id': 'stop_service'})
         else:
             actions.append({'name': 'Stop Service', 'action_id': 'stop_service', 'variant': 'danger', 'icon': 'stop'})
-        actions.append({'name': 'Start on Boot', 'kind': 'toggle', 'metric': 'enabled',
+        actions.append({'name': 'Start on Boot', 'kind': 'toggle', 'metric': 'enabled', 'icon': 'power_settings_new',
                         'on_action_id': 'enable_service', 'off_action_id': 'disable_service'})
         return actions
 

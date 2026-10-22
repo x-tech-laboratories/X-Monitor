@@ -135,9 +135,9 @@ unchecked at the boundary (bad data fails at first use, not at load).
   transport swap rests on is checkable rather than duck-typed.
 - `ActionButtonSpec` — one entry in `Plugin.get_actions()`, the header action
   buttons rendered regardless of `UI_SPEC`. An entry with `kind: 'toggle'` is a
-  switch instead of a button: it shows the latest value of its `metric` (above
-  0.5 is on), runs `on_action_id` or `off_action_id` when flipped, then polls so
-  the switch shows the state the target reports.
+  toggle button: it is pressed while the latest value of its `metric` is above
+  0.5, runs `on_action_id` or `off_action_id` when clicked, then polls so it
+  shows the state the target reports. An optional `icon` sets its glyph.
 
 Other typed boundaries: `core/ui/spec_types.py` (`UISpec` and its nested card /
 table / dialog / job-panel shapes that `generic_render` interprets),

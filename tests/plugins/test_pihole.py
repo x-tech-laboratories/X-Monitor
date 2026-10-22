@@ -309,7 +309,7 @@ class TestBuildGravityScript:
 class TestPiholeActions:
     def test_exposes_a_blocking_switch_and_gravity_update(self, plugin):
         assert plugin.get_actions() == [
-            {"name": "Blocking", "kind": "toggle", "metric": "blocking_enabled",
+            {"name": "Blocking", "kind": "toggle", "metric": "blocking_enabled", "icon": "shield",
              "on_action_id": "enable_blocking", "off_action_id": "disable_blocking"},
             {"name": "Update Gravity", "action_id": "update_gravity",
              "variant": "secondary", "icon": "refresh"},

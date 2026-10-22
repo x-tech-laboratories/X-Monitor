@@ -1,5 +1,6 @@
 """The dashboard's notification controls, rendered in a real NiceGUI client."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -65,39 +66,53 @@ async def _started(notifications):
     notifications.start([notifications.group])
 
 
-def _switch(user: User):
-    return next(iter(user.find(kind=ui.switch).elements))
+def _button(user: User, label='Notifications'):
+    return next(iter(user.find(kind=ui.button, content=label).elements))
 
 
-class TestMuteSwitch:
-    async def test_switching_notifications_off_and_on_mutes_and_unmutes(self, user: User, notifications, pages):
+def _pressed(button) -> bool:
+    return 'halon-button-active' in button.classes and button.props.get('aria-pressed') == 'true'
+
+
+async def _shows_pressed(user: User, pressed: bool) -> None:
+    """Waits for the re-rendered button to show the state, which lands a moment after the click."""
+    for _ in range(50):
+        if _pressed(_button(user)) == pressed:
+            return
+        await asyncio.sleep(0.01)
+    assert _pressed(_button(user)) == pressed
+
+
+class TestNotificationsToggle:
+    async def test_releasing_and_pressing_mutes_and_unmutes(self, user: User, notifications, pages):
         await _started(notifications)
         await user.open('/nas')
         await user.should_see('Notifications')
-        assert _switch(user).value is True
-        _switch(user).value = False
+        assert _pressed(_button(user))
+        user.find(kind=ui.button, content='Notifications').click()
         await user.should_see('Nas muted')
         assert notifications.muted_by('nas') == 'nas'
-        _switch(user).value = True
+        await _shows_pressed(user, False)
+        user.find(kind=ui.button, content='Notifications').click()
         await user.should_see('Nas unmuted')
         assert notifications.muted_by('nas') is None
+        await _shows_pressed(user, True)
 
-    async def test_a_muted_monitor_shows_the_switch_off(self, user: User, notifications, pages):
+    async def test_a_muted_monitor_shows_it_released(self, user: User, notifications, pages):
         await _started(notifications)
         notifications.set_muted('nas', True)
         await user.open('/nas')
         await user.should_see('Notifications')
-        assert _switch(user).value is False
+        assert not _pressed(_button(user))
 
-    async def test_a_monitor_muted_by_its_group_says_so_and_cannot_be_switched(self, user: User, notifications, pages):
+    async def test_a_monitor_muted_by_its_group_says_so_and_cannot_be_pressed(self, user: User, notifications, pages):
         await _started(notifications)
         notifications.set_muted('storage', True)
         await user.open('/nas')
         await user.should_see('Muted by Storage')
-        assert _switch(user).value is False
-        assert not _switch(user).enabled
+        assert not _button(user, 'Muted by Storage').enabled
 
-    async def test_no_channels_means_no_switch(self, user: User, notifications, pages):
+    async def test_no_channels_means_no_button(self, user: User, notifications, pages):
         notifications.channels = {}
         await user.open('/nas')
         await user.should_not_see('Notifications')
