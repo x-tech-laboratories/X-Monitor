@@ -48,7 +48,8 @@ class DdnsUpdater(Plugin):
         self._update_url_file = config.get('update_url_file')
         self._update_url_command = config.get('update_url_command')
         self.target = self.domain or self.name
-        self._last_update_attempt = 0.0
+        # None means no attempt yet, since the monotonic clock starts near zero at boot.
+        self._last_update_attempt: Optional[float] = None
         self._session = requests.Session()
 
     @property
@@ -140,7 +141,7 @@ class DdnsUpdater(Plugin):
 
         if result['public_ip'] and result['public_ip'] != result['dns_ip']:
             now = time.monotonic()
-            if now - self._last_update_attempt < self.min_interval:
+            if self._last_update_attempt is not None and now - self._last_update_attempt < self.min_interval:
                 result['updated'] = None
                 return result
             self._last_update_attempt = now

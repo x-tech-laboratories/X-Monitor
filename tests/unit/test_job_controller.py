@@ -24,7 +24,7 @@ class TestLaunch:
         proc = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True,
                               env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin:/run/current-system/sw/bin"})
         assert jobs.parse_launch(proc.stdout) is not None
-        workdir = tmp_path / ".cache" / "x-monitor" / "jobs" / "real-1"
+        workdir = tmp_path / ".cache" / "x_monitor" / "jobs" / "real-1"
         assert _wait_for(workdir / "exit"), "the detached command never finished"
         assert (workdir / "out").read_text() == "ran\n"
         assert (workdir / "exit").read_text().strip() == "3"
