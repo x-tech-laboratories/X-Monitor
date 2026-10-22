@@ -72,33 +72,8 @@ def table_wrap():
     return ui.element('div').classes('halon-table-wrap')
 
 
-# The states that tint a whole card; a healthy card stays plain so the hint keeps its meaning.
-CARD_STATE_CLASSES = {'warning': 'halon-card--warning', 'failed': 'halon-card--failed'}
-
-
-def card_of(element):
-    """The panel an element sits in, or None when it is not inside one."""
-    while element is not None:
-        if 'halon-card' in element._classes:
-            return element
-        slot = element.parent_slot
-        element = slot.parent if slot is not None else None
-    return None
-
-
-def mark_card_state(panel, state: Optional[str]) -> None:
-    """Tint a panel's border and background with a warning or failed state, and clear any other."""
-    if panel is None:
-        return
-    panel.classes(remove=' '.join(CARD_STATE_CLASSES.values()))
-    if state in CARD_STATE_CLASSES:
-        panel.classes(add=CARD_STATE_CLASSES[state])
-
-
 def show_state(label, state: str, text: Optional[str] = None) -> None:
-    """Mark a card value with its status: a state word becomes a badge, a measured number takes the status color,
-    and a warning or failure tints the card around it."""
-    mark_card_state(card_of(label), state)
+    """Mark a card value with its status: a state word becomes a badge, a measured number takes the status color."""
     text = label.text if text is None else text
     label.classes(remove=' '.join(['halon-badge', *STATUS_BADGES.values()]))
     if any(char.isdigit() for char in text):
