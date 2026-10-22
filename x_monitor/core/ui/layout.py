@@ -91,14 +91,14 @@ class PluginLayout:
         self._widget_cfg: Dict[str, dict] = {}
         self._widget_div: Dict[str, Any] = {}
 
-        outer = ui.element('div').style(
+        outer = ui.element('div').classes('halon-layout').style(
             'display: flex; flex-direction: column; gap: var(--space-5); width: 100%'
         )
 
         for row in resolve_rows(raw_rows, widget_overrides):
             all_hidden = all(not cfg['visible'] for _, cfg in row)
             with outer:
-                row_div = ui.element('div').style(_row_style(all_hidden))
+                row_div = ui.element('div').classes('halon-layout-row').style(_row_style(all_hidden))
             for name, cfg in row:
                 self._widget_cfg[name] = cfg
                 with row_div:

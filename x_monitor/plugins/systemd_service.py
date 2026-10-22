@@ -330,7 +330,7 @@ class SystemdService(Plugin):
         with layout.cell('unit_file_card'):
             self._render_unit_file_controls()
         with layout.cell('logs'):
-            self.ui.logs_table(page, title='LOGS', limit=100, full_height=True)
+            self.ui.logs_table(page, title='Logs', limit=100, full_height=True)
 
         def update_time():
             ts = self.data.latest_status_time(self.id)
@@ -363,7 +363,7 @@ class SystemdService(Plugin):
                 result_label = info_card('LAST RESULT', '--')
                 age_label = info_card('LAST RUN', '--')
         with layout.cell('logs'):
-            self.ui.logs_table(page, title='LOGS', limit=100, full_height=True)
+            self.ui.logs_table(page, title='Logs', limit=100, full_height=True)
 
         def update():
             def _val(name):

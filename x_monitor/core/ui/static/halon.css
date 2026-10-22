@@ -148,9 +148,26 @@ a, .q-link { color: var(--accent); }
     min-width: 0;
     min-height: calc(100vh - var(--frame-height) - var(--space-2));
     padding: 28px var(--space-8) 80px;
-    gap: var(--space-5);
+    gap: 0;
     background-color: var(--surface-default);
     border-radius: var(--radius-default);
+}
+
+/* Each block under the page header is a section; from the second on, a hairline and a step of space set it off (§4.3 section gap). */
+.halon-page > :not(.halon-page-header) { width: 100%; padding-bottom: var(--space-7); }
+
+.halon-page > :not(.halon-page-header) ~ :not(.halon-page-header) {
+    padding-top: var(--space-7);
+    border-top: var(--border-width) solid var(--border-default);
+}
+
+.halon-page > :last-child { padding-bottom: 0; }
+
+/* Inside a monitor's layout, a row holding a table is a section of its own, set off the same way. */
+.halon-layout > .halon-layout-row:has(.halon-table-block):not(:first-child) {
+    margin-top: var(--space-5);
+    padding-top: var(--space-7);
+    border-top: var(--border-width) solid var(--border-default);
 }
 
 /* A narrow screen keeps the pane but gives the content its width back. */
@@ -161,7 +178,7 @@ a, .q-link { color: var(--accent); }
 .halon-page-header {
     width: 100%;
     gap: var(--space-5);
-    margin-bottom: var(--space-2);
+    margin-bottom: var(--space-6);
     align-items: center;
     flex-wrap: wrap;
 }

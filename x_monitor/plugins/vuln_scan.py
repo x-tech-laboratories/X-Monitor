@@ -444,5 +444,5 @@ class VulnScan(Plugin):
                 },
             },
             'chart': {'metric': 'vulnerable', 'title': f'VULNERABILITIES — {self.scan_host}'},
-            'events': {'title': 'EVENTS', 'limit': 100, 'full_height': True},
+            'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }

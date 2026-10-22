@@ -201,7 +201,7 @@ def _feed_table(page, read, title: str, full_height: bool):
     page.on_refresh(update)
     return table
 
-def log_table(page, target: str, filter_prefix: str = '', title: str = 'Recent Logs',
+def log_table(page, target: str, filter_prefix: str = '', title: str = 'Recent logs',
              limit: int = 15, full_height: bool = False):
     """Render a feed table over the target's recent log lines."""
     return _feed_table(
@@ -209,7 +209,7 @@ def log_table(page, target: str, filter_prefix: str = '', title: str = 'Recent L
         title, full_height)
 
 def event_table(page, plugin_name: str, plugin_id: str = '', target: str = '',
-                title: str = 'Recent Events', limit: int = 100,
+                title: str = 'Recent events', limit: int = 100,
                 full_height: bool = False):
     """Render a feed table over the plugin's recent events."""
     prefix = f"[{plugin_name}] "

@@ -50,7 +50,7 @@ charts          ``{widget_name: {'metric': ..., 'title': ...}}`` history charts;
                 its config builds this dict (and the matching layout rows) in its
                 ``UI_SPEC`` property — see ports.py.
 events          True, or a kwargs dict forwarded to the plugin events table (e.g.
-                ``{'title': 'PLUGIN EVENTS'}``); renders into the ``events`` cell.
+                ``{'title': 'Plugin events'}``); renders into the ``events`` cell.
 tables          ``{widget_name: table spec}`` — see "Table specs".
 filters         ``{widget_name: {'placeholder': ..., 'fields': [row keys]}}`` — sets the
                 placeholder and searched fields of the filter box on the table with the

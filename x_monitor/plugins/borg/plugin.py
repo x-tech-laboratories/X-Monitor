@@ -1240,7 +1240,7 @@ class Borg(Plugin):
                 'disabled_text': 'Run Backup needs source_paths — the other jobs still run from here',
                 'history_limit': 10,
             },
-            'events': {'title': 'EVENTS', 'limit': 100, 'full_height': True},
+            'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }
 
     @property
