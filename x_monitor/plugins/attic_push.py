@@ -1,19 +1,26 @@
 """Whether the closures a host builds for the fleet are built from the flake's
-latest revision and pushed to an Attic binary cache. Each cycle runs one script
-on the building host that evaluates every tracked target from the flake, checks
-whether that store path is in the local store, and asks the cache which of the
-closure's own paths it lacks. Paths signed by an upstream cache are left out,
-since Attic never stores them. A target whose evaluation fails is failed; one
-not yet built, or not fully pushed, is `pending_status`. Config: flake,
-configurations (nixosConfigurations names, tracked by their system toplevel),
-installables (name to flake attribute, for any other derivation), cache_url,
-upstream_keys, missing_limit, pending_status, nix_bin, nix_args, timeout."""
+latest revision and pushed to an Attic binary cache. One script on the building
+host evaluates every tracked target from the flake, checks whether that store
+path is in the local store, and asks the cache which of the closure's own paths
+it lacks. Paths signed by an upstream cache are left out, since Attic never
+stores them. The script runs as a detached job on the target, so an X-Monitor
+restart or redeploy never kills a run in flight: a cycle with no job running
+launches it, later cycles poll it every `job_poll` instead of every interval,
+and the finished run's whole output becomes the new snapshot. While it runs the
+previous snapshot and status stay, and its output and progress show in the
+check runs panel. A target whose evaluation fails is failed; one not yet built,
+or not fully pushed, is `pending_status`. Config: flake, configurations
+(nixosConfigurations names, tracked by their system toplevel), installables
+(name to flake attribute, for any other derivation), cache_url, upstream_keys,
+missing_limit, pending_status, nix_bin, nix_args, timeout (the longest a run
+may take before it is killed), job_poll."""
 
 import json
 import shlex
 from typing import Any, Dict, List, Optional, Tuple
 
 from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors import ssh_connector as detached
 from x_monitor.core.connectors.types import CmdResult, Command, CollectResult, Status
 from x_monitor.plugins.base.plugin_helpers import StatusAccumulator, parse_duration
 
@@ -26,6 +33,7 @@ _DEFAULT_LAYOUT = [
     ['host_card', 'built_card', 'pushed_card', 'revision_card'],
     ['targets'],
     ['missing'],
+    ['jobs'],
     ['events'],
 ]
 
@@ -34,6 +42,9 @@ _DEFAULT_UPSTREAM_KEYS = ['cache.nixos.org-1']
 
 # The line key the script reports the flake's metadata under, never a target name.
 _FLAKE_KEY = '@flake'
+
+# The kind the check's detached job is recorded under.
+_JOB_KIND = 'check'
 
 
 # ==================================================================================================
@@ -148,6 +159,10 @@ class AtticPush(Plugin):
         self.nix_args = list(config.get(
             'nix_args', ['--extra-experimental-features', 'nix-command flakes']))
         self.timeout = parse_duration(config.get('timeout', '30m'))
+        self.job_poll_interval = parse_duration(config.get('job_poll', '30s'))
+        # One fixed directory per monitor, so finished runs never pile up on the target.
+        self.workdir = detached.workdir_for(f'attic_push-{self.id}')
+        self._polling_job = None
 
     def targets(self) -> List[Tuple[str, str]]:
         """Every tracked (name, installable), configurations first."""
@@ -159,26 +174,90 @@ class AtticPush(Plugin):
 
     # --- collection ---
 
+    def check_script(self) -> str:
+        """The script one run executes on the building host."""
+        nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
+        return check_script(self.flake, self.targets(), self.cache_url, self.upstream_keys, nix)
+
     def commands(self) -> List[Command]:
+        self._polling_job = None
         if not self.cache_url or not self.targets():
             return []
-        nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
-        script = check_script(self.flake, self.targets(), self.cache_url, self.upstream_keys, nix)
-        return [Command(script, timeout=self.timeout)]
+        job = self.jobs.running() if self.jobs else None
+        if job and job.get('pid') and job.get('workdir'):
+            # parse() must read the results the way they were requested, even if the job ends mid-cycle.
+            self._polling_job = job
+            # Every poll reads the whole output, since the finished run is parsed from all of it.
+            return [Command(detached.poll_command(job['workdir'], job['pid'], 0))]
+        return [Command(detached.launch_command(self._run_command(), self.workdir))]
+
+    def _run_command(self) -> str:
+        """The script under `timeout`, which kills its whole process group once the run takes too long."""
+        return f'timeout {int(self.timeout)} sh -c {shlex.quote(self.check_script())}'
 
     def parse(self, results: List[CmdResult]) -> CollectResult:
+        job, self._polling_job = self._polling_job, None
         if not self.cache_url:
             return CollectResult.failed('No cache_url is configured')
         if not self.targets():
             return CollectResult.failed('No configurations or installables are configured')
         if not results:
             return CollectResult.unavailable('No result for this cycle')
-        result = results[0]
-        facts, metadata = parse_report(result.stdout)
+        if job is not None:
+            return self._parse_poll(job, results[0])
+        return self._parse_launch(results[0])
+
+    def _parse_launch(self, result: CmdResult) -> CollectResult:
+        """Record the launched run as a job; until it finishes the previous snapshot stands."""
+        pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
+        if pid is None:
+            return CollectResult.unavailable(
+                f"Could not start the check: {(result.stderr or result.stdout).strip()[:200]}")
+        job_id = self.jobs.create(_JOB_KIND, self._run_command(), self.workdir)
+        self.jobs.set_pid(job_id, pid)
+        return CollectResult()
+
+    def _parse_poll(self, job: dict, result: CmdResult) -> CollectResult:
+        """Advance the running check from one poll, and parse its whole output once it finishes."""
+        job_id = job['id']
+        # A poll that never reached the target says nothing about the job; only a real answer may finish it.
+        if result.exit_code != 0 and not result.stdout.strip():
+            return CollectResult(logs=[(
+                f"Could not poll the running check: "
+                f"{(result.stderr or '').strip()[:200] or f'exit {result.exit_code}'}", 'WARNING')])
+        poll = detached.parse_poll(result.stdout)
+        finished = poll.exit_code is not None or not poll.alive
+
+        # output_seq counts the characters of the output already copied into the job's log.
+        fresh = poll.new_output[job['output_seq']:]
+        lines, consumed = detached.split_lines(fresh)
+        if finished and fresh[consumed:]:
+            lines.append(fresh[consumed:])
+            consumed = len(fresh)
+        if lines:
+            self.jobs.append_output(job_id, lines)
+            self.jobs.bump_output_seq(job_id, job['output_seq'] + consumed)
+        facts, metadata = parse_report(poll.new_output)
+        self.jobs.set_progress(job_id, f"{len(facts)} of {len(self.targets())} targets evaluated")
+
+        if not finished:
+            return CollectResult()
+        if poll.exit_code is None:
+            self.jobs.finish(job_id, 'failed', exit_code=-1,
+                             error='Process ended without writing an exit code')
+            return CollectResult.unavailable('The check ended before it finished')
+        error = f"Exited with status {poll.exit_code}" if poll.exit_code else None
+        self.jobs.finish(job_id, 'failed' if error else 'succeeded', exit_code=poll.exit_code, error=error)
         if not facts:
             return CollectResult.unavailable(
-                f"Could not check the tracked targets: {(result.stderr or result.stdout).strip()[:200]}")
+                f"Could not check the tracked targets: {poll.new_output.strip()[-200:] or error}")
+        collected = self._collect(facts, metadata)
+        if error:
+            collected.logs.append((f"The check exited with status {poll.exit_code}", 'WARNING'))
+        return collected
 
+    def _collect(self, facts: Dict[str, Dict[str, Any]], metadata: Dict[str, Any]) -> CollectResult:
+        """The finished run's rows, counts and status."""
         acc = StatusAccumulator()
         logs: List[Tuple[str, str]] = []
         rows: List[Dict[str, Any]] = []
@@ -330,5 +409,6 @@ class AtticPush(Plugin):
                     ],
                 },
             },
+            'job_panel': {'widget': 'jobs', 'title': 'Check runs', 'history_limit': 10},
             'events': {'title': 'Events', 'limit': 100},
         }

@@ -433,7 +433,10 @@ A long-running job (a borg backup, a `nixos-rebuild switch`) is **not** a live
 SSH channel held open for hours. It is launched *detached on the target* with one ordinary command
 (`setsid sh -c '…' &`), writing its output to `<workdir>/out` and its exit code
 to `<workdir>/exit`, and is then advanced by ordinary polling commands on the
-owning plugin's normal monitor cycle. The builders/parsers in `ssh_connector.py`
+owning plugin's normal monitor cycle. A plugin that sets `job_poll_interval` is
+polled that often while one of its jobs runs (`Plugin.next_cycle_in`), without
+moving its regular schedule; `attic_push` launches its check this way from a
+scheduled cycle rather than from an action. The builders/parsers in `ssh_connector.py`
 (`launch_command`/`parse_launch`, `poll_command`/`parse_poll`, `cancel_command`,
 `split_lines`) are pure — no runtime, no coroutine, no IO. One poll round-trip
 returns output size, exit code (empty if running), liveness (`kill -0`), and any
