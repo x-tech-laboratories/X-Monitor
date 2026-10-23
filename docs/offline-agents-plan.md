@@ -75,11 +75,12 @@ executor instead of a WebSocket. `SAMPLED` monitors keep their sample watchers.
 Disconnecting no longer stops streams or kills running commands. Inhibits a running job holds stay
 held.
 
-Plugin state lives in the agent's database: `PluginDataView` (latest metric, snapshot, settings,
-statuses) and `JobsGateway` get a local implementation with the same interface, so plugins do not
-change. Schedule and trigger markers are agent-owned settings.
+Plugin state lives in the agent's database, which is the server's own `DatabaseManager` on a local
+SQLite file (`AgentDatabase`), so `PluginDataView` and `JobsGateway` work unchanged and plugins do
+not change. Schedule and trigger markers are agent-owned settings.
 
-Job ids are assigned by the agent as `<agent>:<n>`; the server stores agent jobs under those ids.
+Job ids are the agent's own; the server stores an agent's jobs under ids of its own and keeps the
+mapping from (agent, agent job id).
 
 ### Records and sync
 
@@ -138,8 +139,9 @@ Each phase lands on its own and leaves X-Monitor working.
    than the current one. Nothing else changes yet.
 2. **Agent packaging.** Agent package from the full source without the UI, the import test, and
    the version in the hello frame.
-3. **Local plugin state.** Store-backed `PluginDataView` and `JobsGateway` the agent can run on its
-   own SQLite database, with agent-assigned job ids.
+3. **Local plugin state.** `AgentDatabase`, the server's database on a local SQLite file that also
+   records every result, job step and setting into an outbox; the record encoding both sides share;
+   and a local command transport.
 4. **The agent's local engine.** Poll, schedule and trigger loops on the agent over the local
    executor, driven by a plan file; disconnecting stops nothing.
 5. **Protocol v3 and sync.** `plan`, `records` and their acknowledgements, `action` and `poll_now`;
