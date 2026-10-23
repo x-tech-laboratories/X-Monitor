@@ -443,7 +443,7 @@ class XMonitorEngine:
         if not hosts:
             return []
         own = getattr(self._exec_context_for(plugin), 'conn', None)
-        return [conn for conn in self.connectors.agents.all()
+        return [conn for conn in self.connectors.agents.all
                 if conn is not own and conn.is_connected and bare_host(conn.host) in hosts]
 
     @contextlib.asynccontextmanager
