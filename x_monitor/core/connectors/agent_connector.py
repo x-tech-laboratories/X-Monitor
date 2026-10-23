@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from x_monitor.code_version import code_version
 from x_monitor.core.connectors import agent_protocol as proto
 from x_monitor.core.connectors.agent_protocol import StreamSpec
 from x_monitor_agent import keys
@@ -55,6 +56,8 @@ class AgentConnection:
         self.hostname: Optional[str] = None
         self.version: Optional[str] = None
         self.capabilities: List[str] = []
+        # The agent's code_version(), which must match the server's before it is handed monitors to run.
+        self.code = ''
         self.connected_at: Optional[float] = None
         self._socket: Any = None
         self._send_lock = asyncio.Lock()
@@ -83,11 +86,22 @@ class AgentConnection:
         self.version = hello.get('version')
         caps = hello.get('caps')
         self.capabilities = [str(c) for c in caps] if isinstance(caps, list) else []
+        self.code = str(hello.get('code') or '')
         self.connected_at = time.time()
         log.info(
             f"agent {self.agent_id!r} connected from {self.hostname or self.host} "
             f"(version {self.version or 'unknown'})"
         )
+        if not self.same_code:
+            log.warning(
+                f"agent {self.agent_id!r} runs different X-Monitor code ({self.code or 'unknown'}, "
+                f"server {code_version()}), so it will not be handed monitors to run"
+            )
+
+    @property
+    def same_code(self) -> bool:
+        """Whether the agent runs exactly the server's X-Monitor code, which handing it monitors requires."""
+        return bool(self.code) and self.code == code_version()
 
     def detach(self, socket: Any) -> None:
         """Drop the socket if it is still the current one. The identity check

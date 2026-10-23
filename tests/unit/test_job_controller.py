@@ -52,6 +52,50 @@ class TestLaunch:
         assert ";" not in wd2 and "/" not in wd2.rsplit("/", 1)[1]
 
 
+def _sh(script, tmp_path):
+    return subprocess.run(["sh", "-c", script], capture_output=True, text=True, cwd=tmp_path,
+                          env={"PATH": "/usr/bin:/bin:/run/current-system/sw/bin"})
+
+
+class TestStreamStderr:
+    def test_stderr_reaches_stdout_and_stdout_its_file(self, tmp_path):
+        script = jobs.stream_stderr("echo out; echo err >&2; exit 4", "rc", stdout_to="kept")
+        proc = _sh(script, tmp_path)
+        assert proc.stdout == "err\n"
+        assert (tmp_path / "kept").read_text() == "out\n"
+        assert (tmp_path / "rc").read_text().strip() == "4"
+
+    def test_without_a_file_both_streams_reach_stdout(self, tmp_path):
+        proc = _sh(jobs.stream_stderr("echo out; echo err >&2", "rc", keep="err"), tmp_path)
+        assert sorted(proc.stdout.splitlines()) == ["err", "out"]
+        assert (tmp_path / "err").read_text() == "err\n"
+        assert (tmp_path / "rc").read_text().strip() == "0"
+
+    def test_a_prefix_marks_each_stderr_line(self, tmp_path):
+        proc = _sh(jobs.stream_stderr("echo out; printf 'a\\nb\\n' >&2", "rc", prefix="@ "), tmp_path)
+        assert sorted(proc.stdout.splitlines()) == ["@ a", "@ b", "out"]
+
+    def test_stderr_shows_in_a_running_jobs_output(self, tmp_path):
+        """The point of it: a detached job's log has the stderr line while the command still runs."""
+        script = jobs.stream_stderr("echo working >&2; sleep 3; echo done", "$HOME/rc", stdout_to="/dev/null")
+        cmd = jobs.launch_command(script, jobs.workdir_for("live-1"))
+        subprocess.run(["sh", "-c", cmd], capture_output=True, text=True,
+                       env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin:/run/current-system/sw/bin"})
+        out = tmp_path / ".cache" / "x_monitor" / "jobs" / "live-1" / "out"
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and "working" not in (out.read_text() if out.exists() else ""):
+            time.sleep(0.05)
+        assert out.read_text() == "working\n"
+        assert not (out.parent / "exit").exists()
+
+
+class TestStreamStderrToStderr:
+    def test_the_copy_goes_to_stderr_so_a_capture_keeps_only_stdout(self, tmp_path):
+        script = 'v=$(' + jobs.stream_stderr("echo out; echo err >&2", "rc", to_stderr=True) + '); echo "got $v"'
+        proc = _sh(script, tmp_path)
+        assert proc.stdout == "got out\n" and proc.stderr == "err\n"
+
+
 class TestPoll:
     def _poll_output(self, size, exit_code, alive, out):
         return (

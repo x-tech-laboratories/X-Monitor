@@ -8,7 +8,7 @@ import pytest
 
 from x_monitor.plugins.borg import Borg, _frame_line
 from x_monitor.plugins.borg.shell import (
-    _preflight_script, _skip_reason, _ssh_endpoint, _then_steps, _with_preflight, _wrap_job,
+    _preflight_script, _skip_reason, _split_poll, _ssh_endpoint, _then_steps, _with_preflight, _wrap_job,
 )
 from x_monitor.core.connectors.types import CmdResult
 from x_monitor.core.database.database import db, StatusHistory, Metric
@@ -960,7 +960,6 @@ class TestRestoreCanary:
 
     async def test_the_live_canary_is_read_without_sudo_first(self, make_plugin, run_cycle, tmp_path):
         import subprocess
-        from x_monitor.plugins.borg.shell import _split_poll
         canary = tmp_path / ".x-monitor-canary"
         canary.write_text("token")
         p = make_plugin(Borg, {**CANARY_CFG, "canary_path": str(canary), "require_sudo": True})
@@ -1370,6 +1369,39 @@ class TestDelete:
         p.interpret_action("browse_archive", _framed(p, CmdResult(0, LISTING, "")), archive="b1", path="")
         p.plan_action("delete_archive", archive="b1")
         assert p.listing("b1", "") is None
+
+
+class TestLiveSequence:
+    def _run(self, plugin, calls, limit=None):
+        script = plugin._sequence_command(calls, limits={0: limit} if limit else None, live=True)
+        return subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30)
+
+    async def test_each_call_splits_back_with_its_exit_code(self, make_plugin):
+        p = make_plugin(Borg, BASE_CFG)
+        run = self._run(p, ["sh -c 'echo first; echo oops >&2; exit 3'", "echo second"])
+        first, second = _split_poll(CmdResult(run.returncode, run.stdout, run.stderr), 2)
+        assert first == CmdResult(3, "first", "oops")
+        assert second == CmdResult(0, "second", "")
+
+    async def test_stdout_comes_before_the_call_ends(self, make_plugin):
+        p = make_plugin(Borg, BASE_CFG)
+        run = self._run(p, ["sh -c 'echo first; echo oops >&2; exit 3'"])
+        # The stdout frame opens before the call runs, so its lines can reach a job's log while it works.
+        assert run.stdout.index(_frame_line(0, "out", "-")) < run.stdout.index("first") \
+            < run.stdout.index(_frame_line(0, "err", 3))
+
+    async def test_a_limit_cuts_the_lines_without_failing_the_call(self, make_plugin):
+        p = make_plugin(Borg, BASE_CFG)
+        run = self._run(p, ["seq 1 5000"], limit=2)
+        [result] = _split_poll(CmdResult(run.returncode, run.stdout, run.stderr), 1)
+        assert result == CmdResult(0, "1\n2", "")
+
+    async def test_verify_restore_and_diff_run_live(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, CANARY_CFG)
+        _cycle_with(p, run_cycle)
+        assert _frame_line(0, "out", "-") in p.plan_action("verify_restore").command
+        _listed(p, run_cycle, "b2", "b1")
+        assert _frame_line(0, "out", "-") in p.plan_action("diff_archive", archive="b2").command
 
 
 class TestDiff:

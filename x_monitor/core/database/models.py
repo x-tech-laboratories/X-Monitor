@@ -104,6 +104,17 @@ class LogLine(BaseModel):
         indexes = ((("target", "timestamp"), False),)
 
 
+class OutboxRecord(BaseModel):
+    """One write an agent made, kept in its own database until the server acknowledges it."""
+    seq = IntegerField(primary_key=True)
+    created = DateTimeField(default=datetime.now)
+    kind = CharField()
+    payload = TextField()
+
+
+# Only an agent's database holds an outbox.
+AGENT_MODELS = [OutboxRecord]
+
 ALL_MODELS = [
     Metric,
     Event,
