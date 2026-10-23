@@ -184,6 +184,7 @@ class Processes(Plugin):
             },
             'tables': {
                 'table': {
+                    'title': 'PROCESSES',
                     'row_key': 'pid',
                     'tree': {'parent_field': 'ppid', 'column': 'command'},
                     'columns': [

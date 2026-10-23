@@ -450,13 +450,46 @@ class TestPollDeadline:
 
 
 class TestActions:
-    async def test_no_actions_without_source_paths(self, plugin):
-        assert plugin.get_actions() == []
+    async def test_only_repo_actions_without_further_config(self, plugin):
+        assert _action_ids(plugin) == ["check_repo", "compact_repo"]
 
     async def test_backup_actions_exposed_with_source_paths(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "source_paths": ["/home"]})
-        ids = {a['action_id'] for a in p.get_actions()}
-        assert ids == {"run_backup", "dry_run_backup"}
+        assert {"run_backup", "dry_run_backup"} <= set(_action_ids(p))
+
+    async def test_every_tool_is_a_header_action_when_configured(self, make_plugin):
+        p = make_plugin(Borg, FULL_CFG)
+        assert _action_ids(p) == ["run_backup", "dry_run_backup", "verify_restore", "check_repo", "compact_repo",
+                                  "prune_preview", "prune_repo", "purge_preview", "purge_excluded", "break_lock"]
+
+    async def test_prune_preview_opens_its_dialog(self, make_plugin):
+        action = _action(make_plugin(Borg, FULL_CFG), "prune_preview")
+        assert action['kind'] == 'dialog' and action['dialog'] in make_plugin(Borg, FULL_CFG).UI_SPEC['dialogs']
+
+    async def test_destructive_tools_ask_first_and_name_the_repo(self, make_plugin):
+        p = make_plugin(Borg, FULL_CFG)
+        for action_id in ("prune_repo", "purge_excluded", "break_lock"):
+            action = _action(p, action_id)
+            assert action['variant'] == 'danger' and BASE_CFG["repo"] in action['confirm']
+
+    async def test_a_running_check_fills_check_and_greys_out_other_jobs(self, make_plugin):
+        p = make_plugin(Borg, FULL_CFG)
+        await _launch(p, "check_repo")
+        assert p.action_state(_action(p, "check_repo")) == 'accent'
+        assert p.action_state(_action(p, "run_backup")) == 'disabled'
+        assert p.action_state(_action(p, "break_lock")) == 'disabled'
+        assert p.action_state(_action(p, "verify_restore")) == 'normal'
+
+    async def test_break_lock_is_normal_while_no_job_runs(self, make_plugin):
+        p = make_plugin(Borg, FULL_CFG)
+        assert p.action_state(_action(p, "break_lock")) == 'normal'
+
+    async def test_job_controls_live_in_the_header_only(self, plugin):
+        spec = plugin.UI_SPEC
+        assert 'buttons' not in spec and 'run_action_id' not in spec['job_panel']
+
+    def test_archives_table_has_a_title(self, plugin):
+        assert plugin.UI_SPEC['tables']['archives']['title'] == 'ARCHIVES'
 
     async def test_unknown_action_returns_false(self, plugin):
         assert plugin.plan_action("nonsense") is None
@@ -468,6 +501,17 @@ class TestActions:
 
 
 BACKUP_CFG = {**BASE_CFG, "source_paths": ["/home", "/etc"]}
+
+FULL_CFG = {**BASE_CFG, "source_paths": ["/home"], "canary_path": "home/canary", "keep_daily": 7,
+            "allow_delete": True, "allow_purge": True, "exclude": ["*.tmp"]}
+
+
+def _action_ids(plugin):
+    return [a['action_id'] for a in plugin.get_actions()]
+
+
+def _action(plugin, action_id):
+    return next(a for a in plugin.get_actions() if a['action_id'] == action_id)
 
 
 class TestBackupCommand:

@@ -211,7 +211,8 @@ class Plugin(PluginConfigMixin, ABC):
         job = self.jobs.running() if self.jobs and action.get('job') else None
         if job is None:
             return 'normal'
-        return 'accent' if job.get('kind') == action['job'] else 'disabled'
+        kinds = [action['job']] if isinstance(action['job'], str) else action['job']
+        return 'accent' if job.get('kind') in kinds else 'disabled'
 
     def all_actions(self) -> List[ActionButtonSpec]:
         """The plugin's own action buttons followed by the custom ones its config adds."""

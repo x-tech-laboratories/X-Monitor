@@ -66,8 +66,11 @@ plugins:
             id: "heimdall-borgmatic"
             type: "group"
             children:
-              - {name: "On Disk", id: "heimdall-borg-disk", type: "borg", repo: "/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh}
-              - {name: "Ragnarok", id: "heimdall-borg-ragnarok", type: "borg", repo: "ssh://ragnarok.lan/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh}
+              - {name: "On Disk", id: "heimdall-borg-disk", type: "borg", repo: "/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh,
+                 schedule: [{action: run_backup, cron: "0 */3 * * *"}, {action: check_repo, cron: "0 4 * * mon"},
+                            {action: check_repo, cron: "0 4 15 * *", args: {kind: data}}]}
+              - {name: "Ragnarok", id: "heimdall-borg-ragnarok", type: "borg", repo: "ssh://ragnarok.lan/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh,
+                 schedule: [{action: run_backup, cron: "0 */3 * * *"}, {action: check_repo, cron: "0 4 * * tue"}]}
       - {name: "Vulnerability Scan", id: "heimdall-scan", type: "vuln_scan", scan_host: "heimdall.lan", interval: 10, <<: *ssh}
 
   - name: "Ragnarok"

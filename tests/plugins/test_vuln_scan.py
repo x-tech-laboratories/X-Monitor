@@ -276,6 +276,9 @@ class TestFailures:
 
 
 class TestUiSpec:
+    def test_findings_table_has_a_title(self, plugin):
+        assert plugin.UI_SPEC['tables']['findings']['title'] == 'FINDINGS'
+
     async def test_finding_counts_share_one_bar(self, plugin):
         findings = plugin.UI_SPEC['cards']['vulnerable_card']
         assert findings['kind'] == 'share'
