@@ -30,6 +30,11 @@ def child_label(parent: Any, child: Any) -> str:
     return links.get(child.id) or child.name
 
 
+def restates_children(monitor: Any) -> bool:
+    """True when a monitor's status only repeats its children's, as a plain group's does, so it is no monitor of its own."""
+    return getattr(monitor, 'restates_children', False) is True
+
+
 def is_link(parent: Any, child: Any) -> bool:
     """True when the child sits under this parent through a link rather than its own definition."""
     return child.id in (getattr(parent, 'links', None) or {})

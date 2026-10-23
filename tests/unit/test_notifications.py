@@ -16,7 +16,8 @@ from x_monitor_agent import protocol as proto
 
 def _plugin(plugin_id, children=(), type_='cpu', **config):
     return SimpleNamespace(id=plugin_id, name=plugin_id.title(), target='host.lan',
-                           config={'type': type_, **config}, children=list(children))
+                           config={'type': type_, **config}, children=list(children),
+                           restates_children=type_ == 'group')
 
 
 class TestResolveRules:
@@ -31,6 +32,12 @@ class TestResolveRules:
         assert set(rules) == {'a', 'b'}
         assert rules['a'].on == {'failed', 'warning'}
         assert (rules['b'].on, rules['b'].after) == ({'failed', 'warning'}, 3)
+
+    def test_a_monitor_with_children_of_its_own_notifies_for_itself(self):
+        parent = _plugin('web', [_plugin('cert')], type_='http', notify={'after': 2})
+        rules = resolve_rules([parent], {}, ['desk'])
+        assert set(rules) == {'web', 'cert'}
+        assert rules['cert'].after == 2
 
     def test_notify_false_mutes_a_monitor_and_its_children(self):
         group = _plugin('g', [_plugin('a'), _plugin('b', notify=True)], type_='group', notify=False)

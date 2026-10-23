@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from x_monitor.core.connectors.types import CollectResult
 from x_monitor.core.exporters import prometheus
 from x_monitor.core.contracts import EngineLike, PushablePlugin
-from x_monitor.core.coordination.monitor_graph import all_monitors, find_monitor
+from x_monitor.core.coordination.monitor_graph import all_monitors, find_monitor, restates_children
 from x_monitor.core.ui.auth import acting_client
 from x_monitor.core.ui.tokens import TokenRegistry, bearer_token
 
@@ -172,11 +172,11 @@ def register_api(app: Any, engine: EngineLike, tokens: Optional[TokenRegistry] =
 
     @app.get('/api/summary')
     def summary():
-        """Counts of leaf monitors by status, for a dashboard tile that cannot aggregate a list itself."""
+        """Counts of monitors, leaving out plain groups, by status, for a dashboard tile that cannot aggregate a list itself."""
         statuses = db.latest_statuses()
         counts = {'online': 0, 'info': 0, 'warning': 0, 'failed': 0, 'offline': 0, 'unavailable': 0}
         for p in all_monitors(engine):
-            if p.children:
+            if restates_children(p):
                 continue
             state = statuses.get(p.id, 'unavailable')
             counts[state] = counts.get(state, 0) + 1
@@ -190,7 +190,7 @@ def register_api(app: Any, engine: EngineLike, tokens: Optional[TokenRegistry] =
         rows = []
         for p in all_monitors(engine):
             summarize = getattr(p, 'backup_summary', None)
-            if p.children or not callable(summarize):
+            if restates_children(p) or not callable(summarize):
                 continue
             rows.append({'id': p.id, 'name': p.name, 'target': getattr(p, 'target', None),
                          'status': statuses.get(p.id, 'unavailable'), **summarize()})

@@ -174,10 +174,11 @@ class PluginConfig(TypedDict, total=False):
     target_host: str
     agent: str                  # id of the agent to reach this target through, instead of SSH
     ssh_config: SSHConfig
-    children: List["PluginConfig"]  # group plugins only
+    children: List["PluginConfig"]  # monitors nested under this one, of any type
     ref: str                    # makes this entry a link to the monitor with this id, defined elsewhere
     layout: Any                 # List[LayoutRow] | Dict[str, dict] — see spec_types.UISpec['layout']
-    notify: Any                 # bool | NotifySettings; passed down to a group's children
+    notify: Any                 # bool | NotifySettings; passed down to a monitor's children
+    aggregate: Any              # group only: worst | best | {quorum: n} — how it folds its children's statuses
 
 
 class XMonitorConfig(TypedDict, total=False):
