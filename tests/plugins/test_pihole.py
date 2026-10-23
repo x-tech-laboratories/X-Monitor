@@ -1,4 +1,5 @@
 import json
+import subprocess
 import time
 
 import pytest
@@ -86,6 +87,42 @@ class TestFormatAge:
 
     def test_days_and_hours(self):
         assert _format_age_compact(280800) == "3d 6h"
+
+
+_FAKE_CURL = """#!/bin/sh
+echo "argv: $*" >> {log}
+for a in "$@"; do
+    case "$a" in
+        @-) echo "stdin: $(cat)" >> {log} ;;
+        @/*) echo "file: $(cat "${{a#@}}")" >> {log} ;;
+    esac
+done
+case "$*" in
+    *"-X POST"*/api/auth*) echo '{{"session": {{"sid": "sid-secret-123"}}}}' ;;
+    *) echo '{{}}' ;;
+esac
+"""
+
+
+@pytest.mark.parametrize("build", [
+    lambda: _build_fetch_script("http://127.0.0.1:9018", 10, "echo hunter2pw", None),
+    lambda: _build_blocking_script("http://127.0.0.1:9018", 10, "echo hunter2pw", None, True),
+    lambda: _build_gravity_script("http://127.0.0.1:9018", 10, "echo hunter2pw", None),
+], ids=["fetch", "blocking", "gravity"])
+def test_password_and_session_stay_off_every_command_line(build, tmp_path):
+    """Arguments are visible to every user in `ps`, so secrets may only reach curl on stdin or in a private file."""
+    log = tmp_path / "curl.log"
+    curl = tmp_path / "curl"
+    curl.write_text(_FAKE_CURL.format(log=log))
+    curl.chmod(0o755)
+    subprocess.run(["sh", "-c", build()], check=False,
+                   env={"PATH": f"{tmp_path}:/usr/bin:/bin:/run/current-system/sw/bin"})
+    lines = log.read_text().splitlines()
+    argv = [line for line in lines if line.startswith("argv:")]
+    assert any("-X DELETE" in line for line in argv)
+    assert not [line for line in argv if "hunter2pw" in line or "sid-secret-123" in line]
+    assert any(line.startswith("stdin:") and "hunter2pw" in line for line in lines)
+    assert any(line == "file: X-FTL-SID: sid-secret-123" for line in lines)
 
 
 class TestBuildFetchScript:

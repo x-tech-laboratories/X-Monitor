@@ -27,21 +27,24 @@ def _auth_preamble(base: str, timeout: int, password_command: Optional[str],
     if not (password_command or password):
         return [], ''
 
+    # Every user on the host can read a command line in `ps`, so the password reaches curl on stdin and the sid in a private file.
     lines = [password_line(password_command, password)]
     lines.append(
-        f'__sid=$(curl -s -m {timeout} -X POST {shlex.quote(base + "/api/auth")} '
-        f'-H "Content-Type: application/json" '
-        f'''--data "{{\\"password\\":\\"$__pw\\"}}" '''
+        """__sid=$(printf '{"password":"%s"}' "$__pw" | """
+        f'curl -s -m {timeout} -X POST {shlex.quote(base + "/api/auth")} '
+        f'-H "Content-Type: application/json" --data @- '
         f"""| sed -n 's/.*"sid"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')"""
     )
+    lines.append('__hdr=$(mktemp)')
     # Release the session however the script exits: FTL's session table is
     # finite, and an unreleased sid per poll can crowd out real logins.
     lines.append(
         "trap '[ -n \"$__sid\" ] && curl -s -m %d -X DELETE "
-        '-H \"X-FTL-SID: $__sid\" %s >/dev/null 2>&1 || true\' EXIT'
+        '-H @\"$__hdr\" %s >/dev/null 2>&1; rm -f \"$__hdr\"\' EXIT'
         % (timeout, dq(base + "/api/auth"))
     )
-    return lines, '-H "X-FTL-SID: $__sid"'
+    lines.append('printf "X-FTL-SID: %s\\n" "$__sid" > "$__hdr"')
+    return lines, '-H @"$__hdr"'
 
 
 def _build_fetch_script(api_url: str, timeout: int, password_command: Optional[str],
