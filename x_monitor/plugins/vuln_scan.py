@@ -49,6 +49,9 @@ _DEFAULT_LAYOUT = [
 # The kind the scan's detached job is recorded under.
 _JOB_KIND = 'scan'
 
+# Starts each line nmap writes to stderr, which reaches the job's log as it is written and is kept out of the XML.
+_ERR_PREFIX = '@@nmap-stderr '
+
 # The NSE vulns library's states: VULNERABLE, VULNERABLE (Exploitable) and VULNERABLE (DoS) are definite, LIKELY VULNERABLE is a suspicion.
 _LIKELY_STATE = 'LIKELY VULNERABLE'
 
@@ -199,9 +202,10 @@ class VulnScan(Plugin):
         return ' '.join(prefix + deadline_prefix(int(self.timeout)) + [shlex.quote(a) for a in argv])
 
     def _run_command(self) -> str:
-        """The scan with its errors held back until its XML is complete, so a warning never lands inside the XML."""
-        errors = f'"{self.workdir}/err"'
-        return f'{{ {self._scan_command()}; }} 2>{errors}; status=$?; cat {errors}; exit $status'
+        """The scan with each stderr line marked as it is written, so a warning shows at once and is told apart from the XML."""
+        status = f'"{self.workdir}/status"'
+        return (detached.stream_stderr(self._scan_command(), status, prefix=_ERR_PREFIX)
+                + f'; exit "$(cat {status})"')
 
     def commands(self) -> List[Command]:
         self._polling_job = None
@@ -265,8 +269,11 @@ class VulnScan(Plugin):
 
     def _parse_scan(self, output: str, exit_code: int) -> CollectResult:
         """Turn a finished scan's whole output into the cycle's result."""
+        lines = output.split('\n')
+        errors = '\n'.join(line[len(_ERR_PREFIX):] for line in lines if line.startswith(_ERR_PREFIX))
+        output = '\n'.join(line for line in lines if not line.startswith(_ERR_PREFIX))
         if '<nmaprun' not in output:
-            reason = output.strip()[-200:] or f'exit {exit_code}'
+            reason = (errors or output).strip()[-200:] or f'exit {exit_code}'
             return CollectResult.unavailable(f"nmap did not run: {reason}")
         start = output.find('<?xml')
         start = start if start >= 0 else output.find('<nmaprun')

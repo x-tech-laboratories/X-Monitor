@@ -60,7 +60,10 @@ def _check_function(nix: str, cache_url: str, upstream_keys: List[str]) -> str:
         'report() { printf "%s\\t%s\\t%s\\n" "$name" "$1" "$(printf "%s" "$2" | tr "\\t\\n" "  ")"; }',
         'check() {',
         '    name=$1',
-        '    if ! out=$(' + nix + ' eval --raw --no-write-lock-file $refresh "$2" 2>"$t/err"); then',
+        # nix's stderr reaches the job's log as it evaluates, and is kept for the error report.
+        '    out=$(' + detached.stream_stderr(nix + ' eval --raw --no-write-lock-file $refresh "$2"', '"$t/rc"',
+                                           keep='"$t/err"', to_stderr=True) + ')',
+        '    if [ "$(cat "$t/rc")" != 0 ]; then',
         '        report error "$(tail -c 400 "$t/err")"',
         '        return',
         '    fi',
