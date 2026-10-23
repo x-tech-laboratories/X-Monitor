@@ -111,6 +111,7 @@ def _container_images(images: str, digests: str) -> Dict[str, Tuple[str, Tuple[s
 
 
 class Containers(Plugin):
+    RUNS_ON_AGENT = False
     def __init__(self, name: str, config: Dict[str, Any]):
         super().__init__(name, config)
         self.runtime = config.get('runtime', 'docker')

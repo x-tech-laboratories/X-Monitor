@@ -52,6 +52,7 @@ def _read_cpu_seconds() -> Optional[float]:
 
 
 class XMonitorSelfPlugin(Plugin):
+    RUNS_ON_AGENT = False
     def __init__(self, name: str, config: Dict[str, Any]):
         super().__init__(name, config)
         self.memory_warning   = limit_from(config, 'memory_warning',   256)

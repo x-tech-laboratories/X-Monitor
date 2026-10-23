@@ -23,6 +23,7 @@ _DEFAULT_LAYOUT = [
 
 
 class DnsRecord(Plugin):
+    RUNS_ON_AGENT = False
     AVAILABILITY = True
 
     def __init__(self, name: str, config: Dict[str, Any]):

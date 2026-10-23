@@ -70,6 +70,30 @@ INHIBIT = "inhibit"
 PING = "ping"
 PONG = "pong"
 
+ENGINE = "engine"
+"""The capability an agent with a state directory announces: it can run monitors itself and sync their records."""
+
+PLAN = "plan"
+"""Server -> agent: the monitors this agent runs itself, as an X-Monitor config, under a version."""
+
+PLAN_ACK = "plan_ack"
+"""Agent -> server: the plan version the agent now runs."""
+
+RECORDS = "records"
+"""Agent -> server: a batch of outbox records in sequence order, each [seq, kind, payload]."""
+
+RECORDS_ACK = "records_ack"
+"""Server -> agent: every record up to and including this sequence number is stored."""
+
+ACTION = "action"
+"""Server -> agent: run an action on a monitor the agent runs, under a request id."""
+
+ACTION_RESULT = "action_result"
+"""Agent -> server: how the action with that request id went."""
+
+POLL_NOW = "poll_now"
+"""Server -> agent: run a cycle of one of the agent's monitors now. No reply."""
+
 
 def encode(frame: Dict[str, Any]) -> str:
     """Serialize one frame to compact JSON."""
@@ -96,8 +120,8 @@ def challenge(nonce: str) -> Dict[str, Any]:
 
 
 def hello(agent_id: str, signature: str, hostname: str, version: str,
-          capabilities: List[str]) -> Dict[str, Any]:
-    """Build the agent's HELLO frame, signed over the server's challenge."""
+          capabilities: List[str], code: str = '') -> Dict[str, Any]:
+    """Build the agent's HELLO frame, signed over the server's challenge; `code` is the agent's code_version()."""
     return {
         't': HELLO,
         'protocol': PROTOCOL_VERSION,
@@ -106,6 +130,7 @@ def hello(agent_id: str, signature: str, hostname: str, version: str,
         'hostname': hostname,
         'version': version,
         'caps': capabilities,
+        'code': code,
     }
 
 
@@ -183,3 +208,38 @@ class StreamSpec:
         params = raw.get('params')
         return StreamSpec(str(stream_id), str(kind),
                           params if isinstance(params, dict) else {})
+
+
+def plan(version: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the server's PLAN frame handing an agent the monitors it runs itself."""
+    return {'t': PLAN, 'version': version, 'config': config}
+
+
+def plan_ack(version: str) -> Dict[str, Any]:
+    """Build the agent's PLAN_ACK frame naming the plan version it now runs."""
+    return {'t': PLAN_ACK, 'version': version}
+
+
+def records(batch: List[Any]) -> Dict[str, Any]:
+    """Build the agent's RECORDS frame carrying [seq, kind, payload] entries, oldest first."""
+    return {'t': RECORDS, 'records': batch}
+
+
+def records_ack(through: int) -> Dict[str, Any]:
+    """Build the server's RECORDS_ACK frame for every record up to `through`."""
+    return {'t': RECORDS_ACK, 'through': through}
+
+
+def action(request_id: str, monitor: str, action_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the server's ACTION frame asking the agent to run one action on one of its monitors."""
+    return {'t': ACTION, 'id': request_id, 'monitor': monitor, 'action': action_id, 'args': args}
+
+
+def action_result(request_id: str, success: bool, content: str = '') -> Dict[str, Any]:
+    """Build the agent's ACTION_RESULT frame for the action with that request id."""
+    return {'t': ACTION_RESULT, 'id': request_id, 'success': success, 'content': content}
+
+
+def poll_now(monitor: str) -> Dict[str, Any]:
+    """Build the server's POLL_NOW frame asking for one cycle of a monitor."""
+    return {'t': POLL_NOW, 'monitor': monitor}

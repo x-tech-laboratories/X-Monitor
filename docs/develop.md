@@ -82,6 +82,10 @@ Collection is:
 - `subscriptions() -> List[StreamSpec]` then `parse_event(stream_id, payload,
   timestamp) -> Optional[CollectResult]` — the push path, for targets reached by
   an agent. Also both pure. See [Agent transport](#agent-transport).
+- `RUNS_ON_AGENT` (default `True`) says a monitor of this type can run on its host's own agent
+  when that agent has `run_monitors` set, because it only runs commands on that host. A plugin that
+  makes HTTP, DNS or ICMP requests from the server, reads the engine, or works across hosts sets it
+  `False`. See [agent.md](agent.md#running-monitors-on-the-agent).
 
 A plugin never persists anything itself. Its `parse_results()` returns one
 `CollectResult` describing everything to write (metrics, logs, log lines,
