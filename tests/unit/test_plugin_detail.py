@@ -398,3 +398,79 @@ class TestNotificationsButton:
         await user.open('/')
         await user.should_see('Notifications')
         assert [button.text for button in _all_buttons(user)] == ['Poll Now', 'Rebuild', 'Cancel', 'Notifications']
+
+
+class _MorePlugin(_JobPlugin):
+    """A monitor with one action on its own button and two in the More menu, each in a state the test sets."""
+
+    actions = [
+        {'name': 'Rebuild', 'action_id': 'switch'},
+        {'name': 'Prune', 'action_id': 'prune', 'more': True, 'variant': 'danger'},
+        {'name': 'Verify', 'action_id': 'verify', 'more': True},
+    ]
+
+    def __init__(self, **states):
+        super().__init__()
+        self.states = states
+
+    def action_state(self, action):
+        return self.states.get(action['action_id'], 'normal')
+
+
+def _menu_item(user: User, label):
+    return next(e for e in user.client.elements.values()
+                if isinstance(e, ui.menu_item) and any(getattr(c, 'text', None) == label
+                                                       for c in e.descendants()))
+
+
+class TestMoreMenu:
+    async def test_holds_only_the_actions_marked_more(self, user: User):
+        _toggle_page(_MorePlugin())
+        await user.open('/')
+        await user.should_see('More')
+        assert _all_buttons(user, 'Rebuild')
+        assert not _all_buttons(user, 'Prune') and not _all_buttons(user, 'Verify')
+        assert _menu_item(user, 'Prune') and _menu_item(user, 'Verify')
+
+    async def test_an_item_runs_its_action(self, user: User):
+        plugin = _MorePlugin()
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('More')
+        from nicegui.testing.user_interaction import UserInteraction
+        UserInteraction(user, {_menu_item(user, 'Verify')}, None).click()
+        await user.should_see('Verify succeeded')
+        assert plugin.ran == ['verify']
+
+    async def test_a_danger_item_is_coloured(self, user: User):
+        _toggle_page(_MorePlugin())
+        await user.open('/')
+        await user.should_see('More')
+        assert 'halon-menu-item-danger' in _menu_item(user, 'Prune').classes
+        assert 'halon-menu-item-danger' not in _menu_item(user, 'Verify').classes
+
+    async def test_a_disabled_item_is_greyed_out(self, user: User):
+        _toggle_page(_MorePlugin(prune='disabled'))
+        await user.open('/')
+        await user.should_see('More')
+        assert 'disable' in _menu_item(user, 'Prune').props
+        assert 'disable' not in _menu_item(user, 'Verify').props
+
+    async def test_a_running_item_fills_the_more_button(self, user: User):
+        _toggle_page(_MorePlugin(verify='accent'))
+        await user.open('/')
+        await user.should_see('More')
+        assert 'active' in _menu_item(user, 'Verify').props
+        assert 'halon-button-filled' in _all_buttons(user, 'More')[0].classes
+
+    async def test_is_hidden_when_every_item_is(self, user: User):
+        _toggle_page(_MorePlugin(prune='hidden', verify='hidden'))
+        await user.open('/')
+        await user.should_see('Rebuild')
+        assert not _all_buttons(user, 'More')[0].visible
+
+    async def test_is_absent_without_any_more_action(self, user: User):
+        _toggle_page(_JobPlugin())
+        await user.open('/')
+        await user.should_see('Rebuild')
+        assert not _all_buttons(user, 'More')
