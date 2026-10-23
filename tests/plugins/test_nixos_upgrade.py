@@ -465,6 +465,24 @@ class TestGithubUpdate:
         assert "user.name=Bot" in command and "user.email=bot@example.com" in command
         assert "'build: bump inputs'" in command
 
+    @pytest.mark.parametrize("status,expected", [(0, 0), (3, 1)])
+    def test_the_update_prints_its_log_once_and_keeps_its_status(self, make_plugin, tmp_path, status, expected):
+        import os
+        import subprocess
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "nix").write_text(f"#!/bin/sh\necho \"Updated input 'nixpkgs'\" >&2\nexit {status}\n")
+        # A clone makes its target folder, and diff says the lock is unchanged.
+        (bin_dir / "git").write_text('#!/bin/sh\ncase "$*" in clone*) eval mkdir -p "\\${$#}";; esac\nexit 0\n')
+        for tool in ("nix", "git"):
+            (bin_dir / tool).chmod(0o755)
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, **GITHUB_PUSH, "nix_bin": str(bin_dir / "nix"), "nix_args": []})
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        run = subprocess.run(["sh", "-c", p._update_command()], capture_output=True, text=True, env=env)
+        assert run.returncode == expected
+        assert run.stdout.count("Updated input 'nixpkgs'") == 1
+        assert ("Every input is already current" in run.stdout) == (status == 0)
+
 
 class TestLocalPath:
     @pytest.mark.parametrize("ref,expected", [
@@ -847,6 +865,9 @@ class TestDetachedEvaluation:
         parts = _split_eval_output(run.stdout, "missing")
         assert parts["eval"] == CmdResult(0, TARGET, "warning: dirty")
         assert parts["metadata"] == CmdResult(0, '{"lastModified": 5}', "fetching")
+        # nix's stderr is printed as it runs, before any command's stdout, so the job's log shows it live.
+        assert run.stdout.startswith("@@x-monitor-eval eval stderr\nwarning: dirty\n"
+                                     "@@x-monitor-eval metadata stderr\nfetching\n")
 
     def test_a_command_the_run_never_reported_on_fails(self):
         from x_monitor.plugins.nixos_upgrade import _split_eval_output

@@ -125,16 +125,17 @@ def _generation(profile_link: str) -> Optional[int]:
 
 
 def _eval_script(commands: Dict[str, str], workdir: str) -> str:
-    """Run each command in turn into files in `workdir`, then print every
-    command's stdout, stderr and exit status after a marker line, so the
-    finished output splits back into one result per command."""
+    """Run each command in turn, printing its stderr live after a marker line
+    so the job's log shows nix's progress, then print every command's stdout
+    and exit status after marker lines, so the finished output splits back
+    into one result per command."""
     # workdir_for() names only safe characters under $HOME, so double quotes suffice.
     lines = [f'w="{workdir}"']
     for name, command in commands.items():
-        lines.append(f'{command} > "$w/{name}.stdout" 2> "$w/{name}.stderr"; '
-                     f'echo $? > "$w/{name}.exit"')
+        lines.append(f'echo "{_EVAL_MARK} {name} stderr"')
+        lines.append(detached.stream_stderr(command, f'"$w/{name}.exit"', stdout_to=f'"$w/{name}.stdout"'))
     for name in commands:
-        for stream in ('stdout', 'stderr', 'exit'):
+        for stream in ('stdout', 'exit'):
             lines.append(f'echo "{_EVAL_MARK} {name} {stream}"; cat "$w/{name}.{stream}"; echo')
     # The run fails when either command did, so its job row shows it.
     lines.append(' && '.join(f'[ "$(cat "$w/{name}.exit")" = 0 ]' for name in commands))
@@ -862,8 +863,9 @@ class NixosUpgrade(Plugin):
             # Host keys come from the system known_hosts, so an unpinned github.com fails rather than being trusted on first use.
             f'export GIT_SSH_COMMAND={shlex.quote(f"ssh -i {shlex.quote(self.push_ssh_key)} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes")}',
             f'git clone --quiet --depth 1 {branch}{shlex.quote(url)} "$t/repo"',
-            f'{nix} flake update --flake "$t/repo" > "$t/log" 2>&1 || {{ cat "$t/log"; exit 1; }}',
-            'cat "$t/log"',
+            # Printed as it runs and kept for the commit message; an && || list is exempt from set -e, so the status is still recorded.
+            f'{{ {nix} flake update --flake "$t/repo" 2>&1 && echo 0 > "$t/rc" || echo $? > "$t/rc"; }} | tee "$t/log"',
+            '[ "$(cat "$t/rc")" = 0 ] || exit 1',
             'if git -C "$t/repo" diff --quiet -- flake.lock; then echo "Every input is already current"; exit 0; fi',
             f'printf \'%s\\n\\n\' {shlex.quote(self.commit_message)} > "$t/msg"',
             "sed -n \"s/.*Updated input '\\([^']*\\)'.*/- \\1/p\" \"$t/log\" >> \"$t/msg\"",

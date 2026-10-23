@@ -125,9 +125,10 @@ def _launch(plugin, pid=4242):
 
 
 def _collect(plugin, result):
-    """Launch the scan, then poll it once as finished with this result's output."""
+    """Launch the scan, then poll it once as finished with this result's output, its stderr marked as the run marks it."""
     _launch(plugin)
-    return _cycle(plugin, _poll(result.stdout + result.stderr, result.exit_code, alive=False))
+    errors = ''.join(f"@@nmap-stderr {line}\n" for line in result.stderr.splitlines())
+    return _cycle(plugin, _poll(result.stdout + errors, result.exit_code, alive=False))
 
 
 class TestCommand:
@@ -310,10 +311,32 @@ class TestDetachedJob:
         assert "setsid" in cmd.text and "vuln_scan-test-vuln-scan" in cmd.text
         assert "timeout -k 5 1200 nmap" in cmd.text
 
-    def test_errors_are_held_back_until_the_xml_is_complete(self, plugin):
-        text = plugin._run_command()
-        assert '2>"$HOME/.cache/x_monitor/jobs/vuln_scan-test-vuln-scan/err"' in text
-        assert text.endswith('exit $status')
+    def test_stderr_is_marked_as_it_is_written_and_keeps_nmaps_status(self, make_plugin, tmp_path):
+        import os
+        import subprocess
+        nmap = tmp_path / "nmap"
+        nmap.write_text("#!/bin/sh\necho '<?xml version=\"1.0\"?>'\necho 'Warning: cap hit' >&2\n"
+                        "echo '<nmaprun></nmaprun>'\nexit 2\n")
+        nmap.chmod(0o755)
+        p = make_plugin(VulnScan, {**BASE_CFG, "nmap_bin": str(nmap), "require_sudo": False})
+        env = {**os.environ, "HOME": str(tmp_path)}
+        run = subprocess.run(["sh", "-c", f'mkdir -p "{p.workdir}" && {p._run_command()}'],
+                             capture_output=True, text=True, env=env)
+        assert run.returncode == 2
+        assert "@@nmap-stderr Warning: cap hit" in run.stdout.splitlines()
+        assert "<nmaprun></nmaprun>" in run.stdout
+
+    async def test_a_warning_inside_the_xml_is_kept_out_of_it(self, plugin):
+        scan = _scan(_port(443, "https", POODLE)).stdout
+        middle = scan.index("<host")
+        _launch(plugin)
+        _cycle(plugin, _poll(scan[:middle] + "\n@@nmap-stderr Warning: cap hit\n" + scan[middle:], 0, alive=False))
+        assert _latest_status() == "failed"
+
+    async def test_a_scan_with_no_xml_names_nmaps_error(self, plugin):
+        _collect(plugin, CmdResult(1, "", "nmap: command not found"))
+        events = [e["message"] for e in plugin.data.plugin_events(plugin.id)]
+        assert any("nmap did not run: nmap: command not found" in e for e in events)
 
     def test_launching_records_a_running_job(self, plugin):
         result = _launch(plugin, pid=1234)

@@ -63,13 +63,15 @@ def _split_poll(result: CmdResult, count: int) -> List[CmdResult]:
         flush()
         buf = []
         fields = line.split()
+        # A live call's stdout frame comes before the call ends, so its code is "-" and the stderr frame after it carries the real one.
         try:
-            index, stream, code = int(fields[1]), fields[2], int(fields[3])
+            index, stream, code = int(fields[1]), fields[2], (None if fields[3] == '-' else int(fields[3]))
         except (IndexError, ValueError):
             key = None
             continue
         key = (index, stream)
-        codes[index] = code
+        if code is not None:
+            codes[index] = code
     flush()
 
     # No frame arrived at all, so the shell or sudo failed before the first borg call and the whole transcript is that failure.

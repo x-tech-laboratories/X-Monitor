@@ -461,6 +461,13 @@ to the action's interpreter as a `CmdResult`, as if the command had run inline.
 The action's arguments live only in memory, so after a restart a run is
 interpreted without them.
 
+A job's command prints its output as it runs, never into temporary files read
+out at the end, because its log is read while it runs. A command that keeps its
+stdout apart for parsing still copies its stderr to the log line by line with
+`ssh_connector.stream_stderr`; borg's framed calls pass `live=True` to
+`_sequence_command`, which prints each call's stdout under its frame as it
+comes and puts the exit code in the frame that follows.
+
 Jobs live in the store like everything else, so **job ids are assigned by the
 store**, not by SQLite's autoincrement — `jobs.create` returns an id
 immediately, with the row persisted asynchronously under that same id. A
