@@ -434,3 +434,48 @@ def _status(plugin_id, state):
     return StatusRecord(
         plugin_id=plugin_id, state=state, timestamp=datetime.now()
     )
+
+
+class TestLateRecords:
+    """A record that arrives after newer ones, as an agent's sync does, lands where its time belongs."""
+
+    def test_a_late_metric_never_becomes_the_latest(self, store):
+        now = datetime.now()
+        store.add_metric("h", "cpu", "usage", 2.0, timestamp=now)
+        store.add_metric("h", "cpu", "usage", 1.0, timestamp=now - timedelta(minutes=5))
+        assert store.latest_metric("cpu", "usage").value == 2.0
+        assert [m.value for m in store.metric_history("cpu", "usage")] == [1.0, 2.0]
+
+    def test_a_late_metric_is_placed_between_its_neighbours(self, store):
+        now = datetime.now()
+        for minutes, value in ((10, 1.0), (0, 3.0)):
+            store.add_metric("h", "cpu", "usage", value, timestamp=now - timedelta(minutes=minutes))
+        store.add_metric("h", "cpu", "usage", 2.0, timestamp=now - timedelta(minutes=5))
+        assert [m.value for m in store.metric_history("cpu", "usage")] == [1.0, 2.0, 3.0]
+
+    def test_a_full_series_drops_its_oldest_to_make_room(self):
+        store = StateStore(BufferSizes(metric_history=3))
+        now = datetime.now()
+        for minutes, value in ((30, 1.0), (20, 2.0), (0, 4.0)):
+            store.add_metric("h", "cpu", "usage", value, timestamp=now - timedelta(minutes=minutes))
+        store.add_metric("h", "cpu", "usage", 3.0, timestamp=now - timedelta(minutes=10))
+        assert [m.value for m in store.metric_history("cpu", "usage", limit=0)] == [2.0, 3.0, 4.0]
+
+    def test_a_record_older_than_a_full_series_is_not_kept_in_memory(self):
+        store = StateStore(BufferSizes(metric_history=2))
+        now = datetime.now()
+        for minutes, value in ((10, 2.0), (0, 3.0)):
+            store.add_metric("h", "cpu", "usage", value, timestamp=now - timedelta(minutes=minutes))
+        store.add_metric("h", "cpu", "usage", 1.0, timestamp=now - timedelta(hours=1))
+        assert [m.value for m in store.metric_history("cpu", "usage", limit=0)] == [2.0, 3.0]
+
+    def test_late_events_keep_the_feed_newest_first(self, store):
+        now = datetime.now()
+        store.add_event("INFO", "new", timestamp=now)
+        store.add_event("INFO", "old", timestamp=now - timedelta(minutes=5))
+        assert [e.message for e in store.recent_events()] == ["new", "old"]
+
+    def test_a_late_log_line_is_still_deduplicated(self, store):
+        now = datetime.now()
+        store.add_log_line("h", "p", "INFO", "line", "hash", timestamp=now)
+        assert store.add_log_line("h", "p", "INFO", "line", "hash", timestamp=now - timedelta(minutes=1)) is None
