@@ -39,6 +39,10 @@
                             watchfiles = pyprev.watchfiles.overridePythonAttrs (old: {
                                 doCheck = false;
                             });
+                            # paho-mqtt's test suite floods the log with reconnect errors and stalls the build.
+                            paho-mqtt = pyprev.paho-mqtt.overridePythonAttrs (old: {
+                                doCheck = false;
+                            });
                         };
                     };
                     python312Packages = final.python312.pkgs;
