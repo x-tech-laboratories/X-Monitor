@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from x_monitor.code_version import code_version
 from x_monitor_agent import __version__, desktop, executor, inhibit, keys, protocol as proto, watchers
 from x_monitor_agent.local import LocalRunner
+from x_monitor_agent.local_notify import LocalNotifier, OfflineAlerts, follow
 
 _BACKOFF_INITIAL = 1.0
 _BACKOFF_MAX = 60.0
@@ -39,7 +40,7 @@ agent apart from a newer one without a version comparison."""
 class AgentClient:
     def __init__(self, url: str, agent_id: str, key: Ed25519PrivateKey,
                  hostname: Optional[str] = None, notify_only: bool = False,
-                 state_dir: Optional[str] = None):
+                 state_dir: Optional[str] = None, local_socket: Optional[str] = None):
         self.url = url
         self.notify_only = notify_only
         self.agent_id = agent_id
@@ -58,6 +59,7 @@ class AgentClient:
         # The monitors this agent runs itself, which keep running whether or not it is connected.
         self._runner = LocalRunner(agent_id, state_dir) if state_dir and not notify_only else None
         self._requests: set = set()
+        self.local_socket = local_socket
 
     # --- Connection lifecycle ---
 
@@ -66,11 +68,14 @@ class AgentClient:
         backoff = _BACKOFF_INITIAL
         if self._runner is not None:
             await self._runner.start()
+        local = await self._start_local_notifications()
         while True:
             self._welcomed = False
             try:
                 await self._session()
             except asyncio.CancelledError:
+                for stop in local:
+                    stop()
                 if self._runner is not None:
                     self._runner.stop()
                 await self._stop_streams()
@@ -156,6 +161,34 @@ class AgentClient:
                 task = asyncio.create_task(self._handle_engine_frame(frame))
                 self._requests.add(task)
                 task.add_done_callback(self._requests.discard)
+
+    # --- Local notifications ---
+
+    async def _start_local_notifications(self) -> list:
+        """Serve this agent's own notifications on the local socket, or follow it from a desktop agent; returns what stops it."""
+        if not self.local_socket:
+            return []
+        if self.notify_only:
+            task = asyncio.create_task(follow(self.local_socket, self._show_local))
+            return [task.cancel]
+        if self._runner is None:
+            return []
+        notifier = LocalNotifier(self.local_socket)
+        try:
+            await notifier.start()
+        except OSError as e:
+            logging.warning(f"cannot serve local notifications on {self.local_socket}: {e}")
+            return []
+        alerts = OfflineAlerts(notifier, lambda: self._runner.engine,
+                               lambda: self._socket is not None and self._welcomed, self.agent_id)
+        return [alerts.start(), notifier.close]
+
+    async def _show_local(self, frame: Dict[str, Any]) -> None:
+        """Show or close a notification the system agent raised while X-Monitor was out of reach."""
+        if frame.get('t') == proto.NOTIFY:
+            await self._desktop.show(frame)
+        else:
+            await self._desktop.dismiss(frame)
 
     # --- Local monitors ---
 
