@@ -2,8 +2,9 @@ import pytest
 
 pytestmark = pytest.mark.asyncio
 from x_monitor.plugins.filesystems import (
-    Filesystems, _sanitize, _parse_inodes, _parse_readonly, _SNAP,
+    Filesystems, _parse_inodes, _parse_readonly, _SNAP,
 )
+from x_monitor.plugins.base.disk_usage import path_key as _sanitize
 from x_monitor.core.connectors.types import CmdResult
 from x_monitor.core.database.database import db, StatusHistory, Metric
 

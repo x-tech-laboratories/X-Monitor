@@ -64,6 +64,8 @@
                     asyncssh
                     # The apprise notification channel (x_monitor/core/notifications/mail.py).
                     apprise
+                    # The MQTT exporter (x_monitor/core/exporters/mqtt.py).
+                    aiomqtt
                     # The agent transport's client half (x_monitor_agent/client.py).
                     # The server side needs nothing extra: nicegui already
                     # brings FastAPI/uvicorn, which serve the agent WebSocket.

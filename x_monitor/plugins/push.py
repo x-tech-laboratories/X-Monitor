@@ -2,7 +2,8 @@
 target reports in through the REST API and the plugin never polls —
 commands() is empty, and each cycle only re-evaluates the staleness of the
 last heartbeat recorded via record_push(). Config: max_age (defaults to twice
-the interval), token (authenticates the pushing client), target_host for
+the interval), token (authenticates the pushing client; optional when a
+push-scoped API token from auth.tokens covers this monitor), target_host for
 display. A fresh heartbeat that reported 'up' is online; no heartbeat yet,
 one older than max_age, or a last-reported 'down' is failed."""
 
@@ -59,7 +60,8 @@ class Push(Plugin):
         return CollectResult(status='online')
 
     def record_push(self, status: str = 'up', msg: Optional[str] = None,
-                    value: Optional[float] = None) -> bool:
+                    value: Optional[float] = None, source: Optional[str] = None) -> bool:
+        """Record one heartbeat; ``source`` names the API token that sent it, for the event log."""
         if status not in _VALID_PUSH_STATUSES:
             return False
 
@@ -70,10 +72,11 @@ class Push(Plugin):
             metrics['value'] = float(value)
 
         log_level = "INFO" if is_up else "ERROR"
+        via = f" via {source}" if source else ""
         detail = f": {msg}" if msg else ""
         result = CollectResult(
             metrics=metrics,
-            logs=[(f"Heartbeat received (status={status}){detail}", log_level)],
+            logs=[(f"Heartbeat received (status={status}){via}{detail}", log_level)],
             status='online' if is_up else 'failed',
         )
         self.engine.apply(self, result)

@@ -35,8 +35,9 @@ class HttpConnector:
         except httpx.HTTPError as e:
             return HttpResult(status_code=None, text="", error=str(e) or type(e).__name__)
         elapsed_ms = (time.monotonic() - started) * 1000.0
+        headers = {str(k).lower(): str(v) for k, v in resp.headers.items()}
         return HttpResult(status_code=resp.status_code, text=resp.text,
-                          elapsed_ms=elapsed_ms)
+                          elapsed_ms=elapsed_ms, headers=headers)
 
     def close(self) -> None:
         try:

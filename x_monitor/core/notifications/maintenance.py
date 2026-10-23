@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from typing import Any, Dict, FrozenSet, List, Optional
 
+log = logging.getLogger(__name__)
+
 DAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 
 
@@ -107,5 +109,5 @@ def parse_windows(entries: List[Dict[str, Any]]) -> List[Window]:
             windows.append(window(entry))
         except (ValueError, TypeError, AttributeError) as e:
             label = entry.get('name', entry) if isinstance(entry, dict) else entry
-            logging.error(f"notifications: maintenance window {label!r} ignored: {e}")
+            log.error(f"notifications: maintenance window {label!r} ignored: {e}")
     return windows

@@ -8,19 +8,46 @@ An **Events** view in the sidebar shows a unified, filterable feed of every even
 
 ## REST API
 
-Read-only JSON endpoints for consuming X-Monitor's state programmatically:
+JSON endpoints for consuming X-Monitor's state programmatically:
 
 | Endpoint | Returns |
 |----------|---------|
 | `GET /api/health` | `{"status": "ok"}` |
 | `GET /api/monitors` | All monitors with id, name, type, target, and current status |
-| `GET /api/monitors/{id}` | A single monitor plus its latest metrics |
+| `GET /api/monitors/{id}` | A single monitor plus its latest metrics and the ids of its actions |
 | `GET /api/metrics` | Latest value of every collected metric |
 | `GET /api/events` | Recent events — supports `?level=`, `?target=`, `?search=`, `?limit=` |
+
+And a few that act, the same things the dashboard's buttons do:
+
+| Endpoint | Does |
+|----------|------|
+| `POST /api/monitors/{id}/poll` | Runs one collection cycle now (the **Poll Now** button) |
+| `POST /api/monitors/{id}/actions/{action_id}` | Runs one of the monitor's header actions, e.g. `restart` |
+| `POST /api/notifications/{channel_id}/test` | Sends a test notification through one channel |
+
+Each action taken through the API is written to the monitor's events, naming the account or [API token](../README.md#api-tokens) that asked for it.
 
 ```bash
 curl http://localhost:8080/api/monitors
 curl "http://localhost:8080/api/events?level=ERROR&limit=50"
+curl -X POST -H "Authorization: Bearer $XMONITOR_TOKEN" http://localhost:8080/api/monitors/web/poll
+```
+
+### Runtime control
+
+These change X-Monitor itself rather than read its state. They sit behind the same sign-in as every other route.
+
+| Endpoint | Does |
+|----------|------|
+| `POST /api/config/reload` | Re-reads `config.yaml` and applies it in place; answers with what was added, removed and changed and which settings need a restart, or `422` with the reason the file was refused |
+| `GET /api/log-levels` | The root log level, every logger given its own level, and the names of X-Monitor's loggers |
+| `POST /api/log-levels` | Sets one logger's level from a JSON body `{"logger": "...", "level": "DEBUG"}`; no `logger` means the root, and `"level": null` makes a named logger inherit again |
+
+```bash
+curl -X POST http://localhost:8080/api/log-levels \
+  -H 'Content-Type: application/json' \
+  -d '{"logger": "x_monitor.core.connectors.ssh_connector", "level": "DEBUG"}'
 ```
 
 ## Prometheus
@@ -49,3 +76,35 @@ exporters:
     token: "my-api-token"
     # InfluxDB 1.x: use `database:` instead of org/bucket/token
 ```
+
+## MQTT and Home Assistant
+
+An optional **push** exporter publishes every monitor's status and metrics to an MQTT broker the moment they change, and announces each one to Home Assistant through [MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery), so no agent or custom integration is needed on the Home Assistant side. It needs the `mqtt` extra (`pip install 'x-monitor[mqtt]'`, which brings `aiomqtt`); the Nix package and dev shell already include it.
+
+```yaml
+exporters:
+  mqtt:
+    host: "mqtt.lan"
+    port: 1883                   # 8883 by default when tls is set
+    username: "x-monitor"
+    password_file: "/run/secrets/mqtt_password"   # or password:
+    tls: true                    # or {ca_certs, certfile, keyfile, insecure}
+    client_id: "x-monitor-myhost"    # default: x-monitor-<hostname>
+    base_topic: "x-monitor"
+    discovery_prefix: "homeassistant"
+    discovery: true
+    retain: true
+    interval: 5m                 # optional periodic republish of everything; off by default
+```
+
+Topics, with monitor ids and metric names lowercased and reduced to `a-z 0-9 _ -`:
+
+| Topic | Payload |
+|---|---|
+| `<base>/status` | `online` / `offline` — X-Monitor's availability, also the connection's last will |
+| `<base>/<monitor>/status` | `online`, `warning`, `failed` or `unavailable` |
+| `<base>/<monitor>/<metric>` | the metric's latest value |
+
+In Home Assistant each monitored host becomes one device (named after the target), and each monitor on it gets a status sensor (an `enum` with the four statuses), a `problem` binary sensor that is on whenever the status is not `online`, and one sensor per metric. A metric's unit and device class follow its name: `_pct` is `%`, `_seconds`/`_ms` a duration, `_bytes`/`_mb`/`_gb` a data size, `temp_c` a temperature in °C, `_dbm` a signal strength. Unique ids are `<base>_<monitor>_<metric>`, so entities survive restarts, and two X-Monitor instances on one broker stay apart by using different `base_topic`s.
+
+Everything is republished when the exporter (re)connects and when Home Assistant sends its birth message (`online` on `<discovery_prefix>/status`). While the broker is unreachable the exporter retries with backoff (up to a minute) and monitoring carries on unaffected.

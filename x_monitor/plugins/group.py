@@ -17,6 +17,8 @@ from x_monitor.core.connectors.types import CollectResult, Status
 from x_monitor.core.ui.spec_types import UISpec
 from x_monitor.core.coordination.monitor_graph import child_label
 
+log = logging.getLogger(__name__)
+
 # Group-provided pseudo-widget: a status card for a child that has none of its own.
 STATUS_WIDGET = 'status'
 
@@ -72,7 +74,7 @@ class Group(Plugin):
                                         return_exceptions=True)
         for child, outcome in zip(self.children, outcomes):
             if isinstance(outcome, BaseException):
-                logging.error(f"{child.name}: poll from group {self.name!r} failed: {outcome}")
+                log.error(f"{child.name}: poll from group {self.name!r} failed: {outcome}")
         return await super().run_cycle()
 
     def _descendants(self) -> Iterator[Any]:
@@ -141,7 +143,7 @@ class Group(Plugin):
 
             spec = getattr(child, 'UI_SPEC', None)
             if spec is None:
-                logging.warning(
+                log.warning(
                     "Group %s: %s has a hand-written UI and cannot have its widgets placed "
                     "individually — reference it as '%s' to render it whole",
                     self.id, child.id, child.id,
@@ -164,7 +166,7 @@ class Group(Plugin):
             on_data_event(_refresh_statuses)
 
         for ref in grid.unclaimed():
-            logging.warning("Group %s: layout references unknown widget %r", self.id, ref)
+            log.warning("Group %s: layout references unknown widget %r", self.id, ref)
 
     def _section_title(self, title: Optional[str]):
         """Label a whole-child cell, which has no widget title of its own to override."""

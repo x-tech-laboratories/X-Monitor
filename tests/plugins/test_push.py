@@ -93,6 +93,15 @@ class TestPushActions:
         p = make_plugin(Push, _cfg())
         assert p.plan_action("anything") is None
 
+    async def test_record_push_names_the_token_that_sent_it(self, make_plugin, db_manager):
+        from x_monitor.core.database.database import Event
+        p = make_plugin(Push, _cfg())
+        p.record_push(status="up", msg="nightly ok", source="token 'ci'")
+        db_manager.flush()
+        with db.connection_context():
+            messages = [e.message for e in Event.select()]
+        assert any("Heartbeat received (status=up) via token 'ci': nightly ok" in m for m in messages)
+
 
 class TestUiSpec:
     async def test_the_reported_status_is_drawn_as_an_uptime_strip(self, make_plugin):

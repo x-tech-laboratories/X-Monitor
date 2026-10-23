@@ -15,6 +15,8 @@ from x_monitor.core.connectors.types import Status
 from x_monitor.core.coordination.monitor_graph import is_link
 from x_monitor.plugins.base.plugin_helpers import parse_duration
 
+log = logging.getLogger(__name__)
+
 PROBLEM_STATUSES = (Status.FAILED, Status.WARNING, Status.UNAVAILABLE)
 # The statuses a recovery lands in that read as recovered rather than as a new state.
 HEALTHY_STATUSES = (Status.ONLINE, Status.INFO)
@@ -57,7 +59,7 @@ def _merge(base: Dict[str, Any], override: Any) -> Dict[str, Any]:
         return {**base, 'enabled': False}
     if isinstance(override, dict):
         return {**base, 'enabled': True, **override}
-    logging.error(f"notify: expected true, false or a mapping, got {override!r}; ignoring it")
+    log.error(f"notify: expected true, false or a mapping, got {override!r}; ignoring it")
     return base
 
 
@@ -70,7 +72,7 @@ def _rule(settings: Dict[str, Any], channel_ids: List[str], where: str) -> Optio
         channels = [channels]
     known = [c for c in channels if c in channel_ids]
     for unknown in set(channels) - set(known):
-        logging.error(f"{where}: notification channel {unknown!r} is not defined")
+        log.error(f"{where}: notification channel {unknown!r} is not defined")
     if not known:
         return None
 
@@ -79,7 +81,7 @@ def _rule(settings: Dict[str, Any], channel_ids: List[str], where: str) -> Optio
         on = [on]
     statuses = frozenset(str(s) for s in on if str(s) in {p.value for p in PROBLEM_STATUSES})
     for bad in set(map(str, on)) - statuses:
-        logging.error(f"{where}: notify `on` value {bad!r} is not one of failed, warning, unavailable")
+        log.error(f"{where}: notify `on` value {bad!r} is not one of failed, warning, unavailable")
 
     try:
         after = max(1, int(settings.get('after', 1)))
@@ -91,7 +93,7 @@ def _rule(settings: Dict[str, Any], channel_ids: List[str], where: str) -> Optio
         flap_changes = max(0, int(flapping.get('changes', 0)))
         flap_window = parse_duration(flapping.get('within', '1h'))
     except ValueError as e:
-        logging.error(f"{where}: bad notify setting ({e}); notifications for it are off")
+        log.error(f"{where}: bad notify setting ({e}); notifications for it are off")
         return None
     return Rule(tuple(known), statuses, after, repeat, bool(settings.get('recovery', True)), hold,
                 flap_changes, flap_window)

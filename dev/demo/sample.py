@@ -9,17 +9,18 @@ reports unavailable.
 """
 
 import argparse
+import json
 import logging
 import math
 import random
 import time
 from typing import Any, Callable, Dict, Tuple
 
-from x_monitor.core.connectors.types import CollectResult
+from x_monitor.core.connectors.types import CmdResult, CollectResult
 from x_monitor.core.coordination.engine import XMonitorEngine
 from x_monitor.core.ui import theme
 from x_monitor.core.ui.main_dashboard import init_gui
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import SCRIPT_SEP, level_for
 from x_monitor.plugins.processes import _process_tree
 
 # ============================================================================
@@ -50,9 +51,11 @@ def down_now(tick: int, seed: int, period: int = 37, length: int = 3) -> bool:
 
 
 def cpu(plugin, tick, seed) -> Reading:
-    """Usage drifting around a quarter, judged by the monitor's own thresholds."""
-    value = wave(tick, seed, 28, 14, 6)
-    return {'cpu_pct': value}, thresholds(plugin, value)
+    """Usage drifting around a quarter, judged by the monitor's own thresholds, with eight cores spread around it."""
+    cores = [wave(tick, seed + core, 28 + (40 if core == 3 else 0), 14, 6) for core in range(8)]
+    value = sum(cores) / len(cores)
+    return ({'cpu_pct': value, 'cpu_core_max_pct': max(cores)}, thresholds(plugin, value),
+            [{'label': str(core), 'value': min(pct, 100.0)} for core, pct in enumerate(cores)])
 
 
 def memory(plugin, tick, seed) -> Reading:
@@ -187,10 +190,73 @@ def unbound(plugin, tick, seed) -> Reading:
 
 
 def containers(plugin, tick, seed) -> Reading:
-    """Twelve containers, one of which stops and starts again."""
+    """Four containers, one of which stops and starts again, and one whose image has an update."""
     stopped = (tick // 20) % 2
-    return ({'containers_total': 12.0, 'containers_running': 12.0 - stopped, 'containers_stopped': float(stopped)},
-            'warning' if stopped else 'online')
+    rows = [{'name': 'nginx', 'state': 'running', 'image': 'nginx:latest',
+             'update': 'Update available', 'update_state': 'available'},
+            {'name': 'postgres', 'state': 'exited' if stopped else 'running', 'image': 'postgres:16',
+             'update': 'Up to date', 'update_state': 'current'},
+            {'name': 'redis', 'state': 'running', 'image': 'redis:7', 'update': 'Up to date', 'update_state': 'current'},
+            {'name': 'app', 'state': 'running', 'image': 'app:dev', 'update': 'Local image', 'update_state': 'local'}]
+    return ({'containers_total': 4.0, 'containers_running': 4.0 - stopped, 'containers_stopped': float(stopped),
+             'images_update_available': 1.0},
+            'warning' if stopped else 'online', rows)
+
+
+def parsed(plugin, *outputs: str) -> CollectResult:
+    """The monitor's own parse of canned command output, one string per command it runs."""
+    return plugin.parse([CmdResult(0, output, '') for output in outputs])
+
+
+def package_updates(plugin, tick, seed) -> CollectResult:
+    """An apt host with two pending updates, one of them a security fix."""
+    updates = ('Listing... Done\n'
+               'bash/stable 5.2.15-2+b7 amd64 [upgradable from: 5.2.15-2+b2]\n'
+               'openssl/stable-security 3.0.14-1~deb12u2 amd64 [upgradable from: 3.0.13-1~deb12u1]\n')
+    return parsed(plugin, f"manager=apt\nsource=\nrc=0\n{SCRIPT_SEP}\n{updates}\n{SCRIPT_SEP}\n\n{SCRIPT_SEP}\n\n")
+
+
+def reboot_required(plugin, tick, seed) -> CollectResult:
+    """A Debian host whose kernel and libc were upgraded since boot."""
+    return parsed(plugin, "kernel=6.1.0-25-amd64\ndebian=1\ndebian_flag=1\n"
+                          "debian_pkg=linux-image-6.1.0-26-amd64\ndebian_pkg=libc6\nmodules=present\n")
+
+
+def interfaces(plugin, tick, seed) -> CollectResult:
+    """Loopback, a wired link with addresses and a docker bridge."""
+    def link(name, mac, addrs, operstate='UP', link_type='ether'):
+        return {'ifname': name, 'flags': ['BROADCAST', 'UP', 'LOWER_UP'], 'mtu': 1500, 'operstate': operstate,
+                'link_type': link_type, 'address': mac, 'addr_info': addrs}
+    links = [link('lo', '00:00:00:00:00:00', [{'family': 'inet', 'local': '127.0.0.1', 'prefixlen': 8}],
+                  'UNKNOWN', 'loopback'),
+             link('eth0', '52:54:00:00:00:01', [{'family': 'inet', 'local': '192.0.2.10', 'prefixlen': 24},
+                                                {'family': 'inet6', 'local': 'fe80::1', 'prefixlen': 64}]),
+             link('docker0', '02:42:00:00:00:01', [{'family': 'inet', 'local': '172.17.0.1', 'prefixlen': 16}])]
+    sysfs = ['lo\tunknown\t1\t65536\t00:00:00:00:00:00\t\t772',
+             'eth0\tup\t1\t1500\t52:54:00:00:00:01\t1000\t1',
+             'docker0\tup\t1\t1500\t02:42:00:00:00:01\t\t1']
+    return parsed(plugin, f"{json.dumps(links)}\n{SCRIPT_SEP}\n\n{SCRIPT_SEP}\n" + "\n".join(sysfs) + "\n")
+
+
+def sessions(plugin, tick, seed) -> CollectResult:
+    """One local desktop session and one SSH session, with a few recent logins."""
+    def block(sid, user, host='', tty='pts/0', seat='', kind='tty', service='sshd'):
+        return (f"Id={sid}\nName={user}\nTimestamp=Thu 2026-09-24 10:00:00 UTC\nSeat={seat}\nTTY={tty}\n"
+                f"Remote={'yes' if host else 'no'}\nRemoteHost={host}\nRemoteUser=\nService={service}\n"
+                f"Type={kind}\nClass=user\nState=active\nIdleHint=no\nIdleSinceHint=0\n")
+    current = block('2', 'alice', tty='', seat='seat0', kind='wayland', service='gdm-password') + block('4', 'alice', '192.0.2.5')
+    last = ('alice    pts/0        192.0.2.5        2026-09-24T10:00:00+00:00   still logged in\n'
+            'bob      tty1         0.0.0.0          2026-09-23T08:00:00+00:00 - 2026-09-23T17:00:00+00:00  (09:00)\n')
+    return parsed(plugin, f"source=loginctl\n{SCRIPT_SEP}\n{current}{SCRIPT_SEP}\n{last}")
+
+
+def host_control(plugin, tick, seed) -> CollectResult:
+    """A host with power-profiles-daemon, two boot entries and suspend support."""
+    power = ('backend=ppd\n  performance:\n    CpuDriver:\tintel_pstate\n* balanced:\n'
+             '    CpuDriver:\tintel_pstate\n  power-saver:\n    CpuDriver:\tintel_pstate\n')
+    boot = ('loader=efi\n@@entries\nBootOrder: 0001,0003\n'
+            'Boot0001* Linux Boot Manager\tHD(1)\nBoot0003* Windows Boot Manager\tHD(1)\n')
+    return parsed(plugin, power, boot, 'freeze mem disk')
 
 
 def syncthing(plugin, tick, seed) -> Reading:
@@ -232,13 +298,20 @@ def vuln_scan(plugin, tick, seed) -> Reading:
     return {'vulnerable': vulnerable, 'suspected': suspected, 'noted': noted, 'open_ports': 3.0 + seed % 12}, status
 
 
-SAMPLES: Dict[str, Callable[[Any, int, int], Reading]] = {
+SAMPLES: Dict[str, Callable[[Any, int, int], Any]] = {
     'cpu': cpu, 'memory': memory, 'load': load, 'temperature': temperature,
     'throughput': throughput, 'connections': connections, 'processes': processes, 'disk_io': disk_io,
     'disk_space': disk_space, 'filesystems': filesystems, 'zfs': zfs, 'smart': smart,
     'uptime': uptime, 'http': http, 'ports': ports, 'pihole': pihole, 'unbound': unbound,
     'containers': containers, 'syncthing': syncthing, 'borg': borg, 'nixos_upgrade': nixos_upgrade, 'vuln_scan': vuln_scan,
 }
+
+# Types whose sample runs the monitor's own parser on canned output, so each needs a real plugin.
+PARSED_SAMPLES: Dict[str, Callable[[Any, int, int], CollectResult]] = {
+    'package_updates': package_updates, 'reboot_required': reboot_required, 'interfaces': interfaces,
+    'sessions': sessions, 'host_control': host_control,
+}
+SAMPLES.update(PARSED_SAMPLES)
 
 
 # ============================================================================
@@ -263,7 +336,11 @@ class SampleEngine(XMonitorEngine):
             self._apply(plugin, CollectResult(status='unavailable'))
             return True
         seed = sum(map(ord, plugin.id))
-        metrics, status, *snapshot = sample(plugin, tick, seed)
+        reading = sample(plugin, tick, seed)
+        if isinstance(reading, CollectResult):
+            self._apply(plugin, reading)
+            return True
+        metrics, status, *snapshot = reading
         self._apply(plugin, CollectResult(metrics=metrics, status=status,
                                           snapshot=snapshot[0] if snapshot else None))
         return True

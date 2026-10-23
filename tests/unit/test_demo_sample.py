@@ -27,11 +27,23 @@ def stand_in(kind):
 class TestSamples:
     def test_every_sampled_type_yields_metrics_and_a_status(self, sample):
         for kind, reading in sample.SAMPLES.items():
+            if kind in sample.PARSED_SAMPLES:
+                continue
             for tick in range(0, 80, 7):
                 metrics, status, *_ = reading(stand_in(kind), tick, seed=101)
                 assert metrics, kind
                 assert all(isinstance(v, float) for v in metrics.values()), kind
                 assert status in ('online', 'info', 'warning', 'failed'), kind
+
+    def test_every_parsed_sample_parses_cleanly_in_its_real_monitor(self, sample, make_plugin):
+        from x_monitor.core.coordination.plugin_loader import PluginLoader
+        loader = PluginLoader([])
+        for kind, reading in sample.PARSED_SAMPLES.items():
+            plugin = make_plugin(loader.resolve(kind), {'name': kind, 'id': kind, 'type': kind,
+                                                        'ssh_config': {'host': 'demo.host'}})
+            result = reading(plugin, 0, seed=101)
+            assert result.metrics, kind
+            assert result.status in ('online', 'info', 'warning', 'failed'), kind
 
     def test_the_pool_and_disk_tiles_get_their_snapshot_lists(self, sample):
         *_, pools = sample.zfs(stand_in('zfs'), 0, seed=1)

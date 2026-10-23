@@ -16,6 +16,8 @@ import logging
 import threading
 from typing import Callable, Optional
 
+log = logging.getLogger(__name__)
+
 # Change kinds, one per datatype the store holds.
 STATUS = "status"
 METRIC = "metric"
@@ -24,6 +26,8 @@ LOG = "log"
 JOB = "job"
 SNAPSHOT = "snapshot"
 SETTING = "setting"
+# The set of monitors itself changed, after a config reload.
+MONITORS = "monitors"
 
 # A subscriber takes (kind, plugin_id); plugin_id is None for changes that
 # belong to no single monitor, such as a global setting.
@@ -56,7 +60,7 @@ class ChangeBus:
             try:
                 subscriber(kind, plugin_id)
             except Exception as e:
-                logging.error(f"change subscriber failed for {kind!r}: {e}")
+                log.error(f"change subscriber failed for {kind!r}: {e}")
 
 
 # One bus per process: the Database Engine publishes to it and the dashboard
