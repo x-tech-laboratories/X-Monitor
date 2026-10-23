@@ -1,5 +1,6 @@
 import asyncio
 import pytest
+from datetime import datetime, timedelta
 import yaml
 from unittest.mock import MagicMock, AsyncMock, patch
 from x_monitor.__main__ import XMonitorEngine
@@ -308,6 +309,61 @@ class TestLinks:
 
 
 class TestPerMonitorScheduling:
+    def _engine_with_saved_status(self, seconds_ago):
+        engine = object.__new__(XMonitorEngine)
+        engine.db = MagicMock()
+        engine.db.latest_status_time.return_value = (
+            None if seconds_ago is None else datetime.now() - timedelta(seconds=seconds_ago))
+        return engine
+
+    def test_a_current_result_is_due_after_the_rest_of_its_interval(self):
+        engine = self._engine_with_saved_status(600)
+        plugin = MagicMock(id="scan", interval=86400)
+        assert engine._seconds_until_due(plugin) == pytest.approx(85800, abs=5)
+
+    def test_a_stale_result_is_due_now(self):
+        engine = self._engine_with_saved_status(90000)
+        assert engine._seconds_until_due(MagicMock(id="scan", interval=86400)) == 0.0
+
+    def test_no_saved_result_is_due_now(self):
+        engine = self._engine_with_saved_status(None)
+        assert engine._seconds_until_due(MagicMock(id="scan", interval=86400)) == 0.0
+
+    async def test_a_held_monitor_waits_out_its_hold_before_its_first_cycle(self):
+        calls = []
+
+        async def fake_sleep(seconds):
+            calls.append(seconds)
+            raise asyncio.CancelledError()
+
+        plugin = MagicMock(id="scan", interval=86400, offset=None, next_cycle_in=lambda: None)
+        engine = object.__new__(XMonitorEngine)
+        engine._awaiting_due = {"scan"}
+        engine.run_cycle_now = AsyncMock(return_value=True)
+        with patch("x_monitor.core.coordination.engine.asyncio.sleep", side_effect=fake_sleep):
+            with pytest.raises(asyncio.CancelledError):
+                await engine._monitor_loop(plugin, hold=5000.0)
+
+        assert calls == [5000.0]
+        engine.run_cycle_now.assert_not_awaited()
+
+    async def test_a_monitor_leaves_the_waiting_set_once_its_hold_ends(self):
+        async def fake_sleep(seconds):
+            if engine.run_cycle_now.await_count:
+                raise asyncio.CancelledError()
+
+        plugin = MagicMock(id="scan", interval=86400, offset=None, next_cycle_in=lambda: None)
+        engine = object.__new__(XMonitorEngine)
+        engine._awaiting_due = {"scan"}
+        engine._collecting = {}
+        engine._last_collected = {}
+        engine.run_cycle_now = AsyncMock(return_value=True)
+        with patch("x_monitor.core.coordination.engine.asyncio.sleep", side_effect=fake_sleep):
+            with pytest.raises(asyncio.CancelledError):
+                await engine._monitor_loop(plugin, hold=5000.0)
+
+        assert engine._awaiting_due == set()
+
     async def test_monitor_loop_reschedules_using_plugin_interval(self):
         calls = []
 

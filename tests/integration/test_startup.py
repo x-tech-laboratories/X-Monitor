@@ -3,7 +3,7 @@ event loop, and nothing else writes to the store or serves a page until then."""
 
 import pytest
 import yaml
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
@@ -65,6 +65,24 @@ class TestLoading:
         try:
             assert seen == [('node-a', True)]
             assert engine._early_agents == set()
+        finally:
+            engine.shutdown()
+
+    async def test_an_early_agent_sees_which_monitors_are_still_current(self, tmp_path, saved):
+        """The waiting set is filled before early agents are replayed, or a restart reruns every daily scan."""
+        engine = _engine(tmp_path, saved)
+        current = MagicMock(id="scan", interval=86400, scheduled_actions=[])
+        engine.all_monitors = lambda: [current]
+        engine._is_event_driven = lambda p: False
+        engine._seconds_until_due = lambda p: 5000.0
+        engine._monitor_loop = AsyncMock()
+        engine._on_agent_connected('node-a')
+        seen = []
+        engine._on_agent_connected = lambda agent_id: seen.append(set(engine._awaiting_due))
+        await engine.run()
+        try:
+            assert seen == [{"scan"}]
+            engine._monitor_loop.assert_called_once_with(current, 5000.0)
         finally:
             engine.shutdown()
 

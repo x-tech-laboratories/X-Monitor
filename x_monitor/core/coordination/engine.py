@@ -33,6 +33,7 @@ import time
 import uuid
 import weakref
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Any, List, Optional, Dict, Set
 
 from peewee import OperationalError
@@ -189,6 +190,8 @@ class XMonitorEngine:
         # False until load_state() has restored the store; nothing may write to it before then.
         self.ready = False
         self._early_agents: Set[str] = set()
+        # Monitors holding their first cycle after a restart because their saved result is still current.
+        self._awaiting_due: Set[str] = set()
         try:
             self.db = XMonitorDatabase(
                 self.db_path,
@@ -318,6 +321,8 @@ class XMonitorEngine:
         monitors = [p for p in self.all_monitors()
                     if getattr(self._exec_context_for(p), 'conn', None) is not None
                     and getattr(self._exec_context_for(p).conn, 'agent_id', None) == agent_id]
+        # A monitor still waiting out its saved result runs when due, so a restart never repeats a daily scan.
+        monitors = [p for p in monitors if p.id not in self._awaiting_due]
         if not monitors:
             return
         log.info(
@@ -669,12 +674,22 @@ class XMonitorEngine:
         engine-owned connector instead of a plugin opening its own session."""
         return await self.connectors.http.fetch(request)
 
-    async def _monitor_loop(self, plugin: Plugin):
+    def _seconds_until_due(self, plugin: Plugin) -> float:
+        """How long until a monitor's saved result is one interval old, or 0 when it has none or it is already stale."""
+        last = self.db.latest_status_time(plugin.id)
+        if last is None:
+            return 0.0
+        return max(0.0, plugin.interval - (datetime.now() - last).total_seconds())
+
+    async def _monitor_loop(self, plugin: Plugin, hold: float = 0.0):
+        """Poll one monitor forever, first waiting at least hold seconds for a saved result to come due."""
         offset = getattr(plugin, "offset", None)
         if offset is None:
-            await asyncio.sleep(random.uniform(0, STARTUP_JITTER_SECONDS))
+            await asyncio.sleep(max(hold, random.uniform(0, STARTUP_JITTER_SECONDS)))
         else:
             await asyncio.sleep(seconds_to_clock_slot(plugin.interval, offset, time.time()))
+        if hold:
+            self._awaiting_due.discard(plugin.id)
         next_due = time.monotonic()
         early = False
         while True:
@@ -870,9 +885,14 @@ class XMonitorEngine:
         log.info(f"Saved state loaded in {time.monotonic() - started:.1f}s")
 
     async def run(self):
+        monitors = self.all_monitors()
+        polled = [p for p in monitors if not self._is_event_driven(p)]
+        holds: Dict[str, float] = {}
         if not self.ready:
             await asyncio.get_running_loop().run_in_executor(None, self.load_state)
             self.ready = True
+            holds = {p.id: self._seconds_until_due(p) for p in polled}
+            self._awaiting_due = {plugin_id for plugin_id, hold in holds.items() if hold > 0}
             for agent_id in sorted(self._early_agents):
                 self._on_agent_connected(agent_id)
             self._early_agents.clear()
@@ -887,15 +907,13 @@ class XMonitorEngine:
         except Exception as e:
             log.error(f"Failed to start notifications — none will be sent: {e}")
 
-        monitors = self.all_monitors()
-        polled = [p for p in monitors if not self._is_event_driven(p)]
         pushed = len(monitors) - len(polled)
         log.info(
             f"Starting {len(polled)} independent monitor schedule(s); "
             f"{pushed} collect on their agent."
         )
         for plugin in polled:
-            self._monitor_tasks[plugin.id] = self._spawn(self._monitor_loop(plugin))
+            self._monitor_tasks[plugin.id] = self._spawn(self._monitor_loop(plugin, holds.get(plugin.id, 0.0)))
 
         if any(p.scheduled_actions for p in monitors):
             self._spawn(self._schedule_loop())
