@@ -24,9 +24,10 @@ def render_plugin_detail(engine: EngineLike, switch_view: Callable, plugin: Any)
 
 
 def _render_schedule(plugin: Any):
-    """Renders one caption per scheduled action, naming it as its button does and giving its next run."""
+    """Renders one caption per scheduled action, naming it as its button does and giving its next run, then one per triggered action."""
     entries = getattr(plugin, 'scheduled_actions', [])
-    if not entries:
+    triggered = getattr(plugin, 'triggered_actions', None) or []
+    if not entries and not triggered:
         return
     names = action_names(plugin.all_actions())
     for entry in entries:
@@ -34,6 +35,8 @@ def _render_schedule(plugin: Any):
         when = f"next {upcoming:%a %d %b %H:%M}" if upcoming else 'never'
         ui.label(f"Scheduled: {names.get(entry.action, entry.action)} · {entry.cron.expression} · {when}") \
             .classes('halon-caption')
+    for entry in triggered:
+        ui.label(f"Triggered: {names.get(entry.action, entry.action)} · {entry.describe()}").classes('halon-caption')
 
 
 def _lede(plugin: Any) -> str:
@@ -44,7 +47,7 @@ def _lede(plugin: Any) -> str:
 
 
 async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
-    """Renders the Poll Now button, the Notifications toggle and the plugin's declared action buttons."""
+    """Renders the Poll Now button, the plugin's declared action buttons and, last since every monitor has it, the Notifications toggle."""
     # A poll or action can outlast the view it was started from, so its notice goes through the client instead of the view's slot.
     client = actions_row.client
     with actions_row:
@@ -67,7 +70,6 @@ async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
             notify_client(client, f'{plugin.name} polled', type='positive')
 
         poll_button = action_button('Poll Now', on_click=poll_now, icon='refresh')
-        render_mute_button(engine, plugin)
 
         info = await plugin.present()
         actions = info.get('actions', [])
@@ -78,6 +80,7 @@ async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
                 _render_action(plugin, action, client)
         if getattr(plugin, 'jobs', None) is not None and any(action.get('job') for action in actions):
             _render_cancel(plugin, client)
+        render_mute_button(engine, plugin)
 
 
 def _render_action(plugin: Any, action: ActionButtonSpec, client: Any):

@@ -11,7 +11,8 @@ requests on its own `interval`, as it always has. Alongside it, monitors on an
 agent-backed target can subscribe to event streams the agent watches locally
 and pushes the instant they change; those arrive through _on_agent_event and
 are persisted the same way, without waiting for the next cycle. A third loop
-runs each monitor's scheduled actions at the times its `schedule` names.
+runs each monitor's scheduled actions at the times its `schedule` names, and
+every stored cycle is checked against the monitor's `triggers`.
 
 The class is named ``XMonitorEngine`` for continuity (``core/contracts.py``'s
 ``EngineLike`` and the test suite reference it); "Coordination Engine" is its
@@ -19,6 +20,7 @@ role in the architecture.
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -28,6 +30,7 @@ import random
 import signal
 import sys
 import time
+import uuid
 import weakref
 from dataclasses import dataclass, replace
 from typing import Any, List, Optional, Dict, Set
@@ -60,6 +63,16 @@ STARTUP_JITTER_SECONDS = 3.0
 
 # How often the config file is checked for changes.
 CONFIG_POLL_SECONDS = 3.0
+
+
+_TARGET_HOST_KEYS = ('target_host', 'scan_host')
+"""Config keys naming a host a monitor works on from elsewhere, whose agent is asked to stay awake for the cycle."""
+
+
+def bare_host(value: Any) -> str:
+    """Reduce `user@host:port` to the lowercase host name an agent entry is keyed by."""
+    host = str(value or '').strip().lower().rsplit('@', 1)[-1]
+    return host.split(':', 1)[0] if host.count(':') == 1 else host
 
 
 def seconds_to_clock_slot(interval: int, offset: int, now: float) -> float:
@@ -158,6 +171,8 @@ class XMonitorEngine:
         self._collection_streams: Set[str] = set()
         # State keys of the scheduled actions now running, so a slow one is never started twice.
         self._scheduled_running: Set[str] = set()
+        # Each trigger's state by its key, read once from the settings store and written back when it changes.
+        self._trigger_states: Dict[str, Dict[str, Any]] = {}
         if db_path_override:
             self.db_path = db_path_override
         else:
@@ -273,6 +288,7 @@ class XMonitorEngine:
             return
         if result is not None:
             self._apply(plugin, result)
+            self._check_triggers(plugin, result, time.time())
 
     def _on_agent_connected(self, agent_id: str) -> None:
         """Collect every monitor on an agent as soon as that agent dials in.
@@ -484,6 +500,7 @@ class XMonitorEngine:
             return False
         self._apply(plugin, result)
         self._react(plugin, result)
+        self._check_triggers(plugin, result, time.time())
         if did_io:
             self._cycle_stats.record(plugin.id, parsed - started, wait_seconds)
             if self._cycle_timings:
@@ -507,10 +524,34 @@ class XMonitorEngine:
             return False
         self._collecting[plugin.id] = True
         try:
-            return await self._run_cycle(plugin)
+            async with self._targets_held_awake(plugin):
+                return await self._run_cycle(plugin)
         finally:
             self._last_collected[plugin.id] = time.monotonic()
             self._collecting[plugin.id] = False
+
+    def _target_agents(self, plugin: Plugin) -> List[Any]:
+        """The connected agents on the hosts a monitor works on remotely, other than the one it runs on."""
+        config = getattr(plugin, 'config', None) or {}
+        hosts = {bare_host(config.get(key)) for key in _TARGET_HOST_KEYS if config.get(key)}
+        if not hosts:
+            return []
+        own = getattr(self._exec_context_for(plugin), 'conn', None)
+        return [conn for conn in self.connectors.agents.all
+                if conn is not own and conn.is_connected and bare_host(conn.host) in hosts]
+
+    @contextlib.asynccontextmanager
+    async def _targets_held_awake(self, plugin: Plugin):
+        """Keep the hosts a monitor scans or acts on from elsewhere awake while its task runs."""
+        targets = self._target_agents(plugin)
+        key = f"{plugin.id}:{uuid.uuid4().hex}"
+        for conn in targets:
+            await conn.inhibit(key, True)
+        try:
+            yield
+        finally:
+            for conn in targets:
+                await conn.inhibit(key, False)
 
     def last_collected(self, plugin_id: str) -> float:
         """Monotonic time of a monitor's last finished cycle, 0.0 if none yet."""
@@ -521,6 +562,11 @@ class XMonitorEngine:
         return self._cycle_stats.get(plugin_id)
 
     async def dispatch_action(self, plugin: Plugin, action_id: str, **kwargs) -> DispatchResult:
+        """Run one action with the hosts it works on held awake; see _dispatch_action."""
+        async with self._targets_held_awake(plugin):
+            return await self._dispatch_action(plugin, action_id, **kwargs)
+
+    async def _dispatch_action(self, plugin: Plugin, action_id: str, **kwargs) -> DispatchResult:
         """Returns (success, metadata). metadata is the applied CollectResult's
         .metadata dict when one was applied (e.g. carrying 'content' for
         read-style dialog actions), else None. Plain bool outcomes (the
@@ -687,6 +733,51 @@ class XMonitorEngine:
         self.db.set_setting(entry.result_key(plugin.id),
                             json.dumps({'at': started, 'ok': bool(success), 'message': log[0]}))
         self._apply(plugin, CollectResult(logs=[log]))
+
+    def _check_triggers(self, plugin: Plugin, result: CollectResult, now: float) -> None:
+        """Start every triggered action whose condition this cycle has held long enough, recording it as run first.
+
+        Recording before the run means a restart never repeats it for the same
+        episode, and the entry runs again only after its condition clears."""
+        for entry in getattr(plugin, 'triggered_actions', None) or []:
+            key = entry.state_key(plugin.id)
+            # A broken condition must not fail the cycle that already persisted, nor the other entries.
+            try:
+                state = self._trigger_state(key)
+                new_state, fire = entry.step(state, entry.condition.holds(result), now)
+                if new_state != state:
+                    self._trigger_states[key] = new_state
+                    self.db.set_setting(key, json.dumps(new_state))
+            except Exception as e:
+                log.error(f"{plugin.name}: trigger for {entry.action!r} failed: {e}")
+                continue
+            if fire:
+                self._spawn(self._run_triggered(plugin, entry))
+
+    def _trigger_state(self, key: str) -> Dict[str, Any]:
+        """A trigger's state, read from the settings store the first time and kept in memory after."""
+        if key not in self._trigger_states:
+            try:
+                stored = json.loads(self.db.get_setting(key) or '{}')
+            except (json.JSONDecodeError, ValueError):
+                stored = {}
+            self._trigger_states[key] = stored if isinstance(stored, dict) else {}
+        return self._trigger_states[key]
+
+    async def _run_triggered(self, plugin: Plugin, entry) -> None:
+        """Run one triggered action through the same path as its button, and record the outcome on the monitor and for the Schedules view."""
+        label = f"Triggered {entry.action} ({entry.describe()})"
+        started = int(time.time())
+        success = False
+        try:
+            success, _ = await self.dispatch_action(plugin, entry.action, **entry.args)
+            line = (f"{label} ran", 'INFO') if success else (f"{label} failed", 'ERROR')
+        # A failing action must not end the task silently; its error goes to the monitor's log.
+        except Exception as e:
+            line = (f"{label} failed: {e}", 'ERROR')
+        self.db.set_setting(entry.result_key(plugin.id),
+                            json.dumps({'at': started, 'ok': bool(success), 'message': line[0]}))
+        self._apply(plugin, CollectResult(logs=[line]))
 
     async def _prune_loop(self):
         while True:

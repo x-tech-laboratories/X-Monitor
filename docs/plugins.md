@@ -154,6 +154,32 @@ The expression has the usual five fields (minute, hour, day of month, month, day
 
 A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a backup that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. The Schedules page in the sidebar lists every schedule in the fleet, soonest first, with its monitor, action, cron expression, next run, and when its last run started and whether it did. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
 
+### Triggered actions
+
+An action can also run because of what a monitor sees rather than the time. Each `triggers` entry names the action and one condition: a `status` (one name or a list), or a `metric` with exactly one of `above`, `below` or `equals`. `for` is how long the condition must hold first (default: at once), and `args` passes the same parameters a dialog would.
+
+```yaml
+- name: Root Disk
+  type: disk_space
+  actions:
+    - name: Clear Cache
+      command: rm -rf /var/cache/app/*
+  triggers:
+    - action: custom:clear_cache  # a custom action, or the action_id behind any button
+      metric: used_pct
+      above: 90
+      for: 10m
+- name: Media Server
+  type: systemd_service
+  triggers:
+    - action: restart_service
+      status: failed
+```
+
+Every cycle the monitor records, polled or pushed by its agent, is checked against its triggers. An entry runs once each time its condition becomes true and has held for `for`, and it is armed again only once a cycle shows the condition cleared, so a monitor that stays failed runs the action once, not every cycle. A cycle that does not report what the entry watches, such as one without that metric, neither starts nor clears it. The run is recorded before the action starts, so a restart never repeats it, and the time the condition started holding survives a restart too. A triggered run goes through the same path as the button, logs its outcome on the monitor, and appears on the monitor's page and on the Schedules page next to the scheduled ones. Changing an entry's condition, `for` or `args` starts it afresh.
+
+A metric's name is the one shown in the monitor's metrics and exports. The NixOS monitor's own `auto_switch` is the better way to switch on drift, since it also refuses to roll back a generation newer than the flake.
+
 ### Custom actions
 
 Every monitor, whatever its type, accepts an `actions` list of your own commands. Each one becomes a button in the monitor's page header, next to the plugin's own actions.
@@ -186,7 +212,7 @@ Every monitor, whatever its type, accepts an `actions` list of your own commands
 | `timeout` | How long the command may run, as seconds or a duration such as `2m` |
 | `agent`   | Run on this agent instead of the monitor's own host |
 
-The command runs where the monitor's own commands run: over its agent, or over SSH to its host. It succeeds on exit code 0, and each run is logged on the monitor with the start of its output, or of its error when it fails. Custom ids start with `custom:`, so they never clash with the plugin's own actions, and [`schedule`](#scheduled-actions) can run them like any other action.
+The command runs where the monitor's own commands run: over its agent, or over SSH to its host. It succeeds on exit code 0, and each run is logged on the monitor with the start of its output, or of its error when it fails. Custom ids start with `custom:`, so they never clash with the plugin's own actions, and [`schedule`](#scheduled-actions) and [`triggers`](#triggered-actions) can run them like any other action.
 
 ---
 
