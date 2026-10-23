@@ -491,9 +491,8 @@ class StateStore:
         need: a plugin tailing its own job to parse progress, and the live
         job view. A **finished** job keeps only a short tail in memory
         (``finished_job_output``). The full log is persisted in the joboutput
-        table until the job is pruned, but X-Monitor itself never reads it back —
-        it exists for external inspection (sqlite3) only, since the runtime
-        read path is memory-only by design."""
+        table until the job is pruned, and ``DatabaseManager.job_log`` reads it
+        back when a viewer opens the job's log."""
         with self._lock:
             buffer = self.job_output_buffers.get(job_id)
             if not buffer:

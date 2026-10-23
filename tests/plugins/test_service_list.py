@@ -94,7 +94,7 @@ class TestServiceListPlugin:
         assert 'buttons' not in plugin.UI_SPEC
 
     def test_services_table_has_a_title(self, plugin):
-        assert plugin.UI_SPEC['tables']['table']['title'] == 'SERVICES'
+        assert plugin.UI_SPEC['tables']['table']['title'] == 'Services'
 
     def test_switched_actions_are_not_also_row_buttons(self, plugin):
         ids = {a['id'] for a in plugin.UI_SPEC['tables']['table']['row_actions']}

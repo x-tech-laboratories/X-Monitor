@@ -434,9 +434,9 @@ class SystemdService(Plugin):
 
 
 _UNIT_FILE_DIALOGS = {
-    'view_unit_file': {'kind': 'read', 'title': 'Unit File: {plugin.service_name}',
+    'view_unit_file': {'kind': 'read', 'title': 'Unit file: {plugin.service_name}',
                        'action_id': 'view_unit_file', 'params': {}, 'render': 'textarea_readonly'},
-    'edit_unit_file': {'kind': 'edit', 'title': 'Edit Unit File: {plugin.service_name}',
+    'edit_unit_file': {'kind': 'edit', 'title': 'Edit unit file: {plugin.service_name}',
                        'load_action_id': 'view_unit_file', 'load_params': {},
                        'save_action_id': 'write_unit_file', 'save_params': {}, 'save_content_kwarg': 'content',
                        'success_message': 'Unit file written successfully'},

@@ -378,11 +378,35 @@ class TestJobPanel:
 
         @ui.page('/')
         def _page():
-            render_job_panel(plugin, {'title': 'REBUILD JOBS'})
+            render_job_panel(plugin, {'title': 'Jobs'})
 
         await user.open('/')
-        await user.should_see('REBUILD JOBS')
+        await user.should_see('Jobs')
         assert not _all_buttons(user)
+
+    async def test_log_button_shows_the_jobs_output(self, user: User):
+        from x_monitor.core.ui.components import render_job_panel
+        job = {'id': 7, 'started': '2026-10-23 02:30:00', 'kind': 'switch', 'state': 'failed',
+               'duration': 42, 'exit_code': 1, 'error': 'Exited with status 1',
+               'command': 'nixos-rebuild switch --flake /etc/nixos'}
+
+        async def log(job_id):
+            return [{'seq': 0, 'stream': 'stdout', 'message': 'error: builder failed'}]
+
+        plugin = SimpleNamespace(
+            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit: [job], log=log),
+            data=SimpleNamespace(job=lambda job_id: job if job_id == 7 else None))
+
+        @ui.page('/')
+        def _page():
+            render_job_panel(plugin, {'title': 'Jobs'})
+
+        await user.open('/')
+        user.find(ui.table).trigger('show_log', {'id': 7})
+        await user.should_see('Switch log')
+        await user.should_see('nixos-rebuild switch --flake /etc/nixos')
+        await user.should_see('Exited with status 1')
+        await user.should_see('error: builder failed')
 
 
 class TestNotificationsButton:
