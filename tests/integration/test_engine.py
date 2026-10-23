@@ -416,6 +416,30 @@ class TestPerMonitorScheduling:
 
         assert calls[1:] == [30, 1800]
 
+    async def test_a_watch_mid_sleep_polls_without_moving_the_schedule(self):
+        calls = []
+        woken = iter([True, False, False])
+
+        async def fake_sleep(seconds, wake=None):
+            calls.append(seconds)
+            if len(calls) >= 4:
+                raise asyncio.CancelledError()
+            return next(woken) if wake else None
+
+        plugin = MagicMock(id="p", interval=3600, offset=None, next_cycle_in=lambda: None)
+
+        engine = object.__new__(XMonitorEngine)
+        engine.run_cycle_now = AsyncMock(return_value=True)
+        with patch("x_monitor.core.coordination.engine.asyncio.sleep", side_effect=fake_sleep), \
+                patch("x_monitor.core.coordination.engine.sleep_unless_watched", side_effect=fake_sleep):
+            with pytest.raises(asyncio.CancelledError):
+                await engine._monitor_loop(plugin)
+
+        # The woken cycle leaves the hour where it was, so the next sleep is the same hour again (the mocked clock never advances).
+        assert calls[1] == pytest.approx(3600, abs=0.5)
+        assert calls[2] == pytest.approx(calls[1], abs=0.5)
+        assert calls[3] - calls[2] == pytest.approx(3600, abs=0.5)
+
     def test_clock_slot_wraps_to_the_next_period(self):
         assert seconds_to_clock_slot(3600, 2700, 2700.0) == 0
         assert seconds_to_clock_slot(3600, 2700, 2701.0) == 3599

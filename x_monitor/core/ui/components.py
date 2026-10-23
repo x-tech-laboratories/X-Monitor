@@ -942,7 +942,7 @@ async def follow_action_job(plugin, action_id: str) -> bool:
 
 
 async def show_job_log(plugin, job_id: Optional[int]):
-    """Open a dialog with a job's command and output, following new lines until the job ends."""
+    """Open a dialog with a job's command and output, following new lines as they land until the job ends."""
     job = plugin.data.job(job_id) if job_id is not None else None
     if job is None:
         ui.notify('That job is no longer kept', type='warning')
@@ -959,8 +959,13 @@ async def show_job_log(plugin, job_id: Optional[int]):
         with footer:
             action_button('Close', on_click=dialog.close, icon=None)
     shown = [-1]
+    following = [True]
+    # While the dialog is open the job is polled every few seconds, so new lines arrive soon after they are written.
+    unwatch = plugin.jobs.watch(job) if job['state'] == 'running' else (lambda: None)
 
     async def refresh():
+        if not following[0]:
+            return
         current = plugin.data.job(job_id) or job
         lines = await plugin.jobs.log(job_id)
         for line in lines:
@@ -972,11 +977,18 @@ async def show_job_log(plugin, job_id: Optional[int]):
         error.text = current.get('error') or ''
         error.set_visibility(bool(current.get('error')))
         if current['state'] != 'running':
-            follow.deactivate()
+            following[0] = False
+            unwatch()
 
-    with dialog:
-        follow = ui.timer(2.0, refresh)
-    dialog.on_value_change(lambda e: dialog.delete() if not e.value else None)
+    def closed():
+        unwatch()
+        dialog.delete()
+
+    with body:
+        # Each write to the store wakes this, so a polled line shows at once.
+        on_data_event(refresh)
+    context.client.on_disconnect(unwatch)
+    dialog.on_value_change(lambda e: closed() if not e.value else None)
     dialog.open()
 
 
