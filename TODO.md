@@ -8,6 +8,13 @@
 - [x] Add X-Monitor to the website's projects and home pages, and rescore readiness.
 - [x] Update TechNet: flake input `github:x-tech-laboratories/X-Monitor`, `services.x-monitor*` options, hard-coded `vigil`/`vigil-agent` users and sudo rules, persisted `/var/lib/vigil`, and move the old database across.
 
+# TODO — Chart follow-ups
+
+- [ ] Count erroring feeds in FreshRSS. Its Fever API has no per-feed error field, so the freshness share shows fresh and stale only; find another endpoint that reports feed errors.
+- [ ] Count Syncthing conflicts per folder. `/rest/db/status` does not report them, so folder tiles show pull-error counts; conflicts need another request per folder.
+- [ ] Draw uptime strips over a fixed span (say 24 hours) rather than the last 60 readings, which needs a status-history query against the database.
+- [ ] Add the mockup's 30-day backup calendar to the overview: one cell per day per borg repository, from archive history kept beyond the in-memory buffer.
+
 # TODO — Feature gaps vs LNXlink and Valent
 
 Gap analysis of X-Monitor's 45 plugins against two adjacent Linux projects, 2026-08-11.
