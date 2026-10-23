@@ -186,6 +186,30 @@ class TestMonitorDiff:
         assert harness.monitor('two').children == [a]
         assert engine.monitors_version == version + 1
 
+    async def test_a_link_points_at_the_kept_instance_after_a_reload(self, harness):
+        hosts = {'name': 'hosts', 'id': 'hosts', 'type': 'group', 'children': [_probe('a')]}
+        domains = {'name': 'domains', 'id': 'domains', 'type': 'group',
+                   'children': [{'ref': 'a', 'name': 'web'}]}
+        engine = await harness.start([hosts, domains])
+        a = harness.monitor('a')
+        assert harness.monitor('domains').children == [a]
+        result = await harness.reload([hosts, domains, _probe('b')])
+        assert result.added == ['b'] and result.changed == []
+        assert harness.monitor('domains').children == [a]
+        assert harness.monitor('domains').links == {'a': 'web'}
+        assert [p.id for p in engine.all_monitors()].count('a') == 1
+
+    async def test_a_changed_link_label_counts_as_a_tree_change(self, harness):
+        hosts = {'name': 'hosts', 'id': 'hosts', 'type': 'group', 'children': [_probe('a')]}
+        domains = {'name': 'domains', 'id': 'domains', 'type': 'group',
+                   'children': [{'ref': 'a', 'name': 'web'}]}
+        engine = await harness.start([hosts, domains])
+        version = engine.monitors_version
+        domains['children'] = [{'ref': 'a', 'name': 'site'}]
+        await harness.reload([hosts, domains])
+        assert harness.monitor('domains').links == {'a': 'site'}
+        assert engine.monitors_version == version + 1
+
     async def test_ssh_defaults_decide_what_changed(self, harness):
         engine = await harness.start([_ssh('a', 'h1'), _probe('b')], ssh_defaults={'username': 'one'})
         result = await harness.reload([_ssh('a', 'h1'), _probe('b')], ssh_defaults={'username': 'two'})
