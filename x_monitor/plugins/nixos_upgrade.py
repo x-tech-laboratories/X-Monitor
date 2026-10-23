@@ -5,11 +5,16 @@ script); every `eval_interval` it additionally evaluates
 `<flake>#nixosConfigurations.<host>.config.system.build.toplevel` and reads
 `nix flake metadata`, so drift is a comparison of two store paths rather than
 a guess from revisions, and the flake's own revision and input ages are
-tracked alongside it. A failed evaluation is retried after `retry_interval`
-rather than held for the full `eval_interval`, and a dashboard poll always
-evaluates. An unreachable or non-NixOS target, unreadable flake metadata,
-or an evaluation that never ran is unavailable; an evaluation that ran and
-errored is failed. `eval_agent` runs the two expensive commands on another agent's
+tracked alongside it. The evaluation runs as one detached job, so an X-Monitor
+restart or redeploy never kills it: later cycles keep probing, poll the job
+every `job_poll` and judge drift against the stored evaluation until it
+finishes, and `eval_timeout` bounds the whole run. Each evaluation is kept
+with its output but left out of the jobs panel's history. A failed evaluation is
+retried after `retry_interval` rather than held for the full `eval_interval`,
+and a dashboard poll evaluates unless an evaluation is already running. An
+unreachable or non-NixOS target, unreadable flake metadata, or an evaluation
+that never reached its host is unavailable; an evaluation that ran and errored,
+or ended without reporting, is failed. `eval_agent` runs the evaluation on another agent's
 host, for a target too small to evaluate its own flake, and `build_host` sends the
 switch's own compilation to a host that can do it. `build_agent` runs the build job
 on another agent's host, so one host can warm the cache for every other, and `build_root_dir` keeps
@@ -26,7 +31,7 @@ only when the flake changed after the running generation was made. `update_at` a
 `build_at` launch the update and the build once a day at a local time of day; a slot
 missed while X-Monitor was down runs once when it returns, and a restart never repeats one. Config:
 flake, configuration, eval_agent, eval_interval, retry_interval, eval_timeout,
-max_input_age, drift_status, reboot_status, require_sudo, nix_bin,
+job_poll, max_input_age, drift_status, reboot_status, require_sudo, nix_bin,
 rebuild_bin, nix_args, rebuild_args, build_host, build_agent, build_root_dir, switch_agent, target_host,
 auto_switch, auto_switch_after, update_at, build_at,
 switch_wrapper, post_switch, push_ssh_key, commit_author,
@@ -41,6 +46,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.plugins.base.nixos_boot import boot_parts_script, reboot_required as nixos_reboot_required
 from x_monitor.core.connectors import ssh_connector as detached
+from x_monitor.core.coordination.jobs import action_id_of
 from x_monitor.core.connectors.types import (
     ActionPlan, CmdResult, Command, CollectResult, Status,
 )
@@ -62,6 +68,18 @@ _DEFAULT_LAYOUT = [
 _STATE_METRIC = 'flake_eval_epoch'
 
 _LOCAL_SCHEMES = ('path:', 'git+file://', 'file://')
+
+# The kind the flake evaluation's detached job is recorded under.
+_EVAL_JOB_KIND = 'eval'
+
+# The two commands one evaluation runs, in the order the script runs them.
+_EVAL_PARTS = ('eval', 'metadata')
+
+# Starts a line naming the command and stream the evaluation script prints next.
+_EVAL_MARK = '@@x-monitor-eval'
+
+# The exit status `timeout` gives a run it killed.
+_TIMED_OUT = 124
 
 
 def _probe_script() -> str:
@@ -104,6 +122,49 @@ def _generation(profile_link: str) -> Optional[int]:
         return int(name[len('system-'):-len('-link')])
     except ValueError:
         return None
+
+
+def _eval_script(commands: Dict[str, str], workdir: str) -> str:
+    """Run each command in turn into files in `workdir`, then print every
+    command's stdout, stderr and exit status after a marker line, so the
+    finished output splits back into one result per command."""
+    # workdir_for() names only safe characters under $HOME, so double quotes suffice.
+    lines = [f'w="{workdir}"']
+    for name, command in commands.items():
+        lines.append(f'{command} > "$w/{name}.stdout" 2> "$w/{name}.stderr"; '
+                     f'echo $? > "$w/{name}.exit"')
+    for name in commands:
+        for stream in ('stdout', 'stderr', 'exit'):
+            lines.append(f'echo "{_EVAL_MARK} {name} {stream}"; cat "$w/{name}.{stream}"; echo')
+    # The run fails when either command did, so its job row shows it.
+    lines.append(' && '.join(f'[ "$(cat "$w/{name}.exit")" = 0 ]' for name in commands))
+    return '\n'.join(lines)
+
+
+def _split_eval_output(output: str, missing: str) -> Dict[str, CmdResult]:
+    """Split a finished evaluation's output back into one result per command;
+    a command the run never reported on gets a failed result saying `missing`."""
+    sections: Dict[Tuple[str, str], List[str]] = {}
+    current = None
+    for line in output.split('\n'):
+        mark, _, rest = line.partition(' ')
+        if mark == _EVAL_MARK:
+            current = tuple(rest.split(' ', 1))
+            sections[current] = []
+        elif current is not None:
+            sections[current].append(line)
+
+    def text(name: str, stream: str) -> str:
+        return '\n'.join(sections.get((name, stream), [])).strip()
+
+    results = {}
+    for name in _EVAL_PARTS:
+        code = text(name, 'exit')
+        if not code.lstrip('-').isdigit():
+            results[name] = CmdResult(1, '', missing)
+            continue
+        results[name] = CmdResult(int(code), text(name, 'stdout'), text(name, 'stderr'))
+    return results
 
 
 def _decode_json(raw: str) -> Dict[str, Any]:
@@ -176,6 +237,9 @@ def _oldest_input(locks: Dict[str, Any]) -> Tuple[Optional[str], Optional[int]]:
 
 
 class NixosUpgrade(Plugin):
+    # The evaluation runs beside a build, switch or update, and never blocks their buttons.
+    SIDE_JOB_KINDS = (_EVAL_JOB_KIND,)
+
     def __init__(self, name: str, config):
         super().__init__(name, config)
         self.flake = str(config.get('flake', '/etc/nixos'))
@@ -185,6 +249,9 @@ class NixosUpgrade(Plugin):
         self.retry_interval = min(parse_duration(config.get('retry_interval', '15m')),
                                   self.eval_interval)
         self.eval_timeout = parse_duration(config.get('eval_timeout', '10m'))
+        self.job_poll_interval = parse_duration(config.get('job_poll', '30s'))
+        # One fixed directory per monitor, so finished evaluations never pile up on the eval host.
+        self.eval_workdir = detached.workdir_for(f'nixos_upgrade-{self.id}-eval')
         self.max_input_age = (
             parse_duration(config['max_input_age'])
             if config.get('max_input_age') is not None else None
@@ -218,6 +285,9 @@ class NixosUpgrade(Plugin):
         self._force_eval = False
         self._pending_launch = None
         self._polling_job = None
+        # The evaluation the current cycle launched (its command) or polled (its job row).
+        self._eval_launch = None
+        self._eval_polling = None
         # The target an automatic switch is due for, and the launch the current cycle sent for it.
         self._auto_switch_due = None
         self._auto_launch = None
@@ -323,27 +393,51 @@ class NixosUpgrade(Plugin):
             return [Command(detached.launch_command(command, workdir), agent=self._agent_for(kind))]
 
         commands = [Command(_probe_script())]
+        self._eval_launch = self._eval_polling = None
+        eval_job = self._running_eval()
+        if eval_job is not None:
+            self._eval_polling = eval_job
+            # Every poll reads the whole output, since the finished evaluation is parsed from all of it.
+            commands.append(Command(detached.poll_command(eval_job['workdir'], eval_job['pid'], 0),
+                                    agent=self.job_agent(eval_job)))
         # An offloaded evaluation needs the target's attribute name, which the first probe supplies.
-        if self._due_for_eval() and not (self.eval_agent and self._attribute() is None):
-            nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
-            refresh = ' '.join(self._refresh_args())
-            commands.append(Command(
-                ' '.join(filter(None, [nix, 'eval --raw --no-write-lock-file', refresh,
-                                       self._installable()])),
-                timeout=self.eval_timeout, agent=self.eval_agent,
-            ))
-            commands.append(Command(
-                ' '.join(filter(None, [nix, 'flake metadata --json --no-write-lock-file',
-                                       refresh, shlex.quote(self.flake)])),
-                timeout=self.eval_timeout, agent=self.eval_agent,
-            ))
+        elif self._due_for_eval() and not (self.eval_agent and self._attribute() is None):
+            self._eval_launch = self._eval_command()
+            commands.append(Command(detached.launch_command(self._eval_launch, self.eval_workdir),
+                                    agent=self.eval_agent))
         return commands
+
+    def _eval_script(self) -> str:
+        """The script one evaluation runs: `nix eval` of the toplevel, then `nix flake metadata`."""
+        nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
+        refresh = ' '.join(self._refresh_args())
+        return _eval_script({
+            'eval': ' '.join(filter(None, [nix, 'eval --raw --no-write-lock-file', refresh,
+                                           self._installable()])),
+            'metadata': ' '.join(filter(None, [nix, 'flake metadata --json --no-write-lock-file',
+                                               refresh, shlex.quote(self.flake)])),
+        }, self.eval_workdir)
+
+    def _eval_command(self) -> str:
+        """The evaluation script under `timeout`, which kills it once it takes longer than eval_timeout."""
+        return f'timeout {int(self.eval_timeout)} sh -c {shlex.quote(self._eval_script())}'
+
+    def _running_eval(self) -> Optional[dict]:
+        """The running evaluation job, if one was launched and recorded with its pid."""
+        job = self.jobs.running_side(_EVAL_JOB_KIND) if self.jobs else None
+        if job and job.get('pid') and job.get('workdir'):
+            return job
+        return None
 
     def _agent_for(self, kind: str) -> Optional[str]:
         """The agent a job of this kind launches on: the build may run apart from the switch and update."""
         return self.build_agent if kind == 'build' else self.switch_agent
 
     def job_agent(self, job: dict) -> Optional[str]:
+        if action_id_of(job.get('kind') or '') is not None:
+            return super().job_agent(job)
+        if job.get('kind') == _EVAL_JOB_KIND:
+            return self.eval_agent
         return self._agent_for(job.get('kind'))
 
     def _running_job(self) -> Optional[dict]:
@@ -383,8 +477,9 @@ class NixosUpgrade(Plugin):
         return time.time() - float(evaluated) >= wait
 
     async def run_cycle(self) -> bool:
-        """A dashboard poll is an explicit ask, so it evaluates instead of only re-reading the cached result."""
-        self._force_eval = True
+        """A dashboard poll is an explicit ask, so it evaluates unless an evaluation is already running."""
+        if self._running_eval() is None:
+            self._force_eval = True
         return await super().run_cycle()
 
     def parse(self, results: List[CmdResult]) -> CollectResult:
@@ -398,30 +493,94 @@ class NixosUpgrade(Plugin):
         if scheduled is not None:
             return self._parse_scheduled_launch(scheduled, results[0])
 
+        eval_launch, self._eval_launch = self._eval_launch, None
+        eval_job, self._eval_polling = self._eval_polling, None
         if not results:
             return CollectResult.unavailable('No probe result for this cycle')
 
+        # The evaluation is handled first, so a launched job is recorded even when the probe failed.
+        folded = None
+        if len(results) > 1 and eval_launch is not None:
+            folded = self._parse_eval_launch(eval_launch, results[1])
+        elif len(results) > 1 and eval_job is not None:
+            folded = self._parse_eval_poll(eval_job, results[1])
+
         probe = results[0]
         if probe.exit_code != 0 and not probe.stdout.strip():
-            return CollectResult.unavailable(
-                f"Could not read the deployed system: {(probe.stderr or probe.stdout).strip()[:200]}")
+            return self._keep_state(CollectResult.unavailable(
+                f"Could not read the deployed system: {(probe.stderr or probe.stdout).strip()[:200]}"),
+                folded)
 
         fields = _parse_probe(probe.stdout)
         current = fields.get('current')
         if not current:
-            return CollectResult.unavailable(
-                '/run/current-system is unreadable — is this a NixOS host?')
+            return self._keep_state(CollectResult.unavailable(
+                '/run/current-system is unreadable — is this a NixOS host?'), folded)
 
-        evaluated = len(results) > 2
-        state = self._eval_state(results[1], results[2]) if evaluated else self._state()
-        return self._assemble(fields, current, state, evaluated)
+        evaluated = folded is not None
+        return self._assemble(fields, current, folded if evaluated else self._state(), evaluated)
+
+    @staticmethod
+    def _keep_state(result: CollectResult, state: Optional[Dict[str, Any]]) -> CollectResult:
+        """Store an evaluation that finished on a cycle whose probe failed, so it is not lost."""
+        if state is not None:
+            result.metrics[_STATE_METRIC] = float(state.get('evaluated_epoch') or 0)
+            result.metadata[_STATE_METRIC] = json.dumps(state)
+        return result
+
+    def _parse_eval_launch(self, command: str, result: CmdResult) -> Optional[Dict[str, Any]]:
+        """Record the launched evaluation as a job, or fold a launch that failed as a failed evaluation."""
+        self._force_eval = False
+        pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
+        if pid is None:
+            # A launch whose host never answered (exit -1) is unreachable, like any other evaluation that never ran.
+            failure = CmdResult(result.exit_code or 1, '', "Could not start the evaluation: "
+                                f"{(result.stderr or result.stdout).strip()[:200]}")
+            return self._eval_state(failure, failure)
+        job_id = self.jobs.create(_EVAL_JOB_KIND, command, self.eval_workdir)
+        self.jobs.set_pid(job_id, pid)
+        return None
+
+    def _parse_eval_poll(self, job: dict, result: CmdResult) -> Optional[Dict[str, Any]]:
+        """Advance the running evaluation from one poll, returning the folded state once it finishes."""
+        job_id = job['id']
+        if result.exit_code != 0 and not result.stdout.strip():
+            # The eval host never answered, so this cycle is unreachable, but the job stays running for a later poll.
+            unreachable = CmdResult(-1, '', "Could not poll the running evaluation: "
+                                    f"{(result.stderr or '').strip()[:200] or f'exit {result.exit_code}'}")
+            return self._eval_state(unreachable, unreachable)
+        poll = detached.parse_poll(result.stdout)
+        finished = poll.exit_code is not None or not poll.alive
+
+        # output_seq counts the characters of the output already copied into the job's log.
+        fresh = poll.new_output[job['output_seq']:]
+        lines, consumed = detached.split_lines(fresh)
+        if finished and fresh[consumed:]:
+            lines.append(fresh[consumed:])
+            consumed = len(fresh)
+        if lines:
+            self.jobs.append_output(job_id, lines)
+            self.jobs.bump_output_seq(job_id, job['output_seq'] + consumed)
+        if not finished:
+            return None
+
+        if poll.exit_code is None:
+            error = 'Process ended without writing an exit code'
+            self.jobs.finish(job_id, 'failed', exit_code=-1, error=error)
+        else:
+            error = (None if poll.exit_code == 0
+                     else f"Timed out after {format_duration(self.eval_timeout)}"
+                     if poll.exit_code == _TIMED_OUT else f"Exited with status {poll.exit_code}")
+            self.jobs.finish(job_id, 'failed' if error else 'succeeded',
+                             exit_code=poll.exit_code, error=error)
+        parts = _split_eval_output(poll.new_output, f"The evaluation ended before reporting: {error or 'no output'}")
+        return self._eval_state(parts['eval'], parts['metadata'])
 
     def _eval_state(self, eval_result: CmdResult, metadata_result: CmdResult) -> Dict[str, Any]:
         """Fold this cycle's evaluation and flake metadata into the stored
         state, keeping the last known good values for whichever half failed."""
         state = dict(self._state())
         state['evaluated_epoch'] = int(time.time())
-        self._force_eval = False
 
         if eval_result.exit_code == 0 and eval_result.stdout.strip():
             state['target'] = eval_result.stdout.strip().splitlines()[-1].strip()
@@ -932,6 +1091,8 @@ class NixosUpgrade(Plugin):
                     ],
                 },
             },
-            'job_panel': {'widget': 'jobs', 'title': 'Jobs', 'history_limit': 10},
+            # The hourly evaluation would push every switch and update out of the history, so it is left out.
+            'job_panel': {'widget': 'jobs', 'title': 'Jobs', 'history_limit': 10,
+                          'exclude_kinds': [_EVAL_JOB_KIND]},
             'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }

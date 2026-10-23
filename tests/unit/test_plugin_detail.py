@@ -264,7 +264,9 @@ class _JobPlugin:
         self.message = message
         self.ran = []
         self.cancelled = False
-        self.jobs = SimpleNamespace(is_running=lambda: running, cancel=self._cancel)
+        self.action_job = None
+        self.jobs = SimpleNamespace(is_running=lambda: running, any_running=lambda: running,
+                                    action_job=lambda action_id: self.action_job, cancel=self._cancel)
 
     async def _cancel(self):
         self.cancelled = True
@@ -346,6 +348,40 @@ class TestActionState:
         assert not _all_buttons(user, 'Rebuild')[0].visible
 
 
+class TestDetachedAction:
+    async def test_starting_one_opens_its_live_log(self, user: User):
+        plugin = _JobPlugin()
+        plugin.actions = [{'name': 'Sync', 'action_id': 'custom:sync', 'detached': True}]
+        job = {'id': 9, 'started': '2026-10-23 02:30:00', 'kind': 'action:custom:sync', 'state': 'running',
+               'duration': 3, 'exit_code': None, 'error': None, 'command': 'sync-all'}
+
+        async def run_action(action_id):
+            plugin.ran.append(action_id)
+            plugin.action_job = job
+            return True, 'Sync started in the background (pid 7)'
+
+        async def log(job_id):
+            return [{'seq': 0, 'stream': 'stdout', 'message': 'copied 1'}]
+
+        plugin.run_action = run_action
+        plugin.jobs.log = log
+        plugin.all_actions = lambda: plugin.actions
+        plugin.data = SimpleNamespace(job=lambda job_id: job if job_id == 9 else None)
+        _toggle_page(plugin)
+        await user.open('/')
+        user.find(kind=ui.button, content='Sync').click()
+        await user.should_see('Sync log')
+        await user.should_see('copied 1')
+        assert plugin.ran == ['custom:sync']
+
+    async def test_shows_cancel_while_it_runs(self, user: User):
+        plugin = _JobPlugin(running=True)
+        plugin.actions = [{'name': 'Sync', 'action_id': 'custom:sync', 'detached': True}]
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('Cancel')
+
+
 class TestCancel:
     async def test_is_hidden_while_no_job_runs(self, user: User):
         _toggle_page(_JobPlugin())
@@ -373,7 +409,7 @@ class TestJobPanel:
     async def test_has_no_buttons_without_a_run_action(self, user: User):
         from x_monitor.core.ui.components import render_job_panel
         plugin = SimpleNamespace(
-            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit: []),
+            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit, exclude_kinds=(): []),
             data=SimpleNamespace(job=lambda _id: None))
 
         @ui.page('/')
@@ -394,7 +430,7 @@ class TestJobPanel:
             return [{'seq': 0, 'stream': 'stdout', 'message': 'error: builder failed'}]
 
         plugin = SimpleNamespace(
-            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit: [job], log=log),
+            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit, exclude_kinds=(): [job], log=log),
             data=SimpleNamespace(job=lambda job_id: job if job_id == 7 else None))
 
         @ui.page('/')

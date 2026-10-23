@@ -488,6 +488,8 @@ def render_buttons(plugin, button_specs: list):
                             _outcome_notice(s.get('label', s['id']), success, content),
                             type='positive' if success else 'negative',
                         )
+                    if success:
+                        await follow_action_job(plugin, s['id'])
 
             action_button(
                 spec.get('label', spec['id']), icon=spec.get('icon'),
@@ -552,6 +554,8 @@ async def open_dialog_impl(plugin, dialog_name: str, row: Optional[dict] = None)
         ok, content = await plugin.run_action(spec['action_id'], **_resolve_params(spec.get('params')))
         if not ok:
             ui.notify(content or 'Action failed', type='negative')
+            return
+        if await follow_action_job(plugin, spec['action_id']):
             return
         with ui.dialog() as dialog:
             body, footer = dialog_card(title, width='48rem')
@@ -754,6 +758,9 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
             label = action.get('tooltip', action_id).replace('_', ' ').title()
             notify_client(table.client, _outcome_notice(label, success, content),
                           type='positive' if success else 'negative')
+        # A failed or inline action leaves no running job, so this opens nothing for one.
+        with table.client:
+            await follow_action_job(plugin, action_id)
 
     for action in row_actions:
         table.on(action['id'], lambda e, a=action: asyncio.create_task(_handle_action(e, a)))
@@ -899,7 +906,8 @@ def render_job_panel(plugin, spec: dict):
                     'state': j['state'], 'duration': format_duration(j['duration']),
                     'duration_seconds': j['duration'],
                 }
-                for j in plugin.jobs.recent(limit=history_limit)
+                for j in plugin.jobs.recent(limit=history_limit,
+                                            exclude_kinds=spec.get('exclude_kinds', ()))
             ])
 
         on_data_event(update)
@@ -915,6 +923,24 @@ def _job_summary(job: dict) -> str:
     return ' · '.join(parts)
 
 
+def _job_title(plugin, job: dict) -> str:
+    """A job's name in its log dialog: the action's name for a detached action, else its kind."""
+    from x_monitor.core.coordination.action_jobs import action_label
+    from x_monitor.core.coordination.jobs import action_id_of
+    action_id = action_id_of(job['kind'])
+    return action_label(plugin, action_id) if action_id is not None else job['kind'].capitalize()
+
+
+async def follow_action_job(plugin, action_id: str) -> bool:
+    """Open the live log of this action's detached run when one is going, returning whether one was."""
+    jobs = getattr(plugin, 'jobs', None)
+    job = jobs.action_job(action_id) if jobs is not None else None
+    if job is None:
+        return False
+    await show_job_log(plugin, job['id'])
+    return True
+
+
 async def show_job_log(plugin, job_id: Optional[int]):
     """Open a dialog with a job's command and output, following new lines until the job ends."""
     job = plugin.data.job(job_id) if job_id is not None else None
@@ -922,7 +948,7 @@ async def show_job_log(plugin, job_id: Optional[int]):
         ui.notify('That job is no longer kept', type='warning')
         return
     with ui.dialog() as dialog:
-        body, footer = dialog_card(f"{job['kind'].capitalize()} log", width='64rem')
+        body, footer = dialog_card(f"{_job_title(plugin, job)} log", width='64rem')
         with body:
             summary = ui.label(_job_summary(job)).classes('halon-caption')
             ui.label(job['command']).classes('font-mono halon-caption halon-job-command')

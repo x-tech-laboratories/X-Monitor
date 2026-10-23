@@ -5,7 +5,21 @@ state, not a live coroutine, so everything here is DB reads and writes plus
 (for cancel) one ordinary SSH command on the host the job runs on."""
 
 import asyncio
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, List, Optional, Sequence
+
+
+# Prefix of the kind an action launched as a detached job is recorded under, followed by the action's id.
+ACTION_JOB_PREFIX = 'action:'
+
+
+def action_job_kind(action_id: str) -> str:
+    """The job kind a detached run of this action is recorded under."""
+    return ACTION_JOB_PREFIX + action_id
+
+
+def action_id_of(kind: str) -> Optional[str]:
+    """The action id a job kind names, or None when the job is not a detached action."""
+    return kind[len(ACTION_JOB_PREFIX):] if kind.startswith(ACTION_JOB_PREFIX) else None
 
 
 class JobsGateway:
@@ -18,34 +32,57 @@ class JobsGateway:
         self._plugin = plugin
         self._cancel_exec = cancel_exec
 
+    def _is_side(self, kind: str) -> bool:
+        """Whether a job of this kind runs beside the plugin's main job: a detached action, or a kind the plugin names."""
+        return action_id_of(kind) is not None or kind in getattr(self._plugin, 'SIDE_JOB_KINDS', ())
+
     def running(self) -> Optional[dict]:
-        """Return the plugin's currently running job row, if any."""
-        jobs = self._db.running_jobs(plugin_id=self._plugin.id)
+        """Return the plugin's currently running main job row, if any; side jobs never count."""
+        jobs = [job for job in self._db.running_jobs(plugin_id=self._plugin.id) if not self._is_side(job['kind'])]
         return jobs[0] if jobs else None
 
+    def running_side(self, kind: str) -> Optional[dict]:
+        """Return the plugin's running job of this side kind, if any."""
+        jobs = [job for job in self._db.running_jobs(plugin_id=self._plugin.id) if job['kind'] == kind]
+        return jobs[0] if jobs else None
+
+    def action_job(self, action_id: str) -> Optional[dict]:
+        """Return the running detached run of this action, if any."""
+        return self.running_side(action_job_kind(action_id))
+
+    def action_jobs(self) -> List[dict]:
+        """Return every running detached action of this plugin, newest first."""
+        return [job for job in self._db.running_jobs(plugin_id=self._plugin.id)
+                if action_id_of(job['kind']) is not None]
+
     def is_running(self) -> bool:
-        """Whether the plugin has a running job."""
+        """Whether the plugin has a running main job."""
         return self.running() is not None
+
+    def any_running(self) -> bool:
+        """Whether the plugin has a main job or a detached action running, either of which Cancel can stop."""
+        return self.running() is not None or bool(self.action_jobs())
 
     def current_id(self) -> Optional[int]:
         """Return the running job's id, if any."""
         job = self.running()
         return job['id'] if job else None
 
-    def recent(self, limit: int = 20) -> list:
-        """Return the plugin's most recent job rows."""
-        return self._db.recent_jobs(plugin_id=self._plugin.id, limit=limit)
+    def recent(self, limit: int = 20, exclude_kinds: Sequence[str] = ()) -> list:
+        """Return the plugin's most recent job rows, leaving out any of the excluded kinds."""
+        return self._db.recent_jobs(plugin_id=self._plugin.id, limit=limit, exclude_kinds=exclude_kinds)
 
     async def log(self, job_id: int) -> list:
         """Return a job's whole output, read from disk once the job has finished."""
         return await asyncio.wrap_future(self._db.job_log(job_id))
 
     async def cancel(self) -> bool:
-        """Kill the plugin's running detached job on the target (one ordinary
-        SSH command) and mark it cancelled. The plugin's next poll would also
-        observe the death, but cancelling eagerly gives immediate feedback."""
+        """Kill the plugin's running main job, else its newest detached action,
+        on the target (one ordinary SSH command) and mark it cancelled. The
+        next poll would also observe the death, but cancelling eagerly gives
+        immediate feedback."""
         from x_monitor.core.connectors.ssh_connector import cancel_command
-        job = self.running()
+        job = self.running() or next(iter(self.action_jobs()), None)
         if not job or not job.get('pid'):
             return False
         if self._cancel_exec is not None:

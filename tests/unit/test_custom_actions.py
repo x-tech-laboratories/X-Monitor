@@ -38,6 +38,15 @@ class TestParseCustomActions:
                                           'more': True}])
         assert action.button()['more'] is True
 
+    def test_detached_runs_it_as_a_followed_job(self):
+        [action] = parse_custom_actions([{'name': 'Sync', 'command': 'sync-all', 'detached': True, 'timeout': '1h'}])
+        assert action.plan() == ActionPlan('sync-all', timeout=3600, detached=True)
+        assert action.button()['detached'] is True
+
+    def test_an_action_runs_inline_by_default(self):
+        [action] = parse_custom_actions([{'name': 'Sync', 'command': 'sync-all'}])
+        assert not action.plan().detached and 'detached' not in action.button()
+
     def test_a_button_is_on_its_own_by_default(self):
         [action] = parse_custom_actions([{'name': 'Rotate Logs', 'command': 'true'}])
         assert 'more' not in action.button()

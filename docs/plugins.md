@@ -215,8 +215,11 @@ Every monitor, whatever its type, accepts an `actions` list of your own commands
 | `more`    | Puts the action in the header's More menu instead of on a button of its own (default: `false`) |
 | `timeout` | How long the command may run, as seconds or a duration such as `2m` |
 | `agent`   | Run on this agent instead of the monitor's own host |
+| `detached` | Run it as a detached job, so restarting X-Monitor never kills it (default: `false`) |
 
 The command runs where the monitor's own commands run: over its agent, or over SSH to its host. It succeeds on exit code 0, and each run is logged on the monitor with the start of its output, or of its error when it fails. Custom ids start with `custom:`, so they never clash with the plugin's own actions, and [`schedule`](#scheduled-actions) and [`triggers`](#triggered-actions) can run them like any other action.
+
+A `detached` action is for a command that runs for minutes or longer. It starts in the background on its host, and X-Monitor polls it every few seconds until it ends. Clicking it opens its live log, the button stays filled while it runs, and **Cancel** in the header stops it. A restarted X-Monitor goes on polling a run that was already going. Its outcome is logged as it would be for a command that ran inline, and `timeout` then limits the whole run.
 
 ---
 
@@ -561,9 +564,11 @@ Tracks a NixOS host against the flake it is deployed from: whether the running s
 
 Drift is a comparison of two store paths — `readlink -f /run/current-system` against what `nix eval` says `…config.system.build.toplevel` is — so it is exact rather than inferred from a `configurationRevision` that a config may never set.
 
-Two cadences share one monitor. Every `interval` it runs one cheap script (`readlink`, `stat`, `nixos-version`) and re-checks drift against the last evaluation, so a completed switch clears the flag on the next cycle. Every `eval_interval` it additionally runs `nix eval` and `nix flake metadata` — the expensive half. The last evaluation is stored with the monitor, so a X-Monitor restart resumes that schedule instead of re-evaluating. A failed evaluation is not held for the whole `eval_interval`: it is retried after `retry_interval`, so a fixed flake or a restored network clears the error promptly. A poll from the dashboard always runs the full evaluation. When the running closure changes between evaluations — a deploy landed — the monitor re-evaluates before judging drift, so a system that is *newer* than the stored target is not reported as out of date.
+Two cadences share one monitor. Every `interval` it runs one cheap script (`readlink`, `stat`, `nixos-version`) and re-checks drift against the last evaluation, so a completed switch clears the flag on the next cycle. Every `eval_interval` it additionally runs `nix eval` and `nix flake metadata` — the expensive half. The last evaluation is stored with the monitor, so a X-Monitor restart resumes that schedule instead of re-evaluating. A failed evaluation is not held for the whole `eval_interval`: it is retried after `retry_interval`, so a fixed flake or a restored network clears the error promptly. A poll from the dashboard runs the full evaluation, unless one is already running.
 
-Both actions launch a **detached** job on the target, polled to completion by this monitor's own cycle (see [Job control](develop.md#job-control)), so a `nixos-rebuild switch` survives a dropped SSH connection and a X-Monitor restart. Keep `interval` at a few minutes if you want a running job's output to advance at that rate. Every update, build, switch and reboot is listed in the **Jobs** table, a launch that failed included, and its Log button opens the command and its output, following new lines while the job runs.
+The evaluation runs as one detached job on the evaluating host, so restarting or redeploying X-Monitor never kills an evaluation in flight; the restarted monitor adopts the running job and keeps polling it. While it runs, every cycle still runs the probe and judges drift against the stored evaluation, and the monitor polls every `job_poll` rather than every `interval`. When it finishes, its result replaces the stored one. `eval_timeout` bounds the whole run. An evaluation never blocks an action, and while a build, switch or update runs it is polled only once that job has ended. Each evaluation is kept in the job history with its output, but left out of the **Jobs** table so the hourly runs never push out the actions. When the running closure changes between evaluations — a deploy landed — the monitor re-evaluates before judging drift, so a system that is *newer* than the stored target is not reported as out of date.
+
+Both actions launch a **detached** job on the target, polled to completion by this monitor's own cycle (see [Job control](develop.md#job-control)), so a `nixos-rebuild switch` survives a dropped SSH connection and a X-Monitor restart. A running job is polled every `job_poll`. Every update, build, switch and reboot is listed in the **Jobs** table, a launch that failed included, and its Log button opens the command and its output, following new lines while the job runs.
 
 | Option | Description |
 |--------|-------------|
@@ -572,7 +577,8 @@ Both actions launch a **detached** job on the target, polled to completion by th
 | `eval_agent` | Run `nix eval` and `nix flake metadata` on this agent's host instead of the target (default: unset, evaluate on the target). For a target too small to evaluate its own flake — a 2 GB SBC will swap itself to death doing it. The probe and both actions still run on the target |
 | `eval_interval` | How often to evaluate the flake and read its metadata (default: `1h`) |
 | `retry_interval` | How soon to re-evaluate after a failed evaluation (default: `15m`, never longer than `eval_interval`) |
-| `eval_timeout` | Timeout for those two commands (default: `10m`) — a cold evaluation of a large config is not fast |
+| `eval_timeout` | Time an evaluation may take before it is killed (default: `10m`) — a cold evaluation of a large config is not fast |
+| `job_poll` | How often a running evaluation or job is polled (default: `30s`) |
 | `max_input_age` | Warn once the oldest locked input is older than this (default: unset, never warns) |
 | `drift_status` | Status when the system is out of date: `warning` (default) or `failed` |
 | `reboot_status` | Status when a reboot is pending: `warning` (default), `failed`, or `online` to ignore it |
@@ -603,7 +609,7 @@ Both actions launch a **detached** job on the target, polled to completion by th
 
 Reboot runs on the target itself, never on `switch_agent`, and is refused while a job is running so it cannot cut a switch short.
 
-**Status**: `failed` when the flake evaluates and errors — a config that no longer builds is a real failure, and the error is logged; `drift_status` when the two closures differ; `reboot_status` when the booted `initrd`/`kernel`/`kernel-modules`/`systemd` are not the current ones; `warning` when the oldest locked input exceeds `max_input_age`; `unavailable` when the target is unreachable, `/run/current-system` cannot be read, `nix flake metadata` fails, or the evaluation host never answered.
+**Status**: `failed` when the flake evaluates and errors — a config that no longer builds is a real failure, and the error is logged; `drift_status` when the two closures differ; `reboot_status` when the booted `initrd`/`kernel`/`kernel-modules`/`systemd` are not the current ones; `warning` when the oldest locked input exceeds `max_input_age`; `unavailable` when the target is unreachable, `/run/current-system` cannot be read, `nix flake metadata` fails, or the evaluation host never answered. An evaluation that timed out or ended without reporting counts as one that errored.
 
 With `auto_switch`, drift that has lasted `auto_switch_after` launches the same job the button does, and the job panel shows it. Each target closure gets one attempt: a switch that fails, or succeeds without converging, is not repeated until the flake evaluates to something new. It never runs off a failed evaluation, and it never runs when the running generation was created after the flake last changed, because that system came from somewhere else (an unpushed checkout, a local test build) and switching would roll it back. That case still reports drift.
 
@@ -748,6 +754,8 @@ What a host exposes to the network and whether any of it is known to be vulnerab
 
 The scan runs on the monitor's agent or SSH host and is pointed at `scan_host`, which is deliberately a different machine. The monitor is labelled with `scan_host`, since that is the host it is about, and a card names where the scan ran from. A host scanning itself goes over loopback, which its firewall trusts, so it reports every listening socket rather than what a peer can actually reach. Scan a host from somewhere else on the network, and pick the vantage point that matters — the LAN, or the VPN the host is reached through.
 
+The scan runs as a detached job on the scanning host, so restarting or redeploying X-Monitor never kills a scan in flight; the restarted monitor adopts the running job and keeps polling it there. A cycle with no job running launches the scan, and while it runs the monitor polls it every `job_poll` rather than every `interval`, keeping the previous snapshot and status on the dashboard. When it finishes, its whole XML output becomes the new snapshot. Each run, its progress and its output are listed under **Scan runs**.
+
 Each finding is graded, and the monitor takes the worst grade:
 
 - **Vulnerable** (`failed`): a script's vulns-library table with a `VULNERABLE`, `VULNERABLE (Exploitable)` or `VULNERABLE (DoS)` state, or a plain-text result that says `VULNERABLE` outright.
@@ -756,7 +764,7 @@ Each finding is graded, and the monitor takes the worst grade:
 
 The `vulners` script (part of the `vuln` category, and needs the scanning host to reach vulners.com) matches detected versions against a CVE database rather than testing anything, so its advisories are graded by CVSS score instead: `threshold_cvss` and above fails, `warning_cvss` and above warns, anything lower is noted. Version matching is loose — a distribution that backports fixes keeps the old version string — so set these to what you are willing to investigate.
 
-A host that does not answer on the `discovery_ports` is `unavailable` rather than clean, and so is a scan that overruns `timeout` or a scanning host with no `nmap`. Nothing here needs root: an unprivileged nmap uses connect scans and a TCP probe for discovery, which is all the `vuln` scripts need. `require_sudo` is there for a scan that wants SYN scanning or OS detection via `nmap_args`.
+A host that does not answer on the `discovery_ports` is `unavailable` rather than clean, and so is a scan that overruns `timeout`, one that could not start, or a scanning host with no `nmap`. Nothing here needs root: an unprivileged nmap uses connect scans and a TCP probe for discovery, which is all the `vuln` scripts need. `require_sudo` is there for a scan that wants SYN scanning or OS detection via `nmap_args`.
 
 | Option | Description |
 |--------|-------------|
@@ -772,12 +780,13 @@ A host that does not answer on the `discovery_ports` is `unavailable` rather tha
 | `max_findings` | Rows kept in the findings table; the counts are always complete (default: `200`) |
 | `require_sudo` | Prefix the scan with `sudo -n` (default: `false`) |
 | `nmap_bin` | Binary to run (default: `nmap`) |
-| `timeout` | Deadline for the whole scan (default: `20m`) |
+| `timeout` | Time a scan may take before it is killed (default: `20m`) |
+| `job_poll` | How often a running scan is polled, and how often nmap reports its progress (default: `30s`) |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
 
 **Metrics**: `vulnerable`, `suspected`, `noted`, `open_ports`, `scan_seconds`, `host_up` (1/0), `last_scan_epoch`
 
-**Status**: `failed` on any vulnerable finding; `warning` on a likely one (`likely_status`) or a `vulners` advisory at `warning_cvss`; `unavailable` when the host did not answer discovery, the scan did not finish in `timeout`, or nmap could not run.
+**Status**: `failed` on any vulnerable finding; `warning` on a likely one (`likely_status`) or a `vulners` advisory at `warning_cvss`; `unavailable` when the host did not answer discovery, the scan did not finish in `timeout`, it could not start, or nmap could not run.
 
 > A full `-sV --script vuln` sweep of the top 1000 ports takes a few minutes per host and probes every service it finds, so give it a long `interval` (daily is plenty) and a `timeout` to match. The scanning host needs `nmap` on the agent's PATH.
 
@@ -1442,7 +1451,7 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 
 **Restoring** always extracts into a new folder under `restore_dir`, named after the archive and the time, and never over live files. It runs as a detached job, listed under Jobs with its progress. The archive table's restore button does the same for a path you type.
 
-**Maintenance.** Check, Compact and Prune run as detached jobs, one job at a time per monitor (see [Job control](develop.md#job-control)). Prune applies the `keep_*` policy for real, so use Prune Preview first to see what it would drop. Compact is what actually frees the space afterwards (borg 1.2 or later). An archive row can show what changed since the previous archive (`borg diff`), or delete the archive. **Prune, delete and Break Lock are off unless `allow_delete: true`**, and each one asks for confirmation.
+**Maintenance.** Check, Compact and Prune run as detached jobs, one job at a time per monitor (see [Job control](develop.md#job-control)). Prune applies the `keep_*` policy for real, so use Prune Preview first to see what it would drop. Compact is what actually frees the space afterwards (borg 1.2 or later). An archive row can show what changed since the previous archive (`borg diff`), or delete the archive. Changes and Verify Restore run as detached actions beside any job, so a restart never cuts them short: each opens its live log, and its result is logged as an event when it ends. **Prune, delete and Break Lock are off unless `allow_delete: true`**, and each one asks for confirmation.
 
 **Running backups on a schedule.** With a `schedule` (see [Scheduled actions](#scheduled-actions)) this monitor can take over from borgmatic or Vorta. `prune_after_backup` and `compact_after_backup` make each real backup prune by the `keep_*` policy and then compact, the way borgmatic runs `create prune compact`; each step runs only while the ones before it succeeded or ended with a borg warning, and the job exits with the worst status. A dry run never prunes.
 
@@ -1534,7 +1543,7 @@ Monitors Docker or Podman containers over SSH via `<runtime> ps -a`, counting ru
 
 For safety, the restart action only ever targets containers explicitly listed in `expect_running`.
 
-**Prune.** The **Prune** button runs `<runtime> system prune -f` on the target after a confirmation that spells out what it deletes: every stopped container, unused networks, dangling images and the build cache. `prune_all_images: true` adds `-a` (every image no container uses) and `prune_volumes: true` adds `--volumes` (every unused volume, with its data). The space reclaimed and the number of objects deleted are shown when it finishes and logged as an event; a failed prune is logged as an error event without changing the status. There is no per-container "pull and recreate": a plain `docker run` container cannot be recreated with its original options from what the runtime reports, so pull and recreate through whatever started it (compose, systemd, `podman auto-update`).
+**Prune.** The **Prune** button runs `<runtime> system prune -f` on the target after a confirmation that spells out what it deletes: every stopped container, unused networks, dangling images and the build cache. `prune_all_images: true` adds `-a` (every image no container uses) and `prune_volumes: true` adds `--volumes` (every unused volume, with its data). It runs as a detached job, so restarting X-Monitor never cuts it short, and its live log opens when it starts. The space reclaimed and the number of objects deleted are logged as an event when it finishes; a failed prune is logged as an error event without changing the status. There is no per-container "pull and recreate": a plain `docker run` container cannot be recreated with its original options from what the runtime reports, so pull and recreate through whatever started it (compose, systemd, `podman auto-update`).
 
 **Image updates.** Each cycle the target also reports every container's image reference and the RepoDigests of the image it runs (`<runtime> container inspect` / `image inspect`), so the target needs nothing beyond the runtime. Every `update_check_interval` X-Monitor itself asks each image's registry for the digest its tag points at now (a `HEAD` on `/v2/<repo>/manifests/<tag>`), and the **Update** column shows one of:
 

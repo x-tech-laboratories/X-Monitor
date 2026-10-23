@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from x_monitor.core.connectors.types import Request, Result
     from x_monitor.core.connectors.agent_protocol import StreamSpec
 
+from x_monitor.core.coordination.jobs import action_id_of
 from x_monitor.plugins.base.custom_actions import CustomAction, parse_custom_actions
 from x_monitor.plugins.base.plugin_helpers import PluginConfigMixin, parse_duration
 from x_monitor.core.connectors.ssh_connector import COLLECT_TIMEOUT as SSH_TIMEOUT
@@ -79,6 +80,10 @@ class Plugin(PluginConfigMixin, ABC):
     # when that should be sooner than `interval`; None polls a job at `interval`.
     job_poll_interval: Optional[float] = None
 
+    # Job kinds this plugin runs beside its main job, such as a check that may
+    # overlap a switch; jobs.running() never returns one, so it blocks no action.
+    SIDE_JOB_KINDS: Tuple[str, ...] = ()
+
     # Suffix of the generic sample stream's id, distinct so a plugin can carry
     # other streams beside it.
     SAMPLE_STREAM = 'sample'
@@ -123,9 +128,11 @@ class Plugin(PluginConfigMixin, ABC):
 
         Default: `job_poll_interval` while one of this plugin's jobs runs, so a
         job finishing minutes into a long interval is seen within seconds."""
-        if self.job_poll_interval is None or not (self.jobs and self.jobs.is_running()):
+        if self.job_poll_interval is None or not self.jobs:
             return None
-        return self.job_poll_interval
+        if self.jobs.is_running() or any(self.jobs.running_side(kind) for kind in self.SIDE_JOB_KINDS):
+            return self.job_poll_interval
+        return None
 
     def requests(self) -> List["Request"]:
         """Declare this cycle's IO as a heterogeneous list of connector
@@ -233,6 +240,8 @@ class Plugin(PluginConfigMixin, ABC):
 
     def action_state(self, action: ActionButtonSpec) -> str:
         """How the header shows an action now: 'accent' while its job runs, 'disabled' while another job runs, else 'normal'; a subclass may also answer 'hidden'."""
+        if action.get('detached') and self.jobs:
+            return 'accent' if self.jobs.action_job(action['action_id']) else 'normal'
         job = self.jobs.running() if self.jobs and action.get('job') else None
         if job is None:
             return 'normal'
@@ -258,7 +267,8 @@ class Plugin(PluginConfigMixin, ABC):
 
     def job_agent(self, job: dict) -> Optional[str]:
         """The agent a launched detached job runs on, when it is not the monitor's own target, so a cancel reaches it."""
-        return None
+        custom = self.custom_action(action_id_of(job.get('kind') or '') or '')
+        return custom.agent if custom is not None else None
 
     def interpret_action(self, action_id: str, result: Any, **kwargs) -> ActionOutcome:
         """Pure: given the action's result (a CmdResult for SSH, an

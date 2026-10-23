@@ -101,32 +101,53 @@ def plugin(make_plugin):
     return make_plugin(VulnScan, BASE_CFG)
 
 
-def _collect(plugin, result):
+def _poll(out, exit_code=None, alive=True):
+    """The raw stdout one poll of the detached scan produces on the scanning host."""
+    return CmdResult(0, (
+        f"===XMONITOR_SIZE===\n{len(out)}\n"
+        f"===XMONITOR_EXIT===\n{exit_code if exit_code is not None else ''}\n"
+        f"===XMONITOR_ALIVE===\n{1 if alive else 0}\n"
+        f"===XMONITOR_OUT===\n{out}"
+    ), "")
+
+
+def _cycle(plugin, result):
+    """One cycle whose command answers with this result."""
     plugin.commands()
     parsed = plugin.parse([result])
     plugin.storage.apply(parsed)
     return parsed
 
 
+def _launch(plugin, pid=4242):
+    """One cycle with no job running: it launches the scan and records its pid."""
+    return _cycle(plugin, CmdResult(0, f"{pid}\n", ""))
+
+
+def _collect(plugin, result):
+    """Launch the scan, then poll it once as finished with this result's output."""
+    _launch(plugin)
+    return _cycle(plugin, _poll(result.stdout + result.stderr, result.exit_code, alive=False))
+
+
 class TestCommand:
     async def test_scan_runs_nmap_against_scan_host_under_a_deadline(self, plugin):
-        [cmd] = plugin.commands()
-        assert cmd.text.startswith("timeout -k 5 1200 nmap -n -oX - -PS22,80,443 -sV --script vuln ")
-        assert cmd.text.endswith(" web-01.example.com")
-        assert cmd.timeout == 1200 + 5 + 10
+        text = plugin._scan_command()
+        assert text.startswith("timeout -k 5 1200 nmap -n -oX - --stats-every 30s -PS22,80,443 -sV --script vuln ")
+        assert text.endswith(" web-01.example.com")
 
     async def test_options_reach_the_command_line(self, make_plugin):
         p = make_plugin(VulnScan, {**BASE_CFG, "ports": "1-1024", "scripts": "vuln and not http-slowloris-check",
                                    "script_args": "vulns.showall=1", "nmap_args": ["-T4"],
                                    "discovery_ports": [], "service_detection": False,
                                    "require_sudo": True, "timeout": "5m"})
-        [cmd] = p.commands()
-        assert cmd.text.startswith("sudo -n timeout -k 5 300 nmap -n -oX - -Pn --script ")
-        assert "'vuln and not http-slowloris-check'" in cmd.text
-        assert "--script-args vulns.showall=1" in cmd.text
-        assert "-p 1-1024" in cmd.text
-        assert "-T4 web-01.example.com" in cmd.text
-        assert "-sV" not in cmd.text
+        text = p._scan_command()
+        assert text.startswith("sudo -n timeout -k 5 300 nmap -n -oX - --stats-every 30s -Pn --script ")
+        assert "'vuln and not http-slowloris-check'" in text
+        assert "--script-args vulns.showall=1" in text
+        assert "-p 1-1024" in text
+        assert "-T4 web-01.example.com" in text
+        assert "-sV" not in text
 
     async def test_monitor_is_labelled_with_the_scanned_host(self, plugin):
         assert plugin.display_target == "web-01.example.com"
@@ -263,10 +284,15 @@ class TestFailures:
         _collect(plugin, CmdResult(124, '<?xml version="1.0"?><nmaprun><host>', ""))
         assert _latest_status() == "unavailable"
 
-    async def test_lost_reply_is_unavailable(self, plugin):
-        _collect(plugin, CmdResult(-1, "", "not connected"))
+    async def test_lost_launch_reply_is_unavailable(self, plugin):
+        _cycle(plugin, CmdResult(-1, "", "not connected"))
         assert _latest_status() == "unavailable"
         assert plugin._last_scan_color == "unavailable"
+
+    async def test_nmap_warnings_around_the_xml_are_ignored(self, plugin):
+        scan = _scan(_port(443, "https", POODLE))
+        _collect(plugin, CmdResult(0, scan.stdout, "Warning: giving up on port because retransmission cap hit\n"))
+        assert _latest_status() == "failed"
 
     async def test_last_scan_card_reads_the_scan_time(self, plugin):
         assert plugin._last_scan_text == "NEVER"
@@ -275,7 +301,113 @@ class TestFailures:
         assert plugin._last_scan_color == "online"
 
 
+class TestDetachedJob:
+    def test_is_never_sampled_on_the_agent(self):
+        assert VulnScan.SAMPLED is False
+
+    def test_a_cycle_without_a_job_launches_the_scan(self, plugin):
+        [cmd] = plugin.commands()
+        assert "setsid" in cmd.text and "vuln_scan-test-vuln-scan" in cmd.text
+        assert "timeout -k 5 1200 nmap" in cmd.text
+
+    def test_errors_are_held_back_until_the_xml_is_complete(self, plugin):
+        text = plugin._run_command()
+        assert '2>"$HOME/.cache/x_monitor/jobs/vuln_scan-test-vuln-scan/err"' in text
+        assert text.endswith('exit $status')
+
+    def test_launching_records_a_running_job(self, plugin):
+        result = _launch(plugin, pid=1234)
+        job = plugin.jobs.running()
+        assert job["kind"] == "scan" and job["pid"] == 1234
+        assert result.status is None and result.snapshot is None
+
+    def test_a_failed_launch_is_unavailable_and_records_no_job(self, plugin):
+        result = _cycle(plugin, CmdResult(-1, "", "agent offline"))
+        assert result.status == "unavailable"
+        assert plugin.jobs.running() is None
+
+    def test_a_running_job_is_polled_instead_of_relaunched(self, plugin):
+        _launch(plugin)
+        text = plugin.commands()[0].text
+        assert "kill -0 4242" in text and "setsid" not in text
+        assert "tail -c +1 " in text
+
+    def test_a_running_scan_keeps_the_previous_snapshot(self, plugin):
+        _collect(plugin, _scan(_port(443, "https", POODLE)))
+        before = plugin.data.latest_snapshot()
+        _launch(plugin)
+        partial = ('<?xml version="1.0"?>\n<nmaprun scanner="nmap">\n'
+                   '<taskprogress task="NSE" time="1" percent="45.00" remaining="120" etc="2"/>\n')
+        result = _cycle(plugin, _poll(partial))
+        assert result.status is None and result.snapshot is None
+        assert plugin.data.latest_snapshot() == before
+        assert _latest_status() == "failed"
+        assert plugin.jobs.running()["progress"] == "NSE: 45% done, about 2 Minutes left"
+
+    def test_progress_names_a_task_that_began(self, plugin):
+        _launch(plugin)
+        _cycle(plugin, _poll('<nmaprun>\n<taskbegin task="Service scan" time="1"/>\n'))
+        assert plugin.jobs.running()["progress"] == "Service scan running"
+
+    def test_output_reaches_the_job_log_once(self, plugin, db_manager):
+        _launch(plugin)
+        first = "<nmaprun>\n"
+        _cycle(plugin, _poll(first))
+        _cycle(plugin, _poll(first + '<taskbegin task="NSE" time="1"/>\n'))
+        job_id = plugin.jobs.running()["id"]
+        lines = [row["message"] for row in db_manager.job_output(job_id, limit=0)]
+        assert lines == ["<nmaprun>", '<taskbegin task="NSE" time="1"/>']
+
+    def test_a_finished_scan_is_parsed_from_its_whole_output(self, plugin):
+        _launch(plugin)
+        _cycle(plugin, _poll("<?xml"))
+        result = _cycle(plugin, _poll(_scan(_port(80, "http", LIKELY)).stdout, 0, alive=False))
+        assert result.status == "warning"
+        assert plugin.jobs.running() is None
+        assert plugin.jobs.recent()[0]["state"] == "succeeded"
+
+    def test_a_scan_that_timed_out_fails_its_job(self, plugin):
+        _launch(plugin)
+        result = _cycle(plugin, _poll('<?xml version="1.0"?><nmaprun><host>', 124, alive=False))
+        assert plugin.jobs.recent()[0]["state"] == "failed"
+        assert result.status == "unavailable"
+        assert "did not finish within 20 Minutes" in result.logs[0][0]
+
+    def test_a_vanished_scan_fails_its_job(self, plugin):
+        _launch(plugin)
+        result = _cycle(plugin, _poll("", None, alive=False))
+        assert plugin.jobs.recent()[0]["state"] == "failed"
+        assert result.status == "unavailable"
+
+    def test_an_unanswered_poll_leaves_the_job_running(self, plugin):
+        _launch(plugin)
+        result = _cycle(plugin, CmdResult(-1, "", "Agent 'x' is not connected"))
+        assert plugin.jobs.running() is not None
+        assert result.status is None
+        assert any("Could not poll" in message for message, _ in result.logs)
+
+    def test_a_restarted_monitor_adopts_the_running_scan(self, make_plugin, plugin):
+        _launch(plugin, pid=777)
+        restarted = make_plugin(VulnScan, BASE_CFG)
+        assert "kill -0 777" in restarted.commands()[0].text
+
+    def test_a_running_scan_is_polled_sooner_than_the_interval(self, plugin):
+        assert plugin.next_cycle_in() is None
+        _launch(plugin)
+        assert plugin.next_cycle_in() == 30
+
+    def test_job_poll_is_configurable(self, make_plugin):
+        p = make_plugin(VulnScan, {**BASE_CFG, "job_poll": "10s"})
+        assert "--stats-every 10s" in p._scan_command()
+        _launch(p)
+        assert p.next_cycle_in() == 10
+
+
 class TestUiSpec:
+    def test_scan_runs_have_a_job_panel(self, plugin):
+        assert plugin.UI_SPEC['job_panel']['title'] == 'Scan runs'
+        assert ['jobs'] in plugin.UI_SPEC['layout']
+
     def test_findings_table_has_a_title(self, plugin):
         assert plugin.UI_SPEC['tables']['findings']['title'] == 'Findings'
 
@@ -288,6 +420,6 @@ class TestUiSpec:
     async def test_every_card_is_laid_out_and_every_cell_defined(self, plugin):
         spec = plugin.UI_SPEC
         laid_out = {cell for row in spec['layout'] for cell in row}
-        defined = set(spec['cards']) | set(spec['tables']) | {'host_card', 'chart', 'events'}
+        defined = set(spec['cards']) | set(spec['tables']) | {'host_card', 'chart', 'jobs', 'events'}
         assert set(spec['cards']) <= laid_out
         assert laid_out <= defined

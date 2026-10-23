@@ -54,7 +54,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from x_monitor.core.state.records import (
     EventRecord,
@@ -434,6 +434,7 @@ class StateStore:
         plugin_id: Optional[str] = None,
         limit: int = 20,
         kind: Optional[str] = None,
+        exclude_kinds: Sequence[str] = (),
     ) -> List[Dict[str, Any]]:
         with self._lock:
             records = [
@@ -441,6 +442,7 @@ class StateStore:
                 for record in self.jobs.values()
                 if (not plugin_id or record.plugin_id == plugin_id)
                 and (not kind or record.kind == kind)
+                and record.kind not in exclude_kinds
             ]
             records.sort(key=lambda j: j.started, reverse=True)
             return [record.as_dict() for record in records[:limit]]

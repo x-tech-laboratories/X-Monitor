@@ -41,6 +41,8 @@ class CustomAction:
     timeout: Optional[float] = None
     agent: Optional[str] = None
     more: bool = False
+    # Run as a detached job that survives an X-Monitor restart, with its output in a live log.
+    detached: bool = False
 
     def button(self) -> ActionButtonSpec:
         """The header button this action shows as."""
@@ -51,10 +53,12 @@ class CustomAction:
             spec['confirm'] = self.confirm
         if self.more:
             spec['more'] = True
+        if self.detached:
+            spec['detached'] = True
         return spec
 
     def plan(self) -> ActionPlan:
-        return ActionPlan(self.command, timeout=self.timeout, agent=self.agent)
+        return ActionPlan(self.command, timeout=self.timeout, agent=self.agent, detached=self.detached)
 
     def interpret(self, result: CmdResult) -> CollectResult:
         """Succeed on exit code 0, and log the outcome with the command's output on the monitor."""
@@ -100,5 +104,6 @@ def parse_custom_actions(value: Any) -> List[CustomAction]:
             timeout=parse_duration(timeout) if timeout is not None else None,
             agent=str(entry['agent']) if entry.get('agent') else None,
             more=bool(entry.get('more', False)),
+            detached=bool(entry.get('detached', False)),
         ))
     return actions

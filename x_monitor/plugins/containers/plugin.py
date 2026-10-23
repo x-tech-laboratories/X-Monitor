@@ -335,7 +335,7 @@ class Containers(Plugin):
                 return CollectResult.failed(f"Refusing to restart unlisted container {cname!r}")
             return ActionPlan(f"{self.runtime} restart {_shquote(cname)}")
         if action_id == 'prune':
-            return ActionPlan(f"{self.prune_command} 2>&1", timeout=_PRUNE_TIMEOUT)
+            return ActionPlan(f"{self.prune_command} 2>&1", timeout=_PRUNE_TIMEOUT, detached=True)
         return None
 
     @property
