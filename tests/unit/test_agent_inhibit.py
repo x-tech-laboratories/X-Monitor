@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from x_monitor.core.connectors.agent_connector import AgentConnection
+from x_monitor.core.connectors.agent_connector import AgentConnection, AgentRegistry
 from x_monitor.core.coordination import engine as engine_module
 from x_monitor_agent import inhibit, protocol as proto
 from x_monitor_agent.client import AgentClient
@@ -117,16 +117,16 @@ class TestServerHolds:
         assert socket.sent == []
 
     async def test_a_cycle_holds_the_scanned_host_awake_and_releases_it(self):
-        scanner = AgentConnection("heimdall", host="heimdall.technet")
-        target = AgentConnection("thor", host="thor.technet")
-        bystander = AgentConnection("odin", host="odin.technet")
+        registry = AgentRegistry()
+        registry.configure([{'id': name, 'host': f"{name}.technet"} for name in ("heimdall", "thor", "odin")])
+        scanner, target, bystander = (registry.get(name) for name in ("heimdall", "thor", "odin"))
         sockets = {}
         for conn in (scanner, target, bystander):
             sockets[conn.agent_id] = FakeSocket()
             conn.attach(sockets[conn.agent_id], {'caps': [proto.INHIBIT]})
 
         engine = object.__new__(engine_module.XMonitorEngine)
-        engine.connectors = SimpleNamespace(agents=SimpleNamespace(all=lambda: [scanner, target, bystander]))
+        engine.connectors = SimpleNamespace(agents=registry)
         engine._exec_context_for = lambda plugin: SimpleNamespace(conn=scanner)
         plugin = SimpleNamespace(id="thor-vuln-scan", config={'scan_host': 'thor.technet'})
 
