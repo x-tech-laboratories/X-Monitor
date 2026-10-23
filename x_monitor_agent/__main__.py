@@ -6,7 +6,6 @@ import logging
 
 from x_monitor_agent.client import AgentClient
 from x_monitor_agent.config import AgentConfig
-from x_monitor_agent.local import start_local_engine, stop_local_engine
 
 
 def main() -> None:
@@ -27,22 +26,11 @@ def main() -> None:
 
     config = AgentConfig.load(args.config)
     client = AgentClient(config.url, config.agent_id, config.key, config.hostname,
-                         notify_only=config.notify_only)
+                         notify_only=config.notify_only, state_dir=config.state_dir)
     try:
-        asyncio.run(_run(config, client))
+        asyncio.run(client.run_forever())
     except KeyboardInterrupt:
         logging.info("x-monitor-agent stopped")
-
-
-async def _run(config: AgentConfig, client: AgentClient) -> None:
-    """Start the monitors the agent runs itself, if it has a plan, then hold the connection to the server."""
-    engine = None
-    if config.state_dir and not config.notify_only:
-        engine = await start_local_engine(config.agent_id, config.state_dir)
-    try:
-        await client.run_forever()
-    finally:
-        stop_local_engine(engine)
 
 
 if __name__ == "__main__":

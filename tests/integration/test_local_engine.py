@@ -7,7 +7,7 @@ from x_monitor.core.connectors.local_connector import LocalConnection
 from x_monitor.core.coordination.local_engine import LocalEngine
 from x_monitor.core.database.agent_database import AgentDatabase
 from x_monitor.core.database.database import db
-from x_monitor_agent.local import plan_path, start_local_engine, stop_local_engine
+from x_monitor_agent.local import LocalRunner, plan_path
 
 
 @pytest.fixture(autouse=True)
@@ -54,14 +54,84 @@ class TestLocalEngine:
         engine.shutdown()
 
 
-class TestAgentStartup:
+class TestLocalRunner:
     async def test_no_plan_starts_no_engine(self, tmp_path):
-        assert await start_local_engine("odin", str(tmp_path)) is None
+        runner = LocalRunner("odin", str(tmp_path))
+        await runner.start()
+        assert runner.engine is None and runner.pending(0) == []
 
-    async def test_a_plan_starts_the_engine_over_its_monitors(self, tmp_path):
+    async def test_a_stored_plan_starts_the_engine_over_its_monitors(self, tmp_path):
         _plan(tmp_path)
-        engine = await start_local_engine("odin", str(tmp_path))
+        runner = LocalRunner("odin", str(tmp_path))
+        await runner.start()
         try:
-            assert [p.id for p in engine.all_monitors()] == ["answer"]
+            assert [p.id for p in runner.engine.all_monitors()] == ["answer"]
         finally:
-            stop_local_engine(engine)
+            runner.stop()
+
+    async def test_a_plan_from_the_server_is_stored_and_run(self, tmp_path):
+        runner = LocalRunner("odin", str(tmp_path / "state"))
+        config = {"plugins": [{"name": "Answer", "id": "answer", "type": "command",
+                               "command": "echo 1", "agent": "odin", "interval": 3600}]}
+        await runner.apply_plan("v1", config)
+        try:
+            assert runner.plan_version == "v1"
+            assert [p.id for p in runner.engine.all_monitors()] == ["answer"]
+        finally:
+            runner.stop()
+
+    async def test_a_new_plan_reloads_the_running_engine_in_place(self, tmp_path):
+        runner = LocalRunner("odin", str(tmp_path / "state"))
+        monitor = {"name": "Answer", "id": "answer", "type": "command", "command": "echo 1",
+                   "agent": "odin", "interval": 3600}
+        await runner.apply_plan("v1", {"plugins": [monitor]})
+        engine = runner.engine
+        await runner.apply_plan("v2", {"plugins": [monitor, {**monitor, "id": "second", "name": "Second"}]})
+        try:
+            assert runner.engine is engine
+            assert sorted(p.id for p in engine.all_monitors()) == ["answer", "second"]
+        finally:
+            runner.stop()
+
+    async def test_records_are_served_and_acknowledged(self, tmp_path):
+        _plan(tmp_path)
+        runner = LocalRunner("odin", str(tmp_path))
+        await runner.start()
+        try:
+            await runner.poll_now("answer")
+            runner.engine.db.flush()
+            batch = runner.pending(0)
+            assert batch and batch[0][1] in ("result", "setting")
+            runner.acknowledge(batch[-1][0])
+            runner.engine.db.flush()
+            assert runner.pending(0) == []
+        finally:
+            runner.stop()
+
+    async def test_an_action_resent_after_a_reconnect_runs_once(self, tmp_path):
+        _plan(tmp_path)
+        runner = LocalRunner("odin", str(tmp_path))
+        await runner.start()
+        calls = []
+
+        async def dispatch(plugin, action_id, **kwargs):
+            calls.append(action_id)
+            return True, {"content": "done"}
+
+        runner.engine.dispatch_action = dispatch
+        try:
+            first = await runner.run_action("r1", "answer", "custom:x", {})
+            again = await runner.run_action("r1", "answer", "custom:x", {})
+            assert first == again == (True, "done") and calls == ["custom:x"]
+        finally:
+            runner.stop()
+
+    async def test_an_action_on_a_monitor_it_does_not_run_is_refused(self, tmp_path):
+        _plan(tmp_path)
+        runner = LocalRunner("odin", str(tmp_path))
+        await runner.start()
+        try:
+            success, content = await runner.run_action("r2", "nope", "run", {})
+            assert not success and "nope" in content
+        finally:
+            runner.stop()
