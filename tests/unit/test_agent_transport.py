@@ -6,6 +6,7 @@ import json
 import pytest
 from unittest.mock import MagicMock
 
+from x_monitor.code_version import code_version
 from x_monitor.core.connectors.agent_connector import AgentConnection, AgentRegistry
 from x_monitor.core.connectors.engine import ConnectorEngine
 from x_monitor_agent import protocol as proto
@@ -602,3 +603,16 @@ class TestJournalMux:
         task = asyncio.create_task(mux.follow({'unit': 'nginx.service'}, emit))
         with pytest.raises(RuntimeError):
             await asyncio.wait_for(task, timeout=5)
+
+
+class TestCodeVersion:
+    def test_an_agent_on_the_servers_code_is_marked_the_same(self):
+        conn = AgentConnection("node-a", host="node-a.lan")
+        conn.attach(FakeSocket(), {'code': code_version()})
+        assert conn.same_code
+
+    @pytest.mark.parametrize("hello", [{'code': '0000000000000000'}, {}])
+    def test_an_agent_on_other_or_unknown_code_is_not(self, hello):
+        conn = AgentConnection("node-a", host="node-a.lan")
+        conn.attach(FakeSocket(), hello)
+        assert not conn.same_code

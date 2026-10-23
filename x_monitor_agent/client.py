@@ -21,6 +21,7 @@ import websockets
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from x_monitor.code_version import code_version
 from x_monitor_agent import __version__, desktop, executor, inhibit, keys, protocol as proto, watchers
 
 _BACKOFF_INITIAL = 1.0
@@ -91,7 +92,7 @@ class AgentClient:
                 raise ConnectionError("server sent no challenge (is it an older X-Monitor?)")
             caps = [proto.DISMISS, proto.NOTIFY] if self.notify_only else CAPABILITIES
             signature = keys.sign(self.key, self.agent_id, nonce)
-            hello = proto.hello(self.agent_id, signature, self.hostname, __version__, caps)
+            hello = proto.hello(self.agent_id, signature, self.hostname, __version__, caps, code_version())
             await socket_.send(proto.encode(hello))
 
             welcome = proto.decode(await socket_.recv())
