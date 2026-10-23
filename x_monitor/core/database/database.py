@@ -168,6 +168,9 @@ class _AsyncWriter:
 
 _writer = _AsyncWriter()
 
+# How long after it happened a status may arrive and still be announced as news.
+LATE_STATUS = timedelta(minutes=2)
+
 
 def flush_writes(timeout: Optional[float] = None):
     """Block until the writer thread has drained its queue; a test seam."""
@@ -545,6 +548,8 @@ class DatabaseManager:
         is_current = current is None or record.timestamp >= current.timestamp
         if is_current:
             self.store.statuses[plugin_id] = record
+        # A status that happened long before it arrived becomes current silently, so a sync replays no alerts; the agent's next live status is announced.
+        announce = is_current and (timestamp is None or datetime.now() - timestamp <= LATE_STATUS)
         _writer.submit(
             lambda: StatusHistory.create(
                 plugin_id=record.plugin_id,
@@ -552,7 +557,7 @@ class DatabaseManager:
                 timestamp=record.timestamp,
             )
         )
-        if is_current:
+        if announce:
             CHANGES.publish(changes.STATUS, plugin_id)
 
     def latest_statuses(self) -> Dict[str, str]:
