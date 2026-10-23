@@ -12,7 +12,8 @@ or an evaluation that never ran is unavailable; an evaluation that ran and
 errored is failed. `eval_agent` runs the two expensive commands on another agent's
 host, for a target too small to evaluate its own flake, and `build_host` sends the
 switch's own compilation to a host that can do it. `build_agent` runs the build job
-on another agent's host, so one host can warm the cache for every other. `switch_agent` runs the switch
+on another agent's host, so one host can warm the cache for every other, and `build_root_dir` keeps
+its result as one GC root per monitor that the next build replaces. `switch_agent` runs the switch
 and update jobs on another agent's host, which with `target_host` lets one host
 build every other's closure and activate it over SSH; the probe stays on the target,
 so drift is still read from the machine it describes. Actions launch
@@ -26,7 +27,7 @@ only when the flake changed after the running generation was made. `update_at` a
 missed while X-Monitor was down runs once when it returns, and a restart never repeats one. Config:
 flake, configuration, eval_agent, eval_interval, retry_interval, eval_timeout,
 max_input_age, drift_status, reboot_status, require_sudo, nix_bin,
-rebuild_bin, nix_args, rebuild_args, build_host, build_agent, switch_agent, target_host,
+rebuild_bin, nix_args, rebuild_args, build_host, build_agent, build_root_dir, switch_agent, target_host,
 auto_switch, auto_switch_after, update_at, build_at,
 switch_wrapper, post_switch, push_ssh_key, commit_author,
 commit_message."""
@@ -200,6 +201,7 @@ class NixosUpgrade(Plugin):
         self.switch_agent = config.get('switch_agent') or None
         self.build_agent = config.get('build_agent') or self.switch_agent
         self.build_args = list(config.get('build_args', ['--keep-going', '--print-build-logs']))
+        self.build_root_dir = config.get('build_root_dir') or None
         self.target_host = config.get('target_host') or None
         self.auto_switch = bool(config.get('auto_switch', False))
         self.auto_switch_after = parse_duration(config.get('auto_switch_after', '30m'))
@@ -720,7 +722,12 @@ class NixosUpgrade(Plugin):
         closure, and the job still exits non-zero so the failure is seen."""
         nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
         args = ' '.join(shlex.quote(a) for a in self.build_args + self._refresh_args())
-        return ' '.join(filter(None, [nix, 'build --no-link', args, self._installable()]))
+        if not self.build_root_dir:
+            return ' '.join(filter(None, [nix, 'build --no-link', args, self._installable()]))
+        # One fixed link per monitor, so each successful build replaces the root the last one held.
+        link = shlex.quote(f'{self.build_root_dir.rstrip("/")}/{self.id}')
+        build = ' '.join(filter(None, [nix, f'build --out-link {link}', args, self._installable()]))
+        return f'mkdir -p {shlex.quote(self.build_root_dir)} && {build}'
 
     def _switch_command(self) -> str:
         flake_ref = f'{self.flake}#{self.configuration}' if self.configuration else self.flake
