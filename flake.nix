@@ -92,24 +92,25 @@
 
                 # The agent, packaged apart from the server.
                 #
-                # A monitored host installs only this, so it must not pull in
-                # nicegui, peewee, dnspython or asyncssh — none of which the
-                # agent imports, and building them on every target is both
-                # wasteful and, on aarch64, a source of build failures the
-                # monitored host has no reason to care about.
-                #
-                # `x_monitor_agent` imports nothing from `x_monitor` (the wire protocol
-                # lives in x_monitor_agent/protocol.py precisely so it doesn't), so
-                # copying that one package in is the whole install.
+                # It carries X-Monitor's plugins and engine, so it can run its host's
+                # monitors itself, but never the dashboard: no nicegui, FastAPI or
+                # uvicorn, and none of the server's notification or export extras.
+                # tests/unit/test_agent_imports.py keeps the agent importable without them.
                 agentPython = pkgs.python312.withPackages (ps: with ps; [
                     websockets
                     pyyaml
                     cryptography
+                    httpx
+                    requests
+                    peewee
+                    dnspython
+                    asyncssh
                 ]);
 
                 agentSrc = pkgs.runCommand "x-monitor-agent-src" { } ''
                     mkdir -p $out
                     cp -r ${./x_monitor_agent} $out/x_monitor_agent
+                    cp -r ${./x_monitor} $out/x_monitor
                 '';
 
                 x-monitor-agent-pkg = pkgs.writeShellApplication {
