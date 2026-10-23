@@ -21,10 +21,15 @@ import websockets
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from x_monitor.code_version import code_version
 from x_monitor_agent import __version__, desktop, executor, inhibit, keys, protocol as proto, watchers
+from x_monitor_agent.local import LocalRunner
 
 _BACKOFF_INITIAL = 1.0
 _BACKOFF_MAX = 60.0
+
+# How long the outbox pump waits before looking for new records when it found none.
+_PUMP_IDLE_SECONDS = 1.0
 
 CAPABILITIES = sorted([*watchers.WATCHERS, proto.NOTIFY, proto.DISMISS, proto.INHIBIT])
 """What this agent can do, sent in the hello so a server can tell an older
@@ -33,7 +38,8 @@ agent apart from a newer one without a version comparison."""
 
 class AgentClient:
     def __init__(self, url: str, agent_id: str, key: Ed25519PrivateKey,
-                 hostname: Optional[str] = None, notify_only: bool = False):
+                 hostname: Optional[str] = None, notify_only: bool = False,
+                 state_dir: Optional[str] = None):
         self.url = url
         self.notify_only = notify_only
         self.agent_id = agent_id
@@ -49,17 +55,24 @@ class AgentClient:
         self._notifications: set = set()
         self._inhibitor = inhibit.IdleInhibitor()
         self._server_holds: set = set()
+        # The monitors this agent runs itself, which keep running whether or not it is connected.
+        self._runner = LocalRunner(agent_id, state_dir) if state_dir and not notify_only else None
+        self._requests: set = set()
 
     # --- Connection lifecycle ---
 
     async def run_forever(self) -> None:
         """Dial, serve, and redial. Only cancellation ends this."""
         backoff = _BACKOFF_INITIAL
+        if self._runner is not None:
+            await self._runner.start()
         while True:
             self._welcomed = False
             try:
                 await self._session()
             except asyncio.CancelledError:
+                if self._runner is not None:
+                    self._runner.stop()
                 await self._stop_streams()
                 await self._inhibitor.close()
                 self._desktop.cancel_all()
@@ -90,8 +103,10 @@ class AgentClient:
             if challenge.get('t') != proto.CHALLENGE or not nonce:
                 raise ConnectionError("server sent no challenge (is it an older X-Monitor?)")
             caps = [proto.DISMISS, proto.NOTIFY] if self.notify_only else CAPABILITIES
+            if self._runner is not None:
+                caps = sorted([*caps, proto.ENGINE])
             signature = keys.sign(self.key, self.agent_id, nonce)
-            hello = proto.hello(self.agent_id, signature, self.hostname, __version__, caps)
+            hello = proto.hello(self.agent_id, signature, self.hostname, __version__, caps, code_version())
             await socket_.send(proto.encode(hello))
 
             welcome = proto.decode(await socket_.recv())
@@ -102,9 +117,15 @@ class AgentClient:
 
             if not self.notify_only:
                 await self._apply_streams(welcome.get('streams') or [])
+            pump = None
+            if self._runner is not None:
+                await self._send(proto.plan_ack(self._runner.plan_version))
+                pump = asyncio.create_task(self._pump_records())
             try:
                 await self._receive_loop(socket_)
             finally:
+                if pump is not None:
+                    pump.cancel()
                 self._socket = None
                 await self._stop_streams()
                 await self._cancel_execs()
@@ -130,6 +151,46 @@ class AgentClient:
                 await self._apply_server_hold(frame)
             elif tag == proto.PING:
                 await self._send({'t': proto.PONG, 'id': frame.get('id')})
+            elif self._runner is not None and tag in (proto.PLAN, proto.RECORDS_ACK, proto.ACTION, proto.POLL_NOW):
+                # Its own task: applying a plan or running an action must not block the socket.
+                task = asyncio.create_task(self._handle_engine_frame(frame))
+                self._requests.add(task)
+                task.add_done_callback(self._requests.discard)
+
+    # --- Local monitors ---
+
+    async def _handle_engine_frame(self, frame: Dict[str, Any]) -> None:
+        """Serve one of the server's requests about the monitors this agent runs itself."""
+        tag = frame.get('t')
+        try:
+            if tag == proto.PLAN:
+                config = frame.get('config')
+                await self._runner.apply_plan(str(frame.get('version') or ''), config if isinstance(config, dict) else {})
+                await self._send(proto.plan_ack(self._runner.plan_version))
+            elif tag == proto.RECORDS_ACK:
+                self._runner.acknowledge(int(frame.get('through') or 0))
+            elif tag == proto.ACTION:
+                args = frame.get('args')
+                success, content = await self._runner.run_action(
+                    str(frame.get('id') or ''), str(frame.get('monitor') or ''),
+                    str(frame.get('action') or ''), args if isinstance(args, dict) else {})
+                await self._send(proto.action_result(str(frame.get('id') or ''), success, content))
+            elif tag == proto.POLL_NOW:
+                await self._runner.poll_now(str(frame.get('monitor') or ''))
+        # A request that fails is logged; the connection and the monitors carry on.
+        except Exception as e:
+            logging.warning(f"could not handle {tag!r} from the server: {e}")
+
+    async def _pump_records(self) -> None:
+        """Send the outbox to the server for as long as this connection lasts, oldest first, starting again from the first unacknowledged record."""
+        sent = 0
+        while True:
+            batch = await asyncio.to_thread(self._runner.pending, sent)
+            if not batch:
+                await asyncio.sleep(_PUMP_IDLE_SECONDS)
+                continue
+            await self._send(proto.records(batch))
+            sent = batch[-1][0]
 
     # --- Exec ---
 

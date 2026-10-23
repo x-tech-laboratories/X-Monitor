@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
 from x_monitor.core.connectors.agent_connector import AgentConnection, AgentRegistry
+from x_monitor.core.connectors.local_connector import LocalConnection
 from x_monitor.core.connectors.ssh_connector import (
     SSHConnection, COLLECT_TIMEOUT, CONTROL_TIMEOUT, resolve_host,
 )
@@ -69,7 +70,10 @@ class ExecContext:
 
 
 class ConnectorEngine:
-    def __init__(self):
+    def __init__(self, local_agent: Optional[str] = None):
+        # On an agent, its own id: commands addressed to it run here as local processes instead of over a socket.
+        self.local_agent = local_agent
+        self._local = None
         # One shared asyncssh connection per physical target (host, port,
         # username, key_path), regardless of how many plugins point at it.
         self._ssh_conns: dict = {}
@@ -95,7 +99,7 @@ class ConnectorEngine:
         the agent to dial in."""
         agent_id = config.get('agent')
         if agent_id:
-            return ExecContext(conn=self.agents.require(str(agent_id)),
+            return ExecContext(conn=self.agent_connection(str(agent_id)),
                                collect_timeout=collect_timeout)
 
         ssh_cfg = config.get('ssh_config', {})
@@ -110,6 +114,14 @@ class ConnectorEngine:
             conn = SSHConnection.from_config(config)
             self._ssh_conns[key] = conn
         return ExecContext(conn=conn, collect_timeout=collect_timeout)
+
+    def agent_connection(self, agent_id: str) -> TransportConnection:
+        """The connection commands addressed to an agent go through: a local one for this process's own agent id, else that agent's socket."""
+        if self.local_agent is not None and agent_id == self.local_agent:
+            if self._local is None:
+                self._local = LocalConnection(agent_id)
+            return self._local
+        return self.agents.require(agent_id)
 
     async def _command(self, ctx: ExecContext, text: str,
                        timeout: Optional[float], default: float) -> CmdResult:
@@ -185,7 +197,7 @@ class ConnectorEngine:
                 ctx = ssh_ctx
                 if req.agent:
                     # Offloaded command: same timeout policy, another agent's connection.
-                    ctx = ExecContext(conn=self.agents.require(req.agent),
+                    ctx = ExecContext(conn=self.agent_connection(req.agent),
                                       collect_timeout=ssh_ctx.collect_timeout)
                 default = CONTROL_TIMEOUT if req.action else ctx.collect_timeout
                 return await self._command(ctx, req.text, req.timeout, default)

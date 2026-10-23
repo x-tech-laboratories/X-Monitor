@@ -34,6 +34,7 @@ _DEFAULT_LAYOUT = [
 
 
 class DdnsUpdater(Plugin):
+    RUNS_ON_AGENT = False
     def __init__(self, name: str, config: Dict[str, Any]):
         super().__init__(name, config)
         self._domain = config.get('domain')
