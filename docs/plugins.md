@@ -20,6 +20,7 @@ config examples. For what X-Monitor is and how to run it, see the
   [`service_list`](#service_list) ·
   [`nixos_upgrade`](#nixos_upgrade) ·
   [`nix_gc`](#nix_gc) ·
+  [`attic_push`](#attic_push) ·
   [`vuln_scan`](#vuln_scan) ·
   [`smart`](#smart) ·
   [`zfs`](#zfs) ·
@@ -74,6 +75,7 @@ config examples. For what X-Monitor is and how to run it, see the
 | [`service_list`](#service_list)         | Systemd unit browser and control      | SSH (`systemctl`)                                | `services_total`, `services_active`, `services_failed` | Start, Stop, Restart, Enable, Disable, View Status |
 | [`nixos_upgrade`](#nixos_upgrade)       | NixOS system vs. the flake it deploys from | SSH (`nix eval`, `nix flake metadata`)      | `up_to_date`, `reboot_required`, `flake_reachable` | Update Flake, Rebuild & Switch, Reboot |
 | [`nix_gc`](#nix_gc)                     | Nix store garbage collection           | SSH (`df`, `systemctl`, `journalctl`)             | `last_gc_epoch`, `last_gc_freed_gb`, `store_used_pct` | Collect Garbage |
+| [`attic_push`](#attic_push)             | Fleet closures built and pushed to Attic | SSH (`nix eval`, `nix path-info`)                 | `targets_built`, `targets_pushed`, `missing_paths` | — |
 | [`vuln_scan`](#vuln_scan)               | Network-facing vulnerabilities of a host | SSH (`nmap --script vuln`, run from the scanning host) | `vulnerable`, `suspected`, `open_ports`      | — |
 | [`smart`](#smart)                       | SMART health of every physical disk    | SSH (`smartctl`)                                | `disks_total`, `disks_ok`, `disks_failed`       | — |
 | [`zfs`](#zfs)                           | ZFS pool state and capacity            | SSH (`zpool list`)                              | `pools_total`, `pools_degraded`, `zfs_usage_max` | — |
@@ -115,7 +117,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `host_control`, `cloud`, `x_monitor_self`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `attic_push`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `host_control`, `cloud`, `x_monitor_self`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 | `schedule` | Actions to run on a cron schedule — see [Scheduled actions](#scheduled-actions) (default: none) |
 | `actions` | Your own command buttons on the monitor's page — see [Custom actions](#custom-actions) (default: none) |
@@ -697,6 +699,42 @@ A collection currently in flight is never counted as stale, so a run that overru
   ssh_config:
     host: "sbc.example.com"
 ```
+
+---
+
+### `attic_push`
+Whether the closures one host builds for the fleet are built from the flake's latest revision and pushed to an [Attic](https://github.com/zhaofengli/attic) binary cache. A watcher that silently stopped uploading, or a nightly build that never ran, otherwise shows up only as another host compiling for hours.
+
+One script per cycle, run on the building host, evaluates each tracked target from the flake, checks whether that store path is in the local store, and asks the cache which paths of its closure it lacks. Paths signed by an upstream cache (`upstream_keys`) are left out, since Attic never stores them, so what is counted is exactly what the fleet built itself. Only the first evaluation passes `--refresh`, so every target is judged at the same revision. A target that is not built locally is checked by its root path alone.
+
+| Option | Description |
+|--------|-------------|
+| `flake` | Flake the targets are evaluated from (default: `/etc/nixos`) |
+| `configurations` | `nixosConfigurations` names, each tracked by its `config.system.build.toplevel` |
+| `installables` | Any other derivation, as a map of display name to flake attribute path |
+| `cache_url` | The cache as a substituter URL, such as `https://attic.example/main`; it must allow anonymous reads |
+| `upstream_keys` | Signing key names whose paths the cache never holds (default: `["cache.nixos.org-1"]`) |
+| `missing_limit` | Missing paths listed per target (default: `50`); the count is always exact |
+| `pending_status` | Status for a target not yet built or not fully pushed (default: `warning`) |
+| `timeout` | Time allowed for the whole check (default: `30m`) |
+| `nix_bin` / `nix_args` | Nix binary and its arguments (defaults: `nix`, `["--extra-experimental-features", "nix-command flakes"]`) |
+
+**Metrics**: `targets_total`, `targets_built`, `targets_pushed`, `missing_paths`
+
+**Status**: `failed` when a target does not evaluate; `pending_status` when one is not built or has paths missing from the cache; `unavailable` when the cache cannot be queried or the script returned nothing.
+
+```yaml
+# Every host's system closure, built on the cache's own host
+- name: "Attic Push"
+  id: "builder-attic-push"
+  type: "attic_push"
+  interval: 1h
+  flake: "github:example/fleet"
+  configurations: ["builder", "laptop", "sbc"]
+  cache_url: "https://attic.example/fleet"
+  agent: "builder"
+```
+
 
 ---
 
