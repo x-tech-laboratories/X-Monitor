@@ -68,6 +68,10 @@ class Plugin(PluginConfigMixin, ABC):
     # the agent to whichever command happened to be current.
     SAMPLED: bool = False
 
+    # Seconds between cycles while one of this plugin's detached jobs runs,
+    # when that should be sooner than `interval`; None polls a job at `interval`.
+    job_poll_interval: Optional[float] = None
+
     # Suffix of the generic sample stream's id, distinct so a plugin can carry
     # other streams beside it.
     SAMPLE_STREAM = 'sample'
@@ -101,6 +105,15 @@ class Plugin(PluginConfigMixin, ABC):
             from x_monitor.core.ui.orchestration import UIOrchestrator
             cached = self.__dict__['_ui'] = UIOrchestrator(self)
         return cached
+
+    def next_cycle_in(self) -> Optional[float]:
+        """Seconds until the engine should run the next cycle when that is sooner than `interval`, else None.
+
+        Default: `job_poll_interval` while one of this plugin's jobs runs, so a
+        job finishing minutes into a long interval is seen within seconds."""
+        if self.job_poll_interval is None or not (self.jobs and self.jobs.is_running()):
+            return None
+        return self.job_poll_interval
 
     def requests(self) -> List["Request"]:
         """Declare this cycle's IO as a heterogeneous list of connector

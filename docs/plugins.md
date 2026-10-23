@@ -705,7 +705,9 @@ A collection currently in flight is never counted as stale, so a run that overru
 ### `attic_push`
 Whether the closures one host builds for the fleet are built from the flake's latest revision and pushed to an [Attic](https://github.com/zhaofengli/attic) binary cache. A watcher that silently stopped uploading, or a nightly build that never ran, otherwise shows up only as another host compiling for hours.
 
-One script per cycle, run on the building host, evaluates each tracked target from the flake, checks whether that store path is in the local store, and asks the cache which paths of its closure it lacks. Paths signed by an upstream cache (`upstream_keys`) are left out, since Attic never stores them, so what is counted is exactly what the fleet built itself. Only the first evaluation passes `--refresh`, so every target is judged at the same revision. A target that is not built locally is checked by its root path alone.
+One script, run on the building host, evaluates each tracked target from the flake, checks whether that store path is in the local store, and asks the cache which paths of its closure it lacks. Paths signed by an upstream cache (`upstream_keys`) are left out, since Attic never stores them, so what is counted is exactly what the fleet built itself. Only the first evaluation passes `--refresh`, so every target is judged at the same revision. A target that is not built locally is checked by its root path alone.
+
+The script runs as a detached job on the target, so restarting or redeploying X-Monitor never kills a run in flight; the restarted monitor adopts the running job and keeps polling it. A cycle with no job running launches the check, and while it runs the monitor polls it every `job_poll` rather than every `interval`, keeping the previous snapshot and status on the dashboard. When it finishes, its whole output becomes the new snapshot. Each run, its progress and its output are listed under **Check runs**.
 
 | Option | Description |
 |--------|-------------|
@@ -716,12 +718,13 @@ One script per cycle, run on the building host, evaluates each tracked target fr
 | `upstream_keys` | Signing key names whose paths the cache never holds (default: `["cache.nixos.org-1"]`) |
 | `missing_limit` | Missing paths listed per target (default: `50`); the count is always exact |
 | `pending_status` | Status for a target not yet built or not fully pushed (default: `warning`) |
-| `timeout` | Time allowed for the whole check (default: `30m`) |
+| `timeout` | Time a run may take before it is killed (default: `30m`) |
+| `job_poll` | How often a running check is polled (default: `30s`) |
 | `nix_bin` / `nix_args` | Nix binary and its arguments (defaults: `nix`, `["--extra-experimental-features", "nix-command flakes"]`) |
 
 **Metrics**: `targets_total`, `targets_built`, `targets_pushed`, `missing_paths`
 
-**Status**: `failed` when a target does not evaluate; `pending_status` when one is not built or has paths missing from the cache; `unavailable` when the cache cannot be queried or the script returned nothing.
+**Status**: `failed` when a target does not evaluate; `pending_status` when one is not built or has paths missing from the cache; `unavailable` when the cache cannot be queried, the check could not start, or it ended without reporting anything.
 
 ```yaml
 # Every host's system closure, built on the cache's own host

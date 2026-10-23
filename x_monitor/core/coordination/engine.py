@@ -94,6 +94,15 @@ def _settle(plugin: Plugin, results: List[Any], result: CollectResult) -> Collec
     return replace(result, status=str(Status.UNAVAILABLE))
 
 
+def _sooner_cycle(plugin: Plugin) -> Optional[float]:
+    """Seconds until the plugin wants its next cycle when sooner than its interval, or None; a crash in the plugin reads as None."""
+    try:
+        return plugin.next_cycle_in()
+    except Exception as e:
+        log.error(f"{plugin.name}: next_cycle_in failed: {e}")
+        return None
+
+
 @dataclass
 class _Node:
     """One monitor or link in a tree being built, with its children kept apart until the tree is put in place."""
@@ -667,6 +676,7 @@ class XMonitorEngine:
         else:
             await asyncio.sleep(seconds_to_clock_slot(plugin.interval, offset, time.time()))
         next_due = time.monotonic()
+        early = False
         while True:
             # A failing plugin cycle must not kill its polling loop; the next tick retries.
             try:
@@ -676,16 +686,21 @@ class XMonitorEngine:
             # A clock-pinned monitor re-reads the wall clock each cycle, so a suspend or a slow cycle never shifts its slot.
             if offset is not None:
                 wait = seconds_to_clock_slot(plugin.interval, offset, time.time())
-                await asyncio.sleep(wait if wait >= 1 else wait + plugin.interval)
-                continue
-            # interval is the period, not the gap: sleep to the next due time
-            # so a slow cycle does not stretch the schedule, and re-anchor
-            # rather than burst when a cycle overruns the whole period.
-            next_due += plugin.interval
-            now = time.monotonic()
-            if next_due <= now:
-                next_due = now + plugin.interval
-            await asyncio.sleep(next_due - now)
+                wait = wait if wait >= 1 else wait + plugin.interval
+            else:
+                # interval is the period, not the gap: sleep to the next due time
+                # so a slow cycle does not stretch the schedule, and re-anchor
+                # rather than burst when a cycle overruns the whole period.
+                # An early cycle leaves the due time where it was.
+                if not early:
+                    next_due += plugin.interval
+                now = time.monotonic()
+                if next_due <= now:
+                    next_due = now + plugin.interval
+                wait = next_due - now
+            sooner = _sooner_cycle(plugin)
+            early = sooner is not None and sooner < wait
+            await asyncio.sleep(sooner if early else wait)
 
     async def _schedule_loop(self):
         while True:
