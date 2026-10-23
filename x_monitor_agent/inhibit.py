@@ -31,6 +31,8 @@ class IdleInhibitor:
         self._process: Optional[asyncio.subprocess.Process] = None
         self._release_task: Optional[asyncio.Task] = None
         self._warned = False
+        # Taking or dropping the lock awaits a subprocess, so concurrent holds wait here rather than each starting one.
+        self._switching = asyncio.Lock()
 
     @property
     def holders(self) -> int:
@@ -46,8 +48,9 @@ class IdleInhibitor:
         if self._release_task is not None:
             self._release_task.cancel()
             self._release_task = None
-        if not self.is_locked:
-            await self._lock()
+        async with self._switching:
+            if not self.is_locked and self._holders > 0:
+                await self._lock()
 
     def release(self) -> None:
         """Drop a holder; the lock goes once none is left for the linger period."""
@@ -72,7 +75,8 @@ class IdleInhibitor:
             self._release_task.cancel()
             self._release_task = None
         self._holders = 0
-        await self._unlock()
+        async with self._switching:
+            await self._unlock()
 
     async def _release_after_linger(self) -> None:
         try:
@@ -80,8 +84,9 @@ class IdleInhibitor:
         except asyncio.CancelledError:
             return
         self._release_task = None
-        if self._holders == 0:
-            await self._unlock()
+        async with self._switching:
+            if self._holders == 0:
+                await self._unlock()
 
     async def _lock(self) -> None:
         binary = shutil.which('systemd-inhibit')
