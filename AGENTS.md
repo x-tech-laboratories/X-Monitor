@@ -13,7 +13,7 @@ an optional agent for monitored hosts. Read `README.md` first; the design is in 
 ## Rules
 
 - Plugins are pure: they declare requests and parse results, and the engine does all IO. See `docs/develop.md`.
-- `x_monitor_agent` must never import from `x_monitor`; a monitored host installs only the agent.
+- The agent carries `x_monitor`'s plugins and engine but never the dashboard: nothing it imports may pull in `x_monitor.core.ui`, NiceGUI, FastAPI or the server's notification and export extras (`tests/unit/test_agent_imports.py`).
 - Secrets reach X-Monitor as file paths or commands read at runtime, never as values in the Nix store.
 - Add a test for every behaviour you change, and a failing test first for every bug fix.
 - Commit messages follow Conventional Commits and end with an `Assisted-by:` trailer naming the tool.

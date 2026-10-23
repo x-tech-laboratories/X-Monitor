@@ -77,6 +77,7 @@ def spec_with_titles(spec: Optional[UISpec], titles: Dict[str, str]) -> Optional
 
 
 class Group(Plugin):
+    RUNS_ON_AGENT = False
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
         self.aggregate, self.quorum = parse_aggregate(config.get('aggregate'))

@@ -248,6 +248,21 @@ class NotificationEngine:
             return ""
         return events[0].message.removeprefix(f"[{name}] ")
 
+    def send_summary(self, title: str, body: str, monitor_ids: List[str], status: str) -> None:
+        """Send one notification about several monitors through every channel any of them notifies on, unless they are all muted or in maintenance."""
+        now = time.time()
+        channel_ids: List[str] = []
+        for plugin_id in monitor_ids:
+            rule = self._tracker.rules.get(plugin_id)
+            if rule is None or self.muted_by(plugin_id) is not None:
+                continue
+            if self.maintenance_for(plugin_id, datetime.fromtimestamp(now)) is not None:
+                continue
+            channel_ids += [c for c in rule.channels if c not in channel_ids]
+        message = Message(title, body, status, "summary", url=self.base_url, timestamp=now)
+        for channel_id in channel_ids:
+            self._spawn(self._deliver(self.channels[channel_id], [message]))
+
     async def send_test(self, channel_id: str) -> None:
         """Send a test notification through one channel, raising if it fails."""
         channel = self.channels.get(channel_id)

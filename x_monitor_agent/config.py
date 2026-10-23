@@ -41,6 +41,10 @@ class AgentConfig:
     hostname: Optional[str] = None
     notify_only: bool = False
     """Refuse commands and event streams, and only show desktop notifications."""
+    state_dir: Optional[str] = None
+    """Where the agent keeps the monitors it runs itself and the records it has not synced yet."""
+    local_socket: Optional[str] = None
+    """The socket the system agent serves its own notifications on while X-Monitor is out of reach, and a desktop agent follows."""
 
     @staticmethod
     def load(path: Optional[str] = None) -> "AgentConfig":
@@ -65,6 +69,8 @@ class AgentConfig:
         key_file = os.environ.get('XMONITOR_AGENT_KEY_FILE') or data.get('key_file')
         hostname = os.environ.get('XMONITOR_AGENT_HOSTNAME') or data.get('hostname')
         notify_only = os.environ.get('XMONITOR_AGENT_NOTIFY_ONLY', data.get('notify_only', False))
+        state_dir = os.environ.get('XMONITOR_AGENT_STATE_DIR') or data.get('state_dir')
+        local_socket = os.environ.get('XMONITOR_AGENT_LOCAL_SOCKET') or data.get('local_socket')
         if isinstance(notify_only, str):
             notify_only = notify_only.strip().lower() in ('1', 'true', 'yes', 'on')
 
@@ -75,4 +81,6 @@ class AgentConfig:
                 f"(set them in {config_path} or as XMONITOR_AGENT_* environment variables)"
             )
         return AgentConfig(str(url), str(agent_id), _read_key(str(key_file)),
-                           str(hostname) if hostname else None, bool(notify_only))
+                           str(hostname) if hostname else None, bool(notify_only),
+                           str(state_dir) if state_dir else None,
+                           str(local_socket) if local_socket else None)

@@ -25,7 +25,8 @@ After this work the agent is a small X-Monitor engine of its own:
 
 | Question | Decision |
 |---|---|
-| Which monitors move | Host-local ones: every monitor whose commands run on that agent's own host. Checks that need the server's view of the network (HTTP, DNS, ping, push), groups and links, and cross-host work (`switch_agent`, `build_agent`, `scan_host`, `via`, `Command.agent`) stay on the server. |
+| Opt-in | Per agent, with `run_monitors: true` on its `agents:` entry. |
+| Which monitors move | Host-local ones, by the plugin's `RUNS_ON_AGENT`: every monitor whose commands run on that agent's own host. Checks that need the server's view of the network (HTTP, DNS, ping, push), groups and links, and cross-host work (`switch_agent`, `build_agent`, `scan_host`, `via`, `Command.agent`) stay on the server. |
 | Who runs them while connected | The agent, always. |
 | Plugin code | Shipped to the agent. The agent package is the full X-Monitor package without the dashboard. |
 | Offline storage | A local SQLite database: plugin state plus an outbox of numbered records, trimmed once the server acknowledges them. |
@@ -43,8 +44,8 @@ The agent installs the `x_monitor` package minus the UI: the plugins, `core.coor
 entry point with `nicegui` made unimportable.
 
 The Nix agent package builds from the same source as the server, without the UI dependencies. The
-server and its agents run the same version: the hello frame carries the version, and the server
-refuses to hand monitors to an agent on a different one (it still accepts its records and runs its
+server and its agents run the same code: the hello frame carries `code_version()`, a hash of both
+packages' sources, and the server refuses to hand monitors to an agent whose hash differs (it still accepts its records and runs its
 legacy commands). TechNet deploys both from one flake input, so they move together.
 
 Plugins loaded from `plugin_paths` must be installed on the agent too; a monitor whose type the
@@ -75,11 +76,12 @@ executor instead of a WebSocket. `SAMPLED` monitors keep their sample watchers.
 Disconnecting no longer stops streams or kills running commands. Inhibits a running job holds stay
 held.
 
-Plugin state lives in the agent's database: `PluginDataView` (latest metric, snapshot, settings,
-statuses) and `JobsGateway` get a local implementation with the same interface, so plugins do not
-change. Schedule and trigger markers are agent-owned settings.
+Plugin state lives in the agent's database, which is the server's own `DatabaseManager` on a local
+SQLite file (`AgentDatabase`), so `PluginDataView` and `JobsGateway` work unchanged and plugins do
+not change. Schedule and trigger markers are agent-owned settings.
 
-Job ids are assigned by the agent as `<agent>:<n>`; the server stores agent jobs under those ids.
+Job ids are the agent's own; the server stores an agent's jobs under ids of its own and keeps the
+mapping from (agent, agent job id).
 
 ### Records and sync
 
@@ -138,8 +140,9 @@ Each phase lands on its own and leaves X-Monitor working.
    than the current one. Nothing else changes yet.
 2. **Agent packaging.** Agent package from the full source without the UI, the import test, and
    the version in the hello frame.
-3. **Local plugin state.** Store-backed `PluginDataView` and `JobsGateway` the agent can run on its
-   own SQLite database, with agent-assigned job ids.
+3. **Local plugin state.** `AgentDatabase`, the server's database on a local SQLite file that also
+   records every result, job step and setting into an outbox; the record encoding both sides share;
+   and a local command transport.
 4. **The agent's local engine.** Poll, schedule and trigger loops on the agent over the local
    executor, driven by a plan file; disconnecting stops nothing.
 5. **Protocol v3 and sync.** `plan`, `records` and their acknowledgements, `action` and `poll_now`;

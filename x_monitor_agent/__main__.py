@@ -26,7 +26,8 @@ def main() -> None:
 
     config = AgentConfig.load(args.config)
     client = AgentClient(config.url, config.agent_id, config.key, config.hostname,
-                         notify_only=config.notify_only)
+                         notify_only=config.notify_only, state_dir=config.state_dir,
+                         local_socket=config.local_socket)
     try:
         asyncio.run(client.run_forever())
     except KeyboardInterrupt:

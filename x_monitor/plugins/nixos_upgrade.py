@@ -238,6 +238,7 @@ def _oldest_input(locks: Dict[str, Any]) -> Tuple[Optional[str], Optional[int]]:
 
 
 class NixosUpgrade(Plugin):
+    RUNS_ON_AGENT = False
     # The evaluation runs beside a build, switch or update, and never blocks their buttons.
     SIDE_JOB_KINDS = (_EVAL_JOB_KIND,)
 
