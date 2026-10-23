@@ -21,6 +21,8 @@ Two channels share the one socket:
 
 Two more one-way frames ask the agent to show a desktop notification in the
 session it runs in (``notify``), and to close the one shown for a key (``dismiss``).
+A third (``inhibit``) holds the host awake while a task that works on it from
+elsewhere, such as a network scan, is running.
 
 Frames are deliberately small and self-describing rather than positional, so
 an older agent talking to a newer server (or the reverse) can ignore fields
@@ -61,6 +63,9 @@ NOTIFY = "notify"
 
 DISMISS = "dismiss"
 """Server -> agent: close the desktop notification shown for a key. No reply."""
+
+INHIBIT = "inhibit"
+"""Server -> agent: keep the host from idling into sleep under a key, or let that key go. No reply."""
 
 PING = "ping"
 PONG = "pong"
@@ -148,6 +153,11 @@ def notify(title: str, body: str, urgency: str = "normal", url: Optional[str] = 
 def dismiss(key: str) -> Dict[str, Any]:
     """Build a server DISMISS frame closing the notification shown for `key`."""
     return {'t': DISMISS, 'key': key}
+
+
+def inhibit(key: str, hold: bool) -> Dict[str, Any]:
+    """Build a server INHIBIT frame taking (`hold`) or releasing the host's idle inhibitor under `key`."""
+    return {'t': INHIBIT, 'key': key, 'hold': hold}
 
 
 @dataclass(frozen=True)

@@ -19,6 +19,7 @@ role in the architecture.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import importlib
@@ -26,6 +27,7 @@ import inspect
 import random
 import sys
 import time
+import uuid
 from dataclasses import replace
 from typing import Any, List, Optional, Dict, Set
 
@@ -43,6 +45,16 @@ from x_monitor.core.notifications import NotificationEngine
 from x_monitor.core.connectors import ConnectorEngine, ExecContext
 
 STARTUP_JITTER_SECONDS = 3.0
+
+
+_TARGET_HOST_KEYS = ('target_host', 'scan_host')
+"""Config keys naming a host a monitor works on from elsewhere, whose agent is asked to stay awake for the cycle."""
+
+
+def bare_host(value: Any) -> str:
+    """Reduce `user@host:port` to the lowercase host name an agent entry is keyed by."""
+    host = str(value or '').strip().lower().rsplit('@', 1)[-1]
+    return host.split(':', 1)[0] if host.count(':') == 1 else host
 
 
 def seconds_to_clock_slot(interval: int, offset: int, now: float) -> float:
@@ -418,16 +430,45 @@ class XMonitorEngine:
             return False
         self._collecting[plugin.id] = True
         try:
-            return await self._run_cycle(plugin)
+            async with self._targets_held_awake(plugin):
+                return await self._run_cycle(plugin)
         finally:
             self._last_collected[plugin.id] = time.monotonic()
             self._collecting[plugin.id] = False
+
+    def _target_agents(self, plugin: Plugin) -> List[Any]:
+        """The connected agents on the hosts a monitor works on remotely, other than the one it runs on."""
+        config = getattr(plugin, 'config', None) or {}
+        hosts = {bare_host(config.get(key)) for key in _TARGET_HOST_KEYS if config.get(key)}
+        if not hosts:
+            return []
+        own = getattr(self._exec_context_for(plugin), 'conn', None)
+        return [conn for conn in self.connectors.agents.all()
+                if conn is not own and conn.is_connected and bare_host(conn.host) in hosts]
+
+    @contextlib.asynccontextmanager
+    async def _targets_held_awake(self, plugin: Plugin):
+        """Keep the hosts a monitor scans or acts on from elsewhere awake while its task runs."""
+        targets = self._target_agents(plugin)
+        key = f"{plugin.id}:{uuid.uuid4().hex}"
+        for conn in targets:
+            await conn.inhibit(key, True)
+        try:
+            yield
+        finally:
+            for conn in targets:
+                await conn.inhibit(key, False)
 
     def last_collected(self, plugin_id: str) -> float:
         """Monotonic time of a monitor's last finished cycle, 0.0 if none yet."""
         return self._last_collected.get(plugin_id, 0.0)
 
     async def dispatch_action(self, plugin: Plugin, action_id: str, **kwargs) -> DispatchResult:
+        """Run one action with the hosts it works on held awake; see _dispatch_action."""
+        async with self._targets_held_awake(plugin):
+            return await self._dispatch_action(plugin, action_id, **kwargs)
+
+    async def _dispatch_action(self, plugin: Plugin, action_id: str, **kwargs) -> DispatchResult:
         """Returns (success, metadata). metadata is the applied CollectResult's
         .metadata dict when one was applied (e.g. carrying 'content' for
         read-style dialog actions), else None. Plain bool outcomes (the

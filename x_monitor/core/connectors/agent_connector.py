@@ -164,6 +164,18 @@ class AgentConnection:
         self._require(proto.DISMISS, "dismissing notifications")
         await self._send(proto.dismiss(key))
 
+    # --- Holding the host awake ---
+
+    async def inhibit(self, key: str, hold: bool) -> None:
+        """Ask the agent to hold its host awake under `key`, or let it go; an absent or older agent is skipped."""
+        if self._socket is None or proto.INHIBIT not in self.capabilities:
+            return
+        try:
+            await self._send(proto.inhibit(key, hold))
+        except Exception as e:
+            # A dropped socket releases every hold on the agent's side, so a lost release needs no retry.
+            logging.debug(f"agent {self.agent_id!r}: could not send inhibit for {key!r}: {e}")
+
     def _require(self, capability: str, what: str) -> None:
         """Raise unless the agent is connected and supports `capability`."""
         if self._socket is None:
