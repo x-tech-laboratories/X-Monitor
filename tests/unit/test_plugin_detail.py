@@ -409,7 +409,7 @@ class TestJobPanel:
     async def test_has_no_buttons_without_a_run_action(self, user: User):
         from x_monitor.core.ui.components import render_job_panel
         plugin = SimpleNamespace(
-            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit: []),
+            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit, exclude_kinds=(): []),
             data=SimpleNamespace(job=lambda _id: None))
 
         @ui.page('/')
@@ -430,7 +430,7 @@ class TestJobPanel:
             return [{'seq': 0, 'stream': 'stdout', 'message': 'error: builder failed'}]
 
         plugin = SimpleNamespace(
-            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit: [job], log=log),
+            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit, exclude_kinds=(): [job], log=log),
             data=SimpleNamespace(job=lambda job_id: job if job_id == 7 else None))
 
         @ui.page('/')
