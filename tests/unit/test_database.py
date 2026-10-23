@@ -792,3 +792,21 @@ class TestResultTimestamps:
         mgr.apply_result("host1", "p", "P", CollectResult(
             status="failed", timestamp=datetime.now() - timedelta(hours=1)))
         assert "status" not in published
+
+    def test_a_status_from_long_ago_becomes_current_without_being_announced(self, mgr, monkeypatch):
+        published = []
+        monkeypatch.setattr("x_monitor.core.database.database.CHANGES.publish",
+                            lambda kind, plugin_id=None: published.append(kind))
+        mgr.apply_result("host1", "p", "P", CollectResult(
+            status="failed", timestamp=datetime.now() - timedelta(hours=1)))
+        assert mgr.latest_status("p") == "failed"
+        assert "status" not in published
+
+    def test_a_status_a_moment_old_is_still_announced(self, mgr, monkeypatch):
+        published = []
+        monkeypatch.setattr("x_monitor.core.database.database.CHANGES.publish",
+                            lambda kind, plugin_id=None: published.append(kind))
+        mgr.apply_result("host1", "p", "P", CollectResult(
+            status="failed", timestamp=datetime.now() - timedelta(seconds=20)))
+        assert "status" in published
+

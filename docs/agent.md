@@ -81,7 +81,7 @@ after time offline the agent sends everything it recorded, each with the time it
 
 X-Monitor keeps each monitor's page, history and alerts. Its buttons and Poll Now run on the agent,
 and a monitor whose agent has sent nothing for three intervals (at least five minutes) shows as
-`unavailable` until records arrive again. The agent must run the same X-Monitor code as the server,
+`unavailable` until records arrive again. Statuses that arrive more than two minutes after they happened fill in the history without alerting; instead, once the agent's live records resume, each monitor's notification channels get one summary saying how long it was out of reach and every status change it recorded meanwhile. The agent must run the same X-Monitor code as the server,
 which the NixOS modules ensure when both come from one flake input; an agent on other code keeps
 its monitors on the server. Turning `run_monitors` off gives the monitors back to the server.
 

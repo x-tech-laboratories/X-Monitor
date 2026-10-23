@@ -99,3 +99,53 @@ class TestSilence:
         engine.agent_plans._last_record["disk"] = time.monotonic()
         engine.agent_plans.check_silence(_monitor(engine, "disk"))
         assert "disk" not in engine.agent_plans._silent
+
+
+def _result_record(monitor_id, status, minutes_ago):
+    from datetime import datetime, timedelta
+    from x_monitor.core.connectors.types import CollectResult
+    from x_monitor.core.sync import records
+    _, payload = records.encode_result("node-a", monitor_id, monitor_id, CollectResult(
+        status=status, timestamp=datetime.now() - timedelta(minutes=minutes_ago)))
+    return payload
+
+
+class TestOfflineSummary:
+    def _quiet(self, tmp_path):
+        engine = _engine(tmp_path)
+        _take(engine, "node-a", ["disk", "load"])
+        engine.db.insert_status("disk", "online")
+        engine.agent_plans._last_record["disk"] = time.monotonic() - 3600
+        engine.agent_plans.check_silence(_monitor(engine, "disk"))
+        sent = []
+        engine.notifications.send_summary = lambda title, body, ids, status: sent.append((title, body, ids, status))
+        return engine, sent
+
+    def test_one_summary_lists_what_changed_once_live_records_resume(self, tmp_path):
+        engine, sent = self._quiet(tmp_path)
+        plans = engine.agent_plans
+        plans._apply_record("node-a", "result", _result_record("disk", "online", 50))
+        plans._apply_record("node-a", "result", _result_record("disk", "failed", 40))
+        plans._apply_record("node-a", "result", _result_record("disk", "online", 30))
+        assert sent == []
+        plans._apply_record("node-a", "result", _result_record("disk", "online", 0))
+        assert len(sent) == 1
+        title, body, ids, status = sent[0]
+        assert title.startswith("node-a is back after")
+        assert body.startswith("Disk: failed at") and ", online at" in body
+        assert ids == ["disk", "load"] and status == "failed"
+
+    def test_an_offline_stretch_with_no_changes_still_says_the_agent_is_back(self, tmp_path):
+        engine, sent = self._quiet(tmp_path)
+        engine.agent_plans._apply_record("node-a", "result", _result_record("disk", "online", 20))
+        engine.agent_plans._apply_record("node-a", "result", _result_record("disk", "online", 0))
+        assert len(sent) == 1 and "No monitor changed status" in sent[0][1]
+
+    def test_records_from_an_agent_that_never_went_quiet_send_no_summary(self, tmp_path):
+        engine = _engine(tmp_path)
+        _take(engine, "node-a", ["disk"])
+        sent = []
+        engine.notifications.send_summary = lambda *args: sent.append(args)
+        engine.agent_plans._apply_record("node-a", "result", _result_record("disk", "failed", 20))
+        engine.agent_plans._apply_record("node-a", "result", _result_record("disk", "online", 0))
+        assert sent == []

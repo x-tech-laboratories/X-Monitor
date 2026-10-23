@@ -19,7 +19,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from x_monitor.core.connectors import agent_protocol as proto
 from x_monitor.core.connectors.types import CollectResult
+from x_monitor.core.database.database import LATE_STATUS
 from x_monitor.core.sync import records
+from x_monitor.plugins.base.plugin_helpers import format_duration
 
 if TYPE_CHECKING:
     from x_monitor.core.coordination.engine import XMonitorEngine
@@ -54,6 +56,10 @@ class AgentPlans:
         self._last_record: Dict[str, float] = {}
         self._silent: Set[str] = set()
         self._started = time.monotonic()
+        # For an agent that went quiet: when, each monitor's status before it did, and the status changes its sync reports.
+        self._offline_since: Dict[str, float] = {}
+        self._baseline: Dict[str, str] = {}
+        self._backlog: Dict[str, Dict[str, List[Tuple[datetime, str]]]] = {}
 
     # ===== Which monitors an agent runs =====
 
@@ -170,6 +176,8 @@ class AgentPlans:
             db.apply_result(target, plugin_id, plugin.name if plugin is not None else plugin_name, result)
             self._last_record[plugin_id] = time.monotonic()
             self._silent.discard(plugin_id)
+            if result.status is not None and agent_id in self._offline_since:
+                self._note_offline_status(agent_id, plugin_id, result.status, result.timestamp)
         elif kind == records.SETTING:
             db.set_setting(str(payload['key']), str(payload['value']))
         elif kind == records.JOB:
@@ -212,10 +220,40 @@ class AgentPlans:
             return
         self._silent.add(plugin.id)
         agent_id = _agent_of(plugin)
+        self._offline_since.setdefault(agent_id, time.time() - (time.monotonic() - last))
+        self._baseline[plugin.id] = self.engine.db.latest_status(plugin.id)
         since = datetime.fromtimestamp(time.time() - (time.monotonic() - last)).strftime('%Y-%m-%d %H:%M')
         self.engine._apply(plugin, CollectResult(
             status='unavailable',
             logs=[(f"Agent {agent_id!r} runs this monitor and has sent nothing since {since}", 'WARNING')]))
+
+    def _note_offline_status(self, agent_id: str, plugin_id: str, status: str, when: Optional[datetime]) -> None:
+        """Collect a status the agent recorded while away, and send the summary once its live records resume."""
+        when = when or datetime.now()
+        if datetime.now() - when > LATE_STATUS:
+            changes = self._backlog.setdefault(agent_id, {}).setdefault(plugin_id, [])
+            previous = changes[-1][1] if changes else self._baseline.get(plugin_id)
+            if status != previous:
+                changes.append((when, status))
+            return
+        self._send_offline_summary(agent_id)
+
+    def _send_offline_summary(self, agent_id: str) -> None:
+        """Notify once that an agent is back, listing each monitor's status changes while it was away."""
+        since = self._offline_since.pop(agent_id, None)
+        backlog = self._backlog.pop(agent_id, {})
+        if since is None:
+            return
+        names = {p.id: p.name for p in self.engine.all_monitors()}
+        lines = [f"{names.get(pid, pid)}: " + ", ".join(f"{status} at {when:%H:%M}" for when, status in changes)
+                 for pid, changes in sorted(backlog.items(), key=lambda item: names.get(item[0], item[0])) if changes]
+        statuses = {status for changes in backlog.values() for _, status in changes}
+        title = f"{agent_id} is back after {format_duration(int(time.time() - since))} out of reach"
+        body = "\n".join(lines) if lines else "No monitor changed status while it was out of reach."
+        monitor_ids = sorted(self._acked.get(agent_id, ('', set()))[1])
+        self.engine.notifications.send_summary(title, body, monitor_ids,
+                                               'failed' if 'failed' in statuses else 'online')
+        log.info(f"{title}: {len(lines)} monitor(s) changed status")
 
     async def dispatch(self, plugin: 'Plugin', action_id: str, **kwargs: Any) -> Tuple[bool, Optional[Dict[str, str]]]:
         """Run a button's action on the agent that runs the monitor, returning what the engine's dispatch returns."""

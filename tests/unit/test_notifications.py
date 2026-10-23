@@ -418,6 +418,21 @@ class TestEngine:
         assert [m.title for m in eng.channels['desk'].sent] == ['Nas is failed']
         eng.stop()
 
+    async def test_a_summary_goes_once_to_each_channel_its_monitors_use_unless_muted(self, db_manager):
+        from x_monitor.core.notifications.rules import Rule
+        eng = NotificationEngine(db_manager, {}, AgentRegistry())
+        eng.channels = {'desk': RecordingChannel(), 'phone': RecordingChannel(), 'mail': RecordingChannel()}
+        eng.start([_plugin('nas'), _plugin('web'), _plugin('dns')])
+        eng._tracker.rules.update({'nas': Rule(('desk',)), 'web': Rule(('desk', 'phone')),
+                                   'dns': Rule(('mail',))})
+        eng.set_muted('dns', True)
+        eng.send_summary('odin is back', 'Nas: failed at 02:10', ['nas', 'web', 'dns'], 'failed')
+        await _drain()
+        assert [m.title for m in eng.channels['desk'].sent] == ['odin is back']
+        assert [m.kind for m in eng.channels['phone'].sent] == ['summary']
+        assert eng.channels['mail'].sent == []
+        eng.stop()
+
     async def test_without_channels_nothing_is_watched(self, db_manager):
         eng = NotificationEngine(db_manager, {}, AgentRegistry())
         eng.start([_plugin('nas')])
