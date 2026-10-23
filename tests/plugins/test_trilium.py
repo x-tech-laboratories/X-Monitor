@@ -127,3 +127,11 @@ class TestTriliumCollection:
 class TestTriliumActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestOptionalLimits:
+    async def test_null_stale_warning_never_warns(self, make_plugin, run_requests):
+        p = make_plugin(Trilium, {**BASE_CFG, "stale_warning": None})
+        _run(p, run_requests, hours_ago=1000.0)
+        assert _latest_status() == "online"
+        assert p.UI_SPEC['cards']['lastmod_card']['color'](1000.0) == "online"

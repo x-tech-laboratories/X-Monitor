@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Tuple
 from x_monitor.plugins.base.signal_plugin import SignalPlugin
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from, limits_text
 
 
 def _parse_cpu_line(line: str) -> Tuple[int, int]:
@@ -36,8 +36,8 @@ class Cpu(SignalPlugin):
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.warning   = float(config.get('warning',   70))
-        self.threshold = float(config.get('threshold', 85))
+        self.warning   = limit_from(config, 'warning',   70)
+        self.threshold = limit_from(config, 'threshold', 85)
 
 
     SAMPLED = True
@@ -63,7 +63,7 @@ class Cpu(SignalPlugin):
         return CollectResult(
             metrics={'cpu_pct': cpu_pct},
             logs=[(
-                f"CPU {cpu_pct:.1f}% (warn {self.warning:g}% / fail {self.threshold:g}%)",
+                f"CPU {cpu_pct:.1f}% ({limits_text(self.warning, self.threshold, '%')})",
                 Status(status).log_level,
             )],
             status=status,

@@ -16,6 +16,8 @@ from x_monitor.core.coordination.monitor_graph import is_link
 from x_monitor.plugins.base.plugin_helpers import parse_duration
 
 PROBLEM_STATUSES = (Status.FAILED, Status.WARNING, Status.UNAVAILABLE)
+# The statuses a recovery lands in that read as recovered rather than as a new state.
+HEALTHY_STATUSES = (Status.ONLINE, Status.INFO)
 
 PROBLEM = "problem"
 REMINDER = "reminder"

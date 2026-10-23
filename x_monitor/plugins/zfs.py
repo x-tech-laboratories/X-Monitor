@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 from x_monitor.plugins.base.signal_plugin import SignalPlugin, worst_status as _worst
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from, limits_text
 
 
 _UNHEALTHY = {'DEGRADED', 'FAULTED', 'OFFLINE', 'UNAVAIL', 'REMOVED'}
@@ -30,8 +30,8 @@ class Zfs(SignalPlugin):
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.warning = float(config.get('warning', 80))
-        self.threshold = float(config.get('threshold', 90))
+        self.warning = limit_from(config, 'warning', 80)
+        self.threshold = limit_from(config, 'threshold', 90)
         self.pools = list(config.get('pools') or [])
 
     def _item_level(self, item):
@@ -79,7 +79,7 @@ class Zfs(SignalPlugin):
             statuses.append(status)
             logs.append((
                 f"Pool {pool}: {health}, {usage_pct:.0f}% used "
-                f"(warn {self.warning:g}% / fail {self.threshold:g}%)",
+                f"({limits_text(self.warning, self.threshold, '%')})",
                 Status(status).log_level,
             ))
 
@@ -128,7 +128,7 @@ class Zfs(SignalPlugin):
                     'item_color_by': self._item_level,
                     'label_transform': 'spaces_upper',
                     'container': 'bars',
-                    'bar_marker': self.warning,
+                    'bar_marker': self.warning if self.warning is not None else self.threshold,
                     'empty_text': 'No ZFS pools found',
                 },
             },

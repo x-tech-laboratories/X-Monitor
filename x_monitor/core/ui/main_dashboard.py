@@ -11,7 +11,7 @@ from . import theme
 from .components import icon_button
 from .auth import LOGOUT_PATH, AuthConfig
 from .sidebar import render_sidebar
-from .views import render_overview, render_events, render_plugin_detail
+from .views import render_overview, render_events, render_plugin_detail, render_schedules
 from .views.notifications import open_notifications_dialog
 
 _ICON = Path(__file__).parent / 'static' / 'icon.svg'
@@ -32,6 +32,8 @@ def view_path(view_type: str, plugin: Optional[Any] = None) -> str:
     """The address of a dashboard view, so each monitor's page can be linked to."""
     if view_type == 'events':
         return '/events'
+    if view_type == 'schedules':
+        return '/schedules'
     if view_type == 'plugin' and plugin is not None:
         return f"/monitor/{quote(plugin.id, safe='')}"
     return '/'
@@ -134,6 +136,8 @@ def _render_index(engine: EngineLike, auth_config: Optional[AuthConfig] = None,
                 render_overview(engine, switch_view)
             elif state.current_view == 'events':
                 render_events(engine, switch_view)
+            elif state.current_view == 'schedules':
+                render_schedules(engine, switch_view)
             else:
                 render_plugin_detail(engine, switch_view, state.selected_plugin)
 
@@ -160,6 +164,10 @@ def init_gui(engine: EngineLike, port: int = 8080):
     @ui.page('/events')
     def events_page():
         _render_index(engine, auth_config, view='events')
+
+    @ui.page('/schedules')
+    def schedules_page():
+        _render_index(engine, auth_config, view='schedules')
 
     @ui.page('/monitor/{monitor_id}')
     def monitor_page(monitor_id: str):

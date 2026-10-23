@@ -39,6 +39,7 @@ BORDER            = 'var(--border-default)'
 # value it would be illegible as (§3.6).
 STATUS_COLORS = {
     'online':  'var(--status-success)',
+    'info':    'var(--status-info)',
     'warning': 'var(--status-warning-text)',
     'failed':  'var(--status-danger)',
     'unavailable': 'var(--text-tertiary)',
@@ -47,6 +48,7 @@ STATUS_COLORS = {
 
 _STATUS_TOKENS = {
     'online':  'status-success',
+    'info':    'status-info',
     'warning': 'status-warning-text',
     'failed':  'status-danger',
     'unavailable': 'text-tertiary',
@@ -61,6 +63,7 @@ _CONFIG_TOKENS = {
     'text':             'text-body',
     'text_muted':       'text-secondary',
     'status_online':    'status-success',
+    'status_info':      'status-info',
     'status_warning':   'status-warning-text',
     'status_failed':    'status-danger',
     'status_unavailable': 'text-tertiary',

@@ -134,6 +134,7 @@ class PluginConfig(TypedDict, total=False):
     interval: Any               # int seconds, or a duration string like '5m' — see parse_duration
     offset: Any                 # pins polls to the clock: run when UTC time is this far past a multiple of interval
     schedule: List[Dict[str, Any]]  # actions run on a cron schedule: [{action, cron, args}] — see coordination/schedule.py
+    actions: List[Dict[str, Any]]  # user command buttons: [{name, command, id, icon, confirm, danger, timeout, agent}] — see plugins/base/custom_actions.py
     timeout: Any
     target_host: str
     agent: str                  # id of the agent to reach this target through, instead of SSH

@@ -63,7 +63,12 @@ class ActionButtonSpec(TypedDict, total=False):
     button rendered inline in the page body via render_buttons); this one
     is always rendered in the fixed header regardless of UI_SPEC. With
     kind 'toggle' it is a toggle button instead: it is pressed while the latest
-    value of `metric` is on, and clicking it runs `on_action_id` or `off_action_id`."""
+    value of `metric` is on, and clicking it runs `on_action_id` or `off_action_id`.
+    A `confirm` text asks the user first and runs the action only on a yes.
+    A `job` names the kind of job the action launches, or a list of kinds when it
+    launches one of several, so the header fills it while that job runs, greys it
+    out while another runs, and shows Cancel. Kind 'dialog' opens the plugin's
+    `dialog` instead of running an action."""
     action_id: str
     name: str
     icon: str
@@ -72,6 +77,9 @@ class ActionButtonSpec(TypedDict, total=False):
     metric: str
     on_action_id: str
     off_action_id: str
+    confirm: str
+    job: Union[str, List[str]]
+    dialog: str
 
 
 @runtime_checkable

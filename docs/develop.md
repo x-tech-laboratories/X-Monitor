@@ -137,7 +137,11 @@ unchecked at the boundary (bad data fails at first use, not at load).
   buttons rendered regardless of `UI_SPEC`. An entry with `kind: 'toggle'` is a
   toggle button: it is pressed while the latest value of its `metric` is above
   0.5, runs `on_action_id` or `off_action_id` when clicked, then polls so it
-  shows the state the target reports. An optional `icon` sets its glyph.
+  shows the state the target reports. An optional `icon` sets its glyph, and
+  an optional `confirm` text asks the user before the action runs. A
+  monitor's `actions` config adds its own entries after the plugin's, through
+  `Plugin.all_actions()`; the engine runs those before `plan_action` is asked
+  (`plugins/base/custom_actions.py`).
 
 Other typed boundaries: `core/ui/spec_types.py` (`UISpec` and its nested card /
 table / dialog / job-panel shapes that `generic_render` interprets),
@@ -617,8 +621,8 @@ Two hazards are worth knowing before editing either sheet:
 
 ## The overview's fleet sections
 
-Above its charts the overview draws the fleet: a tile per root of the monitor tree, tinted
-by the worst state among its monitors and opening that group's page; reachability strips for every
+Above its charts the overview draws the fleet: a tile per root of the monitor tree, its
+dot showing the worst state among its monitors, opening that group's page; reachability strips for every
 uptime, http, mosquitto, dns_record and push monitor, grouped by host; a meter per borg repository
 of the time since its newest archive, half full at its max age; a tile per NixOS deployment; and a
 bar per vulnerability scan. A section appears only when the fleet has monitors of its kind.
@@ -631,7 +635,7 @@ status history on disk, so the strips cover the last 60 readings rather than a f
 ## Overview charts: a donut for status, a treemap for type
 
 The overview's two cards look alike but carry different data, and only one of
-them suits a donut. Status has four fixed slices, so part-to-whole reads at a
+them suits a donut. Status has five fixed slices, so part-to-whole reads at a
 glance. Type does not: a modest config already declares ~25 monitor types, most
 of them once, which is the case a pie handles worst — two dozen near-identical
 slivers, a legend taller than the plot, and ECharts' nine-hue default palette
@@ -640,7 +644,7 @@ cycling, so the tenth type is painted the same blue as the first.
 The type card is a treemap instead. Tile area is the monitor count and the label
 inside each tile carries identity, which frees color to mean something: each
 tile takes the *worst* status among its monitors (`_worst_status`, severity
-`failed > warning > unavailable > online`), drawn from the four reserved status
+`failed > warning > unavailable > info > online`), drawn from the five reserved status
 tokens. So the chart costs no categorical palette at any type count, and one
 failed unit inside an otherwise healthy type is visible without opening it.
 Clicking a tile still filters the monitor table exactly as the donut slice did.
@@ -718,6 +722,10 @@ share bar. They follow the client's scheme with no repaint and send only what ch
 multi-series chart is ECharts like `history_chart`, so it repaints its literal colors through `theme.on_scheme_change`; `palette()['series']` gives it the three
 `--series-*` tokens, the first of which is the accent itself.
 
+Cards and tiles stay plain whatever their state: status shows only in the marks inside them,
+the colored value, badge, dot, arc, meter or strip cell, so a page of trouble reads as marks to
+scan rather than a wall of tinted panels.
+
 Every widget prints its value next to its shape. A bar on its own track can be too faint to
 read (§3.6 of Halon's guide), and a printed number makes the shape reinforcement rather than
 the only carrier of the value.
@@ -739,7 +747,7 @@ otherwise always the transport's, so labels match what was collected.
 
 `plugins/base/plugin_helpers.py` holds `PluginConfigMixin` (the `id` / `target` /
 `interval` derivation every plugin needs, via `_init_config`) plus shared pure
-helpers (`parse_duration`, `format_duration`, `format_bytes`, `level_for`), split
+helpers (`parse_duration`, `format_duration`, `format_bytes`, `limit_from`, `level_for`), split
 out so they're reusable without dragging in the rest of `plugin_base.py`.
 `parse_duration` accepts plain numbers or strings like `'1w'`, `'7d'`,
 `'2h30m'`, `'30s'`, including compound forms like `'1d12h'`. `format_bytes` reads

@@ -340,17 +340,6 @@ a, .q-link { color: var(--accent); }
 
 .halon-card-header .nicegui-row { gap: var(--space-2); flex-wrap: nowrap; align-items: center; }
 
-/* A panel whose value is in warning or failed takes a hint of that state on its border and ground (§6.7). */
-.halon-card.halon-card--warning {
-    border-color: color-mix(in srgb, var(--status-warning-text) 55%, var(--border-default));
-    background-color: color-mix(in srgb, var(--status-warning) 7%, var(--surface-default));
-}
-
-.halon-card.halon-card--failed {
-    border-color: color-mix(in srgb, var(--status-danger) 55%, var(--border-default));
-    background-color: color-mix(in srgb, var(--status-danger) 7%, var(--surface-default));
-}
-
 /* A labelled value: the label pinned to the top and the value centred in the space below it, both flush left. */
 .halon-stat { justify-content: flex-start; gap: var(--space-2); min-height: 84px; }
 .halon-stat > .halon-value, .halon-gauge-text > .halon-value { margin-block: auto; }
@@ -898,7 +887,7 @@ a, .q-link { color: var(--accent); }
     background-color: var(--status-warning-text);
 }
 
-/* A tile is one item's state: a dot and a name, its value beneath, its border in the state's color. */
+/* A tile is one item's state: a dot in the state's color and a name, its value beneath, on a plain panel. */
 .halon-repeat-tiles {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -911,9 +900,8 @@ a, .q-link { color: var(--accent); }
     flex-direction: column;
     gap: var(--space-2);
     padding: var(--space-4) var(--space-5);
-    border: var(--border-width) solid color-mix(in srgb, var(--halon-tile-color) 45%, var(--border-default));
+    border: var(--border-width) solid var(--border-default);
     border-radius: var(--radius-small);
-    background-color: color-mix(in srgb, var(--halon-tile-color) 8%, transparent);
     min-width: 0;
 }
 
@@ -930,7 +918,7 @@ a, .q-link { color: var(--accent); }
 }
 
 .halon-host-tile { padding: var(--space-5) var(--space-6); transition: border-color var(--duration-fast); }
-.halon-host-tile:hover { border-color: var(--halon-tile-color); }
+.halon-host-tile:hover { border-color: var(--border-hover); }
 .halon-host-tile .halon-tile-label { font-size: var(--text-h3); }
 .halon-host-share { height: 6px; border-radius: 3px; margin-top: var(--space-2); }
 
@@ -996,6 +984,7 @@ a, .q-link { color: var(--accent); }
 
 .halon-badge-accent { background-color: var(--accent); color: var(--text-on-fill); }
 .halon-badge-success { background-color: var(--status-success); color: var(--text-on-fill); }
+.halon-badge-info { background-color: var(--status-info); color: var(--text-on-fill); }
 .halon-badge-danger { background-color: var(--status-danger); color: var(--text-on-fill); }
 /* Warning is light in both schemes and takes near-black text (§3.5). */
 .halon-badge-warning { background-color: var(--status-warning); color: var(--text-on-light); }

@@ -58,3 +58,17 @@ class TestCollection:
 
     def test_it_takes_its_own_proc_stat_sample(self, plugin):
         assert '---SNAP---' in plugin.commands()[0].text
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Interrupts, dict(CFG, warning=500, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _snaps(intr_delta=10_000_000), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Interrupts, dict(CFG, warning=None, threshold=1000))
+        run_cycle(p, lambda c: CmdResult(0, _snaps(intr_delta=999), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _snaps(intr_delta=1200), ""))
+        assert _latest_status() == "failed"

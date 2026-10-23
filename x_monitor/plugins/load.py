@@ -6,18 +6,19 @@ from typing import Any, Dict, List
 from x_monitor.plugins.base.signal_plugin import SignalPlugin
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from
 
 
 class Load(SignalPlugin):
     """Load average from /proc/loadavg, normalized by core count so 100%
-    means the host is exactly at capacity. Thresholds are optional; without
-    both, load is collected and charted but never changes the status."""
+    means the host is exactly at capacity. Each limit is optional and applies
+    on its own; with neither, load is collected and charted but never
+    changes the status."""
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.warning   = float(config['warning'])   if 'warning'   in config else None
-        self.threshold = float(config['threshold']) if 'threshold' in config else None
+        self.warning   = limit_from(config, 'warning')
+        self.threshold = limit_from(config, 'threshold')
 
     SAMPLED = True
 
@@ -44,10 +45,7 @@ class Load(SignalPlugin):
         except (ValueError, IndexError) as e:
             return CollectResult.unavailable(f"Failed to parse load output: {e}")
 
-        if self.warning is not None and self.threshold is not None:
-            status = level_for(load_pct_1m, self.warning, self.threshold)
-        else:
-            status = 'online'
+        status = level_for(load_pct_1m, self.warning, self.threshold)
 
         return CollectResult(
             metrics={
@@ -66,7 +64,7 @@ class Load(SignalPlugin):
     def cards(self) -> Dict[str, Dict[str, Any]]:
         load_1m_card = {'kind': 'gauge', 'metric': 'load_pct_1m', 'title': 'LOAD 1M',
                         'format': 'percent0_plain_dash'}
-        if self.warning is not None and self.threshold is not None:
+        if self.warning is not None or self.threshold is not None:
             load_1m_card['color'] = {'warning': self.warning, 'threshold': self.threshold}
         return {'load_1m_card': load_1m_card}
 

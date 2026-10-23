@@ -416,3 +416,27 @@ class TestUiSpec:
     def test_existing_cards_are_kept(self, plugin):
         assert {'connection_card', 'speed_card', 'torrents_card', 'stalled_card',
                 'errored_card'} <= set(plugin.UI_SPEC['cards'])
+
+
+class TestOptionalLimits:
+    async def test_stall_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Qbittorrent, {**BASE_CFG, "stalled_threshold": None})
+        _respond(p, run_cycle, torrents=_torrents(downloading=1, stalled=50))
+        assert _latest_status() == "warning"
+        assert p.UI_SPEC['cards']['stalled_card']['color'](50) == "warning"
+
+    async def test_stall_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Qbittorrent, {**BASE_CFG, "stalled_warning": None})
+        _respond(p, run_cycle, torrents=_torrents(downloading=1, stalled=5))
+        assert _latest_status() == "online"
+        _respond(p, run_cycle, torrents=_torrents(downloading=1, stalled=10))
+        assert _latest_status() == "failed"
+
+    async def test_null_error_threshold_never_fails_on_errored(self, make_plugin, run_cycle):
+        p = make_plugin(Qbittorrent, {**BASE_CFG, "error_threshold": None})
+        _respond(p, run_cycle, torrents=_torrents(downloading=1, errored=3))
+        assert _latest_status() == "online"
+
+    def test_count_limits_stay_whole_numbers(self, make_plugin):
+        p = make_plugin(Qbittorrent, {**BASE_CFG, "stalled_warning": 4.0})
+        assert p.stalled_warning == 4 and isinstance(p.stalled_warning, int)

@@ -16,6 +16,11 @@ class TestStatusLadder:
         assert Status.worst(['online', 'unavailable']) == Status.UNAVAILABLE
         assert Status.worst(['unavailable', 'warning']) == Status.WARNING
 
+    def test_info_ranks_between_online_and_unavailable(self):
+        assert Status.worst(['online', 'info']) == Status.INFO
+        assert Status.worst(['info', 'unavailable']) == Status.UNAVAILABLE
+        assert Status.INFO.log_level == 'INFO'
+
     def test_the_old_offline_name_reads_as_unavailable(self):
         assert Status('offline') is Status.UNAVAILABLE
         assert Status.worst(['online', 'offline']) == Status.UNAVAILABLE

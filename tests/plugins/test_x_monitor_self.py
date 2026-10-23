@@ -226,3 +226,47 @@ class TestCollectionHealth:
 class TestSelfActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestOptionalLimits:
+    @pytest.fixture(autouse=True)
+    def _clear_engine(self):
+        yield
+        XMonitorSelfPlugin.engine = None
+
+    async def test_memory_warning_only_never_fails(self, make_plugin, run_io_cycle):
+        p = make_plugin(XMonitorSelfPlugin, dict(BASE_CFG, memory_threshold=None))
+        p.engine = _make_engine([])
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=100_000.0):
+            _run(p, run_io_cycle)
+        assert _latest_status() == "warning"
+
+    async def test_memory_failure_only_never_warns(self, make_plugin, run_io_cycle):
+        p = make_plugin(XMonitorSelfPlugin, dict(BASE_CFG, memory_warning=None))
+        p.engine = _make_engine([])
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=500.0):
+            _run(p, run_io_cycle)
+        assert _latest_status() == "online"
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=600.0):
+            _run(p, run_io_cycle)
+        assert _latest_status() == "failed"
+
+    async def test_stale_warning_only_never_stalls(self, make_plugin, run_io_cycle):
+        p = make_plugin(XMonitorSelfPlugin, dict(BASE_CFG, stale_threshold=None))
+        p.engine = _make_engine([_fake_monitor("old", 60)], {"old": time.monotonic() - 60 * 1000})
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=100.0):
+            _run(p, run_io_cycle)
+        assert _latest_metric("monitors_stalled") == 0.0
+        assert _latest_status() == "warning"
+
+    async def test_stale_failure_only_is_never_late(self, make_plugin, run_io_cycle):
+        p = make_plugin(XMonitorSelfPlugin, dict(BASE_CFG, stale_warning=None))
+        p.engine = _make_engine([_fake_monitor("slow", 60)], {"slow": time.monotonic() - 60 * 9})
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=100.0):
+            _run(p, run_io_cycle)
+        assert _latest_metric("monitors_late") == 0.0
+        assert _latest_status() == "online"
+        p.engine = _make_engine([_fake_monitor("slow", 60)], {"slow": time.monotonic() - 60 * 12})
+        with patch("x_monitor.plugins.x_monitor_self._read_rss_mb", return_value=100.0):
+            _run(p, run_io_cycle)
+        assert _latest_status() == "failed"

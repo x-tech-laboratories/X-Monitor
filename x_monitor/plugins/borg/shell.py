@@ -1,7 +1,9 @@
 """Shell plumbing shared by every borg call: framing several calls into one command, reading them back apart, and naming what went wrong."""
 
 import re
-from typing import Any, Dict, List, Optional
+import shlex
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from x_monitor.core.connectors.types import CmdResult
 
@@ -10,8 +12,16 @@ _POLL_BASE_DIR_VAR = "__x_monitor_poll_base"
 _POLL_DEADLINE_VAR = "__x_monitor_poll_end"
 _POLL_LEFT_FN = "__x_monitor_poll_left"
 _POLL_RC_VAR = "__x_monitor_poll_rc"
+_JOB_RC_VAR = "__x_monitor_job_rc"
+_STEP_RC_VAR = "__x_monitor_step_rc"
+_SKIP_VAR = "__x_monitor_skip"
+_SKIP_MARK = "__XMONITOR_SKIP__ "
+# A job prints this before each step it chains, and the line becomes the job's progress until borg reports its own.
+_STEP_MARK = "==> "
 _FRAME = "__XMONITOR_BORG__"
 _CUT_SHORT = "no output: the poll ended before this call ran"
+# A repository host goes into a shell probe, so only characters a hostname or an IP address can hold get through.
+_SAFE_HOST = re.compile(r"^[A-Za-z0-9.:_-]+$")
 
 
 def _as_list(value: Any) -> List[str]:
@@ -119,6 +129,78 @@ def _list_unavailable(exit_code: int, detail: str) -> bool:
     return (exit_code == -1 or "command not found" in text
             or "permission denied" in text
             or "failed to create/acquire the lock" in text)
+
+
+def _ssh_endpoint(repo: str) -> Optional[Tuple[str, int]]:
+    """The host and port of an `ssh://` repository URL, or None for a local path or a name the shell could misread."""
+    if not (repo or '').startswith('ssh://'):
+        return None
+    try:
+        parts = urlsplit(repo)
+        host, port = parts.hostname, parts.port or 22
+    except ValueError:
+        return None
+    if not host or not _SAFE_HOST.match(host):
+        return None
+    return host, port
+
+
+def _preflight_script(endpoint: Optional[Tuple[str, int]], units: List[str]) -> Optional[str]:
+    """Shell that sets the skip variable to the first reason a job should not start, or None when there is nothing to test."""
+    tests = []
+    if endpoint:
+        host, port = endpoint
+        # Reads the SSH banner rather than pinging, since a host can answer ICMP while its SSH transport hangs.
+        probe = shlex.quote(f"exec 3<>/dev/tcp/{host}/{port} && head -c 4 <&3")
+        reason = shlex.quote(f"{host}:{port} is not answering SSH")
+        tests.append(f"if ! timeout 5 bash -c {probe} 2>/dev/null | grep -q '^SSH-'; then {_SKIP_VAR}={reason}; fi")
+    for unit in units:
+        reason = shlex.quote(f"{unit} is running")
+        tests.append(f'if [ -z "${_SKIP_VAR}" ] && systemctl is-active --quiet {shlex.quote(unit)}; '
+                     f'then {_SKIP_VAR}={reason}; fi')
+    if not tests:
+        return None
+    return "; ".join([f"{_SKIP_VAR}="] + tests)
+
+
+def _with_preflight(preflight: Optional[str], launch: str) -> str:
+    """Runs `launch` only when the preflight found no reason to skip, and otherwise prints that reason instead."""
+    if not preflight:
+        return launch
+    return (f'{preflight}; if [ -n "${_SKIP_VAR}" ]; then echo "{_SKIP_MARK}${_SKIP_VAR}"; '
+            f'else {launch}; fi')
+
+
+def _skip_reason(stdout: str) -> Optional[str]:
+    """The reason a launch printed for skipping its job, or None when it launched."""
+    for line in (stdout or '').splitlines():
+        if line.startswith(_SKIP_MARK):
+            return line[len(_SKIP_MARK):].strip()
+    return None
+
+
+def _then_steps(first: str, steps: List[Tuple[str, str]]) -> str:
+    """Runs `first`, then each (label, command) step while everything so far ended in success or a borg warning, exiting with the worst status."""
+    if not steps:
+        return first
+    parts = [f"{first}; {_JOB_RC_VAR}=$?"]
+    for label, command in steps:
+        parts.append(f'if [ "${_JOB_RC_VAR}" -le 1 ]; then echo {shlex.quote(_STEP_MARK + label)}; {command}; '
+                     f'{_STEP_RC_VAR}=$?; if [ "${_STEP_RC_VAR}" -gt "${_JOB_RC_VAR}" ]; then {_JOB_RC_VAR}=${_STEP_RC_VAR}; fi; fi')
+    # A plain `exit` would leave the job's shell before it records the status, so a subshell carries it instead.
+    parts.append(f'(exit "${_JOB_RC_VAR}")')
+    return "; ".join(parts)
+
+
+def _wrap_job(command: str, wrappers: List[str], lock: Optional[str]) -> str:
+    """Runs the whole job under the given wrapper argv, saying so first when it has to wait for the lock."""
+    if not wrappers:
+        return command
+    wrapped = " ".join(shlex.quote(a) for a in wrappers) + " sh -c " + shlex.quote(command)
+    if not lock:
+        return wrapped
+    waiting = shlex.quote(f"{_STEP_MARK}Waiting for another job to release {lock}")
+    return f"flock -n {shlex.quote(lock)} true 2>/dev/null || echo {waiting}; {wrapped}"
 
 
 def _archive_member(path: str) -> Optional[str]:

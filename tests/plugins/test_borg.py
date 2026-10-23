@@ -1,10 +1,15 @@
 import json
 import re
+import shutil
+import subprocess
 import time
 from datetime import datetime
 import pytest
 
 from x_monitor.plugins.borg import Borg, _frame_line
+from x_monitor.plugins.borg.shell import (
+    _preflight_script, _skip_reason, _ssh_endpoint, _then_steps, _with_preflight, _wrap_job,
+)
 from x_monitor.core.connectors.types import CmdResult
 from x_monitor.core.database.database import db, StatusHistory, Metric
 
@@ -445,13 +450,46 @@ class TestPollDeadline:
 
 
 class TestActions:
-    async def test_no_actions_without_source_paths(self, plugin):
-        assert plugin.get_actions() == []
+    async def test_only_repo_actions_without_further_config(self, plugin):
+        assert _action_ids(plugin) == ["check_repo", "compact_repo"]
 
     async def test_backup_actions_exposed_with_source_paths(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "source_paths": ["/home"]})
-        ids = {a['action_id'] for a in p.get_actions()}
-        assert ids == {"run_backup", "dry_run_backup"}
+        assert {"run_backup", "dry_run_backup"} <= set(_action_ids(p))
+
+    async def test_every_tool_is_a_header_action_when_configured(self, make_plugin):
+        p = make_plugin(Borg, FULL_CFG)
+        assert _action_ids(p) == ["run_backup", "dry_run_backup", "verify_restore", "check_repo", "compact_repo",
+                                  "prune_preview", "prune_repo", "purge_preview", "purge_excluded", "break_lock"]
+
+    async def test_prune_preview_opens_its_dialog(self, make_plugin):
+        action = _action(make_plugin(Borg, FULL_CFG), "prune_preview")
+        assert action['kind'] == 'dialog' and action['dialog'] in make_plugin(Borg, FULL_CFG).UI_SPEC['dialogs']
+
+    async def test_destructive_tools_ask_first_and_name_the_repo(self, make_plugin):
+        p = make_plugin(Borg, FULL_CFG)
+        for action_id in ("prune_repo", "purge_excluded", "break_lock"):
+            action = _action(p, action_id)
+            assert action['variant'] == 'danger' and BASE_CFG["repo"] in action['confirm']
+
+    async def test_a_running_check_fills_check_and_greys_out_other_jobs(self, make_plugin):
+        p = make_plugin(Borg, FULL_CFG)
+        await _launch(p, "check_repo")
+        assert p.action_state(_action(p, "check_repo")) == 'accent'
+        assert p.action_state(_action(p, "run_backup")) == 'disabled'
+        assert p.action_state(_action(p, "break_lock")) == 'disabled'
+        assert p.action_state(_action(p, "verify_restore")) == 'normal'
+
+    async def test_break_lock_is_normal_while_no_job_runs(self, make_plugin):
+        p = make_plugin(Borg, FULL_CFG)
+        assert p.action_state(_action(p, "break_lock")) == 'normal'
+
+    async def test_job_controls_live_in_the_header_only(self, plugin):
+        spec = plugin.UI_SPEC
+        assert 'buttons' not in spec and 'run_action_id' not in spec['job_panel']
+
+    def test_archives_table_has_a_title(self, plugin):
+        assert plugin.UI_SPEC['tables']['archives']['title'] == 'ARCHIVES'
 
     async def test_unknown_action_returns_false(self, plugin):
         assert plugin.plan_action("nonsense") is None
@@ -463,6 +501,17 @@ class TestActions:
 
 
 BACKUP_CFG = {**BASE_CFG, "source_paths": ["/home", "/etc"]}
+
+FULL_CFG = {**BASE_CFG, "source_paths": ["/home"], "canary_path": "home/canary", "keep_daily": 7,
+            "allow_delete": True, "allow_purge": True, "exclude": ["*.tmp"]}
+
+
+def _action_ids(plugin):
+    return [a['action_id'] for a in plugin.get_actions()]
+
+
+def _action(plugin, action_id):
+    return next(a for a in plugin.get_actions() if a['action_id'] == action_id)
 
 
 class TestBackupCommand:
@@ -1325,3 +1374,205 @@ class TestDiff:
         out = "added       1.20 kB etc/new\nremoved     0 B etc/old"
         content = p.interpret_action("diff_archive", _framed(p, CmdResult(0, out, "")), archive="b2").metadata['content']
         assert content.startswith("Changes from b1 to b2: 2") and "etc/new" in content
+
+
+def _sh(script: str) -> subprocess.CompletedProcess:
+    """Runs generated job shell for real, so its control flow is tested rather than its spelling."""
+    return subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30)
+
+
+class TestJobPreflight:
+    async def test_an_ssh_repo_probes_its_servers_ssh_banner_first(self, make_plugin):
+        cmd = make_plugin(Borg, BACKUP_CFG).plan_action("run_backup").command
+        assert "/dev/tcp/host/22" in cmd and cmd.index("/dev/tcp/host/22") < cmd.index("setsid")
+
+    async def test_the_probe_uses_the_urls_port(self, make_plugin):
+        cmd = make_plugin(Borg, {**BACKUP_CFG, "repo": "ssh://borg@far.example:2222/srv/repo"}).plan_action("run_backup").command
+        assert "/dev/tcp/far.example/2222" in cmd
+
+    @pytest.mark.parametrize("cfg", [{"repo": "/srv/local"}, {"skip_when_unreachable": False}])
+    async def test_a_local_repo_or_a_disabled_probe_launches_directly(self, make_plugin, cfg):
+        cmd = make_plugin(Borg, {**BACKUP_CFG, **cfg}).plan_action("run_backup").command
+        assert "/dev/tcp" not in cmd
+
+    async def test_a_running_unit_is_tested_for(self, make_plugin):
+        cmd = make_plugin(Borg, {**BACKUP_CFG, "skip_while_active": ["borg-check.service"]}).plan_action("check_repo").command
+        assert "systemctl is-active --quiet borg-check.service" in cmd
+
+    async def test_a_skipped_launch_records_no_job_and_is_not_a_failure(self, make_plugin):
+        p = make_plugin(Borg, BACKUP_CFG)
+        p.plan_action("run_backup")
+        outcome = p.interpret_action("run_backup", CmdResult(0, "__XMONITOR_SKIP__ host:22 is not answering SSH\n", ""))
+        assert outcome.success is True and outcome.status is None
+        assert p.jobs.running() is None
+        assert outcome.metadata['content'] == "Backup skipped: host:22 is not answering SSH"
+
+    def test_a_closed_port_skips_and_never_launches(self):
+        script = _with_preflight(_preflight_script(("127.0.0.1", 1), []), "echo launched")
+        out = _sh(script).stdout
+        assert "launched" not in out and _skip_reason(out) == "127.0.0.1:1 is not answering SSH"
+
+    def test_an_inactive_unit_lets_the_job_launch(self):
+        script = _with_preflight(_preflight_script(None, ["x-monitor-no-such-unit.service"]), "echo launched")
+        assert _sh(script).stdout.strip() == "launched"
+
+    def test_a_host_the_shell_could_misread_is_not_probed(self):
+        assert _ssh_endpoint("ssh://borg@$(reboot)/srv") is None
+
+
+CHAIN_CFG = {**BACKUP_CFG, "keep_daily": 7, "prune_after_backup": True, "compact_after_backup": True}
+
+
+class TestBackupChain:
+    async def test_a_backup_alone_by_default(self, make_plugin):
+        cmd = make_plugin(Borg, {**BACKUP_CFG, "keep_daily": 7}).plan_action("run_backup").command
+        assert " prune " not in cmd and " compact " not in cmd
+
+    async def test_prune_then_compact_follow_the_create(self, make_plugin):
+        cmd = _unquoted(make_plugin(Borg, CHAIN_CFG).plan_action("run_backup"))
+        assert cmd.index("create") < cmd.index("prune --list --stats") < cmd.index("compact --progress")
+        assert "--keep-daily 7" in cmd
+
+    async def test_a_dry_run_never_prunes(self, make_plugin):
+        cmd = make_plugin(Borg, CHAIN_CFG).plan_action("dry_run_backup").command
+        assert " prune " not in cmd and " compact " not in cmd
+
+    def test_pruning_after_a_backup_needs_a_retention_policy(self, make_plugin):
+        with pytest.raises(ValueError, match="keep_"):
+            make_plugin(Borg, {**BACKUP_CFG, "prune_after_backup": True})
+
+    @pytest.mark.parametrize("first, ran, status", [(0, True, 0), (1, True, 1), (2, False, 2)])
+    def test_steps_run_only_after_success_or_a_warning(self, first, ran, status):
+        result = _sh(_then_steps(f"(exit {first})", [("Pruning", "echo pruned")]))
+        assert ("pruned" in result.stdout) is ran and result.returncode == status
+
+    def test_a_failing_step_fails_the_job_and_stops_the_rest(self):
+        result = _sh(_then_steps("true", [("Pruning", "(exit 2)"), ("Compacting", "echo compacted")]))
+        assert result.returncode == 2 and "compacted" not in result.stdout
+
+    def test_each_step_becomes_the_progress(self):
+        assert Borg._progress_from_lines(["==> Compacting"]) == "Compacting"
+
+
+class TestJobWrappers:
+    async def test_no_wrappers_by_default(self, make_plugin):
+        cmd = make_plugin(Borg, BACKUP_CFG).plan_action("run_backup").command
+        assert "nice" not in cmd and "flock" not in cmd and "systemd-inhibit" not in cmd
+
+    async def test_lock_then_inhibitor_then_priority_wrap_the_whole_job(self, make_plugin):
+        cfg = {**CHAIN_CFG, "job_lock": "/run/lock/x-monitor-borg", "inhibit_sleep": True,
+               "job_nice": 19, "job_io_idle": True}
+        cmd = _unquoted(make_plugin(Borg, cfg).plan_action("run_backup"))
+        order = ["flock /run/lock/x-monitor-borg systemd-inhibit", "--what=sleep:shutdown",
+                 "nice -n 19 ionice -c 3 sh -c", "create", "compact --progress"]
+        assert [cmd.index(part) for part in order] == sorted(cmd.index(part) for part in order)
+
+    async def test_polls_are_never_wrapped(self, make_plugin):
+        p = make_plugin(Borg, {**BACKUP_CFG, "job_nice": 19, "job_lock": "/run/lock/x"})
+        p.commands()
+        assert "nice" not in p._poll_command() and "flock" not in p._poll_command()
+
+    def test_the_wrapped_job_keeps_its_exit_status(self, tmp_path):
+        if not shutil.which("flock"):
+            pytest.skip("flock is not installed")
+        lock = str(tmp_path / "job.lock")
+        result = _sh(_wrap_job("echo ran; (exit 3)", ["flock", lock, "nice", "-n", "19"], lock))
+        assert result.stdout.strip() == "ran" and result.returncode == 3
+
+
+TRACKED_CFG = {**BASE_CFG, "repo": "/srv/local", "collect_stats": False,
+               "check_kinds": {"repository": "8d", "extract": "32d"}}
+
+
+def _finish_job(plugin, action_id, exit_code, **kwargs):
+    plugin.plan_action(action_id, **kwargs)
+    plugin.storage.apply(plugin.interpret_action(action_id, CmdResult(0, "91\n", "")))
+    _poll_once(plugin, _poll(5, exit_code, False, ""))
+
+
+class TestCheckKinds:
+    @pytest.mark.parametrize("kind, option, job", [
+        ("repository", "--repository-only", "check-repository"),
+        ("archives", "--archives-only", "check-archives"),
+        ("data", "--verify-data", "check-data"),
+    ])
+    async def test_each_kind_runs_its_own_check(self, make_plugin, kind, option, job):
+        p = make_plugin(Borg, BASE_CFG)
+        assert option in p.plan_action("check_repo", kind=kind).command
+        p.storage.apply(p.interpret_action("check_repo", CmdResult(0, "91\n", "")))
+        assert p.jobs.running()['kind'] == job
+
+    async def test_an_extract_check_dry_runs_the_newest_archive(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, BASE_CFG)
+        _listed(p, run_cycle, "b2", "b1")
+        cmd = _unquoted(p.plan_action("check_repo", kind="extract"))
+        assert "extract --dry-run" in cmd and "::b2" in cmd
+
+    async def test_an_extract_check_needs_a_listed_archive(self, make_plugin):
+        assert make_plugin(Borg, BASE_CFG).plan_action("check_repo", kind="extract").success is False
+
+    async def test_an_unknown_kind_is_refused(self, make_plugin):
+        assert make_plugin(Borg, BASE_CFG).plan_action("check_repo", kind="everything").success is False
+
+    def test_an_unknown_tracked_kind_is_a_config_error(self, make_plugin):
+        with pytest.raises(ValueError, match="check_kinds"):
+            make_plugin(Borg, {**BASE_CFG, "check_kinds": {"weekly": "8d"}})
+
+    async def test_a_finished_check_renews_what_it_covered(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, {**TRACKED_CFG, "check_kinds": {"repository": "8d"}})
+        _finish_job(p, "check_repo", 0, kind="data")
+        assert _latest_metric("test-borg", "checks_ok") == 1.0
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_status("test-borg") == "online"
+
+    async def test_a_kind_never_run_waits_one_max_age(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, TRACKED_CFG)
+        _finish_job(p, "check_repo", 0, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_metric("test-borg", "checks_ok") == 1.0
+        assert _latest_status("test-borg") == "online"
+
+    async def test_a_kind_never_run_fails_once_its_max_age_has_passed(self, make_plugin, run_cycle, monkeypatch):
+        p = make_plugin(Borg, TRACKED_CFG)
+        _finish_job(p, "check_repo", 0, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        later = time.time() + 33 * 86400
+        monkeypatch.setattr(time, "time", lambda: later)
+        _finish_job(p, "check_repo", 0, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_metric("test-borg", "checks_ok") == 0.0
+        assert _latest_status("test-borg") == "failed"
+
+    async def test_a_kind_never_run_reads_as_pending(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, {**TRACKED_CFG, "check_kinds": {"extract": "32d"}})
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert p._checks_pair() == ('Pending', 'unavailable')
+
+    async def test_a_failed_check_fails_until_one_succeeds(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, {**TRACKED_CFG, "check_kinds": {"repository": "8d"}})
+        _finish_job(p, "check_repo", 2, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_status("test-borg") == "failed"
+        _finish_job(p, "check_repo", 0, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_status("test-borg") == "online"
+
+    async def test_units_and_kinds_are_judged_together(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, {**CHECK_CFG, "check_kinds": {"extract": "32d"}})
+        p.commands()
+        _cycle_with(p, run_cycle, checks=_checks_out(ok=int(time.time()) - 3600))
+        _finish_job(p, "check_repo", 2, kind="extract")
+        p.commands()
+        _cycle_with(p, run_cycle, checks=_checks_out(ok=int(time.time()) - 3600))
+        assert _latest_status("test-borg") == "failed"
+        _finish_job(p, "check_repo", 0, kind="extract")
+        p.commands()
+        _cycle_with(p, run_cycle, checks=_checks_out(ok=int(time.time()) - 3600))
+        assert _latest_status("test-borg") == "online"

@@ -271,6 +271,33 @@ class TestBlockRateDisabled:
         assert _latest_status() == "failed"
 
 
+class TestOptionalBlockRateLimits:
+    def test_a_null_limit_counts_as_off_for_the_predicate(self):
+        assert _rate_is_checked(5, None)
+        assert _rate_is_checked(None, 1)
+        assert not _rate_is_checked(None, None)
+        assert not _rate_is_checked(0, None)
+
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Pihole, dict(BASE_CFG, block_rate_threshold=None))
+        _respond(p, run_cycle, _summary(total=10000, blocked=0, percent=0.0))
+        assert _latest_status() == "warning"
+        assert p._block_rate_color(0.0) == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Pihole, dict(BASE_CFG, block_rate_warning=None))
+        _respond(p, run_cycle, _summary(total=10000, blocked=300, percent=3.0))
+        assert _latest_status() == "online"
+        _respond(p, run_cycle, _summary(total=10000, blocked=20, percent=0.2))
+        assert _latest_status() == "failed"
+
+    async def test_both_null_stops_the_rate_being_judged(self, make_plugin, run_cycle):
+        p = make_plugin(Pihole, dict(BASE_CFG, block_rate_warning=None, block_rate_threshold=None))
+        _respond(p, run_cycle, _summary(total=10000, blocked=0, percent=0.0))
+        assert _latest_status() == "online"
+        assert p._block_rate_color(0.0) is None
+
+
 class TestBuildBlockingScript:
     def test_posts_to_blocking_endpoint(self):
         script = _build_blocking_script(

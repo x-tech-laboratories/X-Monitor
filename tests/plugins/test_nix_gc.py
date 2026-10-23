@@ -408,6 +408,18 @@ class TestJobPolling:
 
 
 class TestUiSpec:
+    async def test_collect_fills_while_its_job_runs(self, plugin):
+        action = plugin.get_actions()[0]
+        assert plugin.action_state(action) == 'normal'
+        await _launch(plugin)
+        assert plugin.action_state(action) == 'accent'
+
+    def test_profiles_table_has_a_title(self, plugin):
+        assert plugin.UI_SPEC['tables']['profiles']['title'] == 'PROFILES'
+
+    def test_job_controls_live_in_the_header_only(self, plugin):
+        assert 'run_action_id' not in plugin.UI_SPEC['job_panel']
+
     def test_every_laid_out_widget_has_a_definition(self, plugin):
         spec = plugin.UI_SPEC
         defined = set(spec['cards']) | set(spec['tables']) | {'host_card', 'chart', 'events'}
@@ -472,3 +484,21 @@ class TestManualRunIsTheLastCollection:
         _collect(plugin, _probe(last_gc=int(time.time()) - 86400))
         assert _latest_status() == "failed"
         assert _latest_metric("last_gc_success") == 0.0
+
+
+class TestOptionalStoreLimits:
+    async def test_warning_only_never_fails(self, make_plugin):
+        p = make_plugin(NixGc, {**BASE_CFG, "threshold": None})
+        _collect(p, _probe(size=100 * GB, used=100 * GB))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin):
+        p = make_plugin(NixGc, {**BASE_CFG, "warning": None})
+        _collect(p, _probe(size=100 * GB, used=89 * GB))
+        assert _latest_status() == "online"
+        _collect(p, _probe(size=100 * GB, used=95 * GB))
+        assert _latest_status() == "failed"
+
+    async def test_the_gauge_colours_by_the_limits_that_are_on(self, make_plugin):
+        p = make_plugin(NixGc, {**BASE_CFG, "warning": None})
+        assert p.UI_SPEC['cards']['store_card']['color'] == {'warning': None, 'threshold': 90}

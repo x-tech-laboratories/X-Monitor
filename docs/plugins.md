@@ -7,7 +7,9 @@ config examples. For what X-Monitor is and how to run it, see the
 ## Contents
 
 - [Summary](#summary) — the one-line table of every plugin type
+- [Warning and failure limits](#warning-and-failure-limits) — turn either level of a limit pair off with `null`
 - [Scheduled actions](#scheduled-actions) — run any monitor's action on a cron schedule
+- [Custom actions](#custom-actions) — add your own command buttons to any monitor
 - Plugin types:
   [`uptime`](#uptime) ·
   [`push`](#push) ·
@@ -63,7 +65,7 @@ config examples. For what X-Monitor is and how to run it, see the
 | [`ddns_updater`](#ddns_updater)         | Dynamic DNS record kept current       | Public IP lookup + DNS query (in-process)        | `in_sync`, `last_update_epoch`                   | Force Update |
 | [`systemd_service`](#systemd_service)   | systemd unit state / last run         | SSH (`systemctl`)                                | `active` *or* `last_run_epoch`, `last_run_success` | Restart, Stop, Enable, Disable |
 | [`service_list`](#service_list)         | Systemd unit browser and control      | SSH (`systemctl`)                                | `services_total`, `services_active`, `services_failed` | Start, Stop, Restart, Enable, Disable, View Status |
-| [`nixos_upgrade`](#nixos_upgrade)       | NixOS system vs. the flake it deploys from | SSH (`nix eval`, `nix flake metadata`)      | `up_to_date`, `reboot_required`, `flake_reachable` | Update Flake, Rebuild & Switch |
+| [`nixos_upgrade`](#nixos_upgrade)       | NixOS system vs. the flake it deploys from | SSH (`nix eval`, `nix flake metadata`)      | `up_to_date`, `reboot_required`, `flake_reachable` | Update Flake, Rebuild & Switch, Reboot |
 | [`nix_gc`](#nix_gc)                     | Nix store garbage collection           | SSH (`df`, `systemctl`, `journalctl`)             | `last_gc_epoch`, `last_gc_freed_gb`, `store_used_pct` | Collect Garbage |
 | [`vuln_scan`](#vuln_scan)               | Network-facing vulnerabilities of a host | SSH (`nmap --script vuln`, run from the scanning host) | `vulnerable`, `suspected`, `open_ports`      | — |
 | [`smart`](#smart)                       | SMART health of every physical disk    | SSH (`smartctl`)                                | `disks_total`, `disks_ok`, `disks_failed`       | — |
@@ -103,6 +105,18 @@ All plugin types share these common fields:
 | `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 | `schedule` | Actions to run on a cron schedule — see [Scheduled actions](#scheduled-actions) (default: none) |
+| `actions` | Your own command buttons on the monitor's page — see [Custom actions](#custom-actions) (default: none) |
+
+### Warning and failure limits
+
+Every pair of limits — `warning` / `threshold`, `cpu_warning` / `cpu_threshold`, `stale_warning` / `stale_threshold` and the rest — is two independent levels. Set either one to `null` to turn that level off while keeping the other: a monitor with `threshold: null` warns but never fails, and one with `warning: null` fails without warning first. Leaving a key out keeps its default.
+
+```yaml
+- name: Load
+  type: load
+  warning: 200
+  threshold: null    # warn on a busy box, never fail on it
+```
 
 ### Scheduled actions
 
@@ -125,7 +139,41 @@ Any action a monitor offers can run on its own at set times, the way cron runs a
 
 The expression has the usual five fields (minute, hour, day of month, month, day of week) in the X-Monitor host's local time, with `*`, ranges, lists, `/` steps, month and day names, and the aliases `@hourly`, `@daily`, `@weekly`, `@monthly` and `@yearly`. As in cron, an expression restricting both the day of month and the day of week runs on either.
 
-A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a backup that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
+A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a backup that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. The Schedules page in the sidebar lists every schedule in the fleet, soonest first, with its monitor, action, cron expression, next run, and when its last run started and whether it did. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
+
+### Custom actions
+
+Every monitor, whatever its type, accepts an `actions` list of your own commands. Each one becomes a button in the monitor's page header, next to the plugin's own actions.
+
+```yaml
+- name: Nginx
+  type: systemd_service
+  service_name: nginx
+  actions:
+    - name: Clear Cache
+      command: rm -rf /var/cache/nginx/*
+    - name: Reboot Host
+      command: systemctl reboot
+      icon: power_settings_new
+      danger: true
+      confirm: Reboot this host?
+  schedule:
+    - action: custom:clear_cache    # a custom action's id is `custom:` plus its id
+      cron: "@weekly"
+```
+
+| Option    | Description |
+|-----------|-------------|
+| `name`    | Button label (required) |
+| `command` | Shell command to run (required) |
+| `id`      | Id used by `schedule`, made from `name` when omitted: lower case with other characters as `_` |
+| `icon`    | Material icon name (default: `terminal`) |
+| `confirm` | Question asked before it runs; the command runs only on a yes |
+| `danger`  | Shows the button in the danger colour (default: `false`) |
+| `timeout` | How long the command may run, as seconds or a duration such as `2m` |
+| `agent`   | Run on this agent instead of the monitor's own host |
+
+The command runs where the monitor's own commands run: over its agent, or over SSH to its host. It succeeds on exit code 0, and each run is logged on the monitor with the start of its output, or of its error when it fails. Custom ids start with `custom:`, so they never clash with the plugin's own actions, and [`schedule`](#scheduled-actions) can run them like any other action.
 
 ---
 
@@ -457,7 +505,7 @@ Both actions launch a **detached** job on the target, polled to completion by th
 | `max_input_age` | Warn once the oldest locked input is older than this (default: unset, never warns) |
 | `drift_status` | Status when the system is out of date: `warning` (default) or `failed` |
 | `reboot_status` | Status when a reboot is pending: `warning` (default), `failed`, or `online` to ignore it |
-| `require_sudo` | Prefix both actions with `sudo -n` (default: `true`) |
+| `require_sudo` | Prefix every action with `sudo -n` (default: `true`) |
 | `nix_bin` / `rebuild_bin` | Binaries to invoke (defaults: `nix` / `nixos-rebuild`) |
 | `nix_args` | Extra arguments on every `nix` call (default: `["--extra-experimental-features", "nix-command flakes"]`; set `[]` to drop them) |
 | `rebuild_args` | Extra arguments on `nixos-rebuild switch`, e.g. `["--use-remote-sudo"]` |
@@ -479,7 +527,9 @@ Both actions launch a **detached** job on the target, polled to completion by th
 
 **Metrics**: `up_to_date` (1/0), `reboot_required` (1/0), `flake_reachable` (1/0), `generation`, `last_switch_epoch`, `flake_last_modified_epoch`, `inputs_last_modified_epoch`, `flake_eval_epoch`
 
-**Actions**: Update Flake (`nix flake update`), Rebuild & Switch (`nixos-rebuild switch --flake`)
+**Actions**: Update Flake (`nix flake update`), Rebuild & Switch (`nixos-rebuild switch --flake`), Reboot (`systemctl reboot`, after a confirmation)
+
+Reboot runs on the target itself, never on `switch_agent`, and is refused while a job is running so it cannot cut a switch short.
 
 **Status**: `failed` when the flake evaluates and errors — a config that no longer builds is a real failure, and the error is logged; `drift_status` when the two closures differ; `reboot_status` when the booted `initrd`/`kernel`/`kernel-modules`/`systemd` are not the current ones; `warning` when the oldest locked input exceeds `max_input_age`; `unavailable` when the target is unreachable, `/run/current-system` cannot be read, `nix flake metadata` fails, or the evaluation host never answered.
 
@@ -489,7 +539,7 @@ With `update_at` or `build_at`, that job launches once a day at the given local 
 
 Update Flake works on a local flake path in place, as root. On a `github:owner/repo[/branch]` flake with a `push_ssh_key` it runs as the monitoring user in a fresh shallow clone over SSH: `nix flake update`, a commit of `flake.lock` if anything moved, and a push back to the same branch. A branch that moved in the meantime rejects the push and the job fails, with nothing left behind. The pushed revision is new drift for every monitor on that flake, so with `auto_switch` one button updates the whole fleet. Any other remote ref is not offered the button: update it where it lives and X-Monitor picks up the new revision on its next evaluation. Checking never mutates anything: `--no-write-lock-file` is passed to both commands, and `--refresh` only for a remote ref, where a mutable branch would otherwise be served from Nix's tarball cache.
 
-> Both actions run as root by default (`require_sudo`), so the SSH user needs passwordless sudo for `nixos-rebuild` and `nix`. Set `require_sudo: false` when X-Monitor already connects as root, or add `--use-remote-sudo` to `rebuild_args` for the build-locally-activate-remotely arrangement.
+> Both actions run as root by default (`require_sudo`), so the SSH user needs passwordless sudo for `nixos-rebuild`, `nix` and `systemctl reboot`. Set `require_sudo: false` when X-Monitor already connects as root, or add `--use-remote-sudo` to `rebuild_args` for the build-locally-activate-remotely arrangement.
 
 ```yaml
 # Local checkout on the host, with a staleness limit on its inputs
@@ -787,11 +837,12 @@ Kernel names like `sda` are assigned in the order drives answer at boot, so one 
 ---
 
 ### `disk_space`
-Monitors disk space usage for a path or mountpoint over SSH via `df`. Works on any mounted Linux filesystem — no ZFS or other tools required. Marks the path failed when usage exceeds the configured threshold.
+Monitors disk space usage for a path or mountpoint over SSH via `df`. Works on any mounted Linux filesystem — no ZFS or other tools required. Marks the path failed when usage reaches the configured threshold, and warns first when a `warning` is set.
 
 | Option      | Description                                                       |
 |-------------|-------------------------------------------------------------------|
 | `path`      | Filesystem path or mountpoint to monitor (e.g. `/`, `/Storage`)  |
+| `warning`   | Usage percentage that triggers a `warning` status (optional)     |
 | `threshold` | Usage percentage that triggers a `failed` status (default: `90`) |
 | `interval`  | Polling frequency (default: `60`, recommend `10m`)                |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below     |
@@ -860,7 +911,7 @@ Memory use from `/proc/meminfo`, reported as the share of total memory that is *
 ---
 
 ### `load`
-Load average from `/proc/loadavg`, normalized by core count so 100% means the host is exactly at capacity. Thresholds are optional: without both, load is collected and charted but never changes the status — useful on a box where a high load average is normal.
+Load average from `/proc/loadavg`, normalized by core count so 100% means the host is exactly at capacity. Both limits are optional and independent: with neither, load is collected and charted but never changes the status — useful on a box where a high load average is normal.
 
 | Option       | Description                                                              |
 |--------------|--------------------------------------------------------------------------|
@@ -993,8 +1044,8 @@ Monitors running processes over SSH via `ps`, shown as a tree: each process sits
 |-----------------|------------------------------------------------------------------------------|
 | `max_processes` | Busiest processes kept in the tree, each with its ancestors (default: `20`); totals still count every process |
 | `require_sudo`  | Prefix kill commands with `sudo` (default: `false`)                          |
-| `cpu_warning`   | Busiest single process's own CPU % that triggers `warning` (optional — omit to disable) |
-| `cpu_threshold` | Busiest single process's own CPU % that triggers `failed`  (optional — omit to disable) |
+| `cpu_warning`   | Busiest single process's own CPU % that triggers `warning` (optional)                |
+| `cpu_threshold` | Busiest single process's own CPU % that triggers `failed` (optional)                 |
 | `interval`      | Polling frequency (default: `60`)                                             |
 | `ssh_config`    | SSH connection details — see [SSH Config](#ssh-config) below                 |
 
@@ -1124,6 +1175,27 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 
 **Maintenance.** Check, Compact and Prune run as detached jobs, one job at a time per monitor (see [Job control](develop.md#job-control)). Prune applies the `keep_*` policy for real, so use Prune Preview first to see what it would drop. Compact is what actually frees the space afterwards (borg 1.2 or later). An archive row can show what changed since the previous archive (`borg diff`), or delete the archive. **Prune, delete and Break Lock are off unless `allow_delete: true`**, and each one asks for confirmation.
 
+**Running backups on a schedule.** With a `schedule` (see [Scheduled actions](#scheduled-actions)) this monitor can take over from borgmatic or Vorta. `prune_after_backup` and `compact_after_backup` make each real backup prune by the `keep_*` policy and then compact, the way borgmatic runs `create prune compact`; each step runs only while the ones before it succeeded or ended with a borg warning, and the job exits with the worst status. A dry run never prunes.
+
+Before any job starts, X-Monitor checks whether it should run at all. For an `ssh://` repository it reads the server's SSH banner, and while one of the `skip_while_active` units is running it waits too. A job that would not get through is skipped, not failed: it logs why, records no job, and the next scheduled run tries again. The `max_age` check still fails the monitor if the backups stay away too long.
+
+Jobs can be made to stay out of the way. `job_nice` and `job_io_idle` run them at a lower CPU priority and in the idle I/O class, which needs no extra rights. `inhibit_sleep` holds off suspend and shutdown until the job ends; the account running it needs polkit's `org.freedesktop.login1.inhibit-block-sleep` and `inhibit-block-shutdown` rights. `job_lock` names a lock file, and monitors that share it run their jobs one after another instead of at once, such as one host backing up to several repositories.
+
+**Checks of each kind.** The Check action takes a `kind`: `all` (the default), `repository`, `archives`, `data` (every chunk re-read), or `extract`, which dry-runs an extract of the newest archive. Schedule each kind on its own cadence with `args`. `check_kinds` sets how old the last success of each may be, judged from X-Monitor's own Check jobs: a `data` check renews `repository` and `archives` too, and `all` renews both. A failed or overdue kind fails the monitor, alongside any `check_units`. A kind that has never run gets one of its ages, counted from when the monitor first expected it, before it counts as overdue, so a new schedule has time to reach it.
+
+```yaml
+schedule:
+  - action: run_backup
+    cron: "0 */3 * * *"
+  - action: check_repo
+    cron: "0 4 * * sun"
+    args: {kind: archives}
+  - action: check_repo
+    cron: "0 5 1 * *"
+    args: {kind: data}
+check_kinds: {repository: 8d, archives: 8d, data: 32d}
+```
+
 **Purging excluded files.** New exclude patterns only keep files out of new archives. Purge Excluded rewrites the existing archives with `borg recreate` so they drop whatever the backup set's `exclude*` options now leave out, then compacts to free the space. It first deletes any `<archive>.recreate` left by an interrupted run, since borg refuses to start while one exists. Purge Preview is a dry run that lists the top-most path of each dropped tree, archive by archive. Both run as detached jobs and hold the repository lock for their whole run, and on a large remote repository that can take hours. Running the purge again with the same patterns rewrites every archive again, so it is a button, not a schedule. **Both are off unless `allow_purge: true`.**
 
 | Option | Description |
@@ -1146,7 +1218,14 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 | `restore_dir` | Where restores land (default: `/var/tmp/x-monitor-restore`) |
 | `browse_limit` | Most entries shown per folder or diff (default: `2000`) |
 | `allow_delete` | Allow Prune, deleting archives and Break Lock (default: `false`) |
-| `check_verify_data` | Make the Check job read every chunk (`--verify-data`), which is much slower (default: `false`) |
+| `check_verify_data` | Make the Check job read every chunk (`--verify-data`) when no `kind` is given, which is much slower (default: `false`) |
+| `check_kinds` | How old the last successful Check of each kind may be, as `{repository, archives, data, extract: age}` (default: none) |
+| `prune_after_backup` / `compact_after_backup` | Prune by the `keep_*` policy, then compact, after each real backup (defaults: `false`) |
+| `skip_when_unreachable` | Skip a job while an `ssh://` repository's server does not answer SSH (default: `true`) |
+| `skip_while_active` | systemd units that make a job skip while one of them is running (default: none) |
+| `job_nice` / `job_io_idle` | Run jobs at this niceness / in the idle I/O class (defaults: unchanged) |
+| `inhibit_sleep` | Hold off suspend and shutdown while a job runs (default: `false`) |
+| `job_lock` | Lock file that makes jobs of every monitor sharing it run one at a time (default: none) |
 | `allow_purge` | Allow Purge Preview and Purge Excluded (default: `false`) |
 | `purge_match` | Archives a purge rewrites (default: every archive in the repo) |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
@@ -1155,7 +1234,7 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 
 **Actions**: Run Backup, Dry Run, Verify Restore, Prune Preview, Check, Compact, Prune, Purge Preview, Purge Excluded, Break Lock; per archive: Changes, Restore, Delete; the browser's Restore selected
 
-**Status**: `failed` when borg reports an error, the repo has no archives, the newest one is older than `max_age`, the restore canary does not match, or a check unit failed or is older than `check_max_age`; `unavailable` when the host, the borg binary or the repo cannot be reached, a lock was not released in time, or the output could not be read.
+**Status**: `failed` when borg reports an error, the repo has no archives, the newest one is older than `max_age`, the restore canary does not match, a check unit failed or is older than `check_max_age`, or a kind in `check_kinds` failed or is older than its age; `unavailable` when the host, the borg binary or the repo cannot be reached, a lock was not released in time, or the output could not be read.
 
 > Prune, delete, Purge Excluded and Break Lock act on the repository itself. Break Lock is only safe when no borg process is using the repo, since breaking a live lock can corrupt it, so X-Monitor refuses it while one of its own jobs is running. Delete only accepts an archive the monitor has listed.
 
@@ -1223,7 +1302,7 @@ Every run is wrapped in `timeout` so a hung target can't stall the polling loop.
 | `command`           | Shell command to run on the target *(required)*                         |
 | `timeout`           | Per-run timeout in seconds (default: `30`)                              |
 | `pattern`           | *(Optional)* Regex with one capture group extracting a number           |
-| `warning` / `threshold` | Value bounds (pattern mode only)                                    |
+| `warning` / `threshold` | Value bounds, each optional (pattern mode only)                     |
 | `invert`            | If true, values *below* the bounds are bad (default: `false`)           |
 | `nonzero_is_warning`| Treat non-zero exit as warning instead of failed (default: `false`)     |
 | `value_label` / `value_unit` | UI label / unit suffix for the extracted value                 |

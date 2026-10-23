@@ -12,7 +12,7 @@ from typing import Callable, List, Optional, Sequence
 from nicegui import ui
 
 from x_monitor.core.ui import theme
-from x_monitor.core.ui.components import LABEL_CLASS, VALUE_CLASS, card, mark_card_state, offload
+from x_monitor.core.ui.components import LABEL_CLASS, VALUE_CLASS, card, offload
 from x_monitor.core.ui.theme import STATUS_COLORS
 
 # ============================================================================
@@ -80,7 +80,7 @@ def up_share(states: Sequence[str]) -> Optional[float]:
     measured = [s for s in states if s != 'unavailable']
     if not measured:
         return None
-    return 100.0 * sum(s == 'online' for s in measured) / len(measured)
+    return 100.0 * sum(s in ('online', 'info') for s in measured) / len(measured)
 
 
 def strip_cell_color(state: str) -> str:
@@ -106,7 +106,7 @@ def render_gauge(page, title: str, metric_name: str, formatter: Callable,
                  caption: Optional[str] = None):
     """A stat panel with its label and value laid out like any other, and a small arc beside them
     filled by the metric's share of `maximum`, colored by the card's status rule or the accent."""
-    with card('halon-stat halon-gauge-card flex-1 min-w-[12rem]') as panel:
+    with card('halon-stat halon-gauge-card flex-1 min-w-[12rem]'):
         with ui.row().classes('halon-gauge-row no-wrap'):
             with ui.column().classes('halon-gauge-text'):
                 ui.label(title).classes(LABEL_CLASS)
@@ -129,7 +129,6 @@ def render_gauge(page, title: str, metric_name: str, formatter: Callable,
         state = color_rule(value) if color_rule else None
         value_label.text = formatter(value)
         arc.style(gauge_fill_style(fill_percent(value, maximum), color_for(state)))
-        mark_card_state(panel, state)
 
     return update
 

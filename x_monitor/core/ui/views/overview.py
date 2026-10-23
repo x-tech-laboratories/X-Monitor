@@ -11,11 +11,11 @@ from ..components import LEVEL_CELL_SLOT, STATUS_BADGES, STATUS_CELL_SLOT, card,
 from ..tables import data_table
 from .fleet import render_fleet
 
-_STATUS_ORDER = ('online', 'failed', 'warning', 'unavailable')
+_STATUS_ORDER = ('online', 'info', 'failed', 'warning', 'unavailable')
 
 # Worst first. A type's tile takes the most severe status among its monitors, so
 # one failed service is visible even inside a type that is otherwise healthy.
-_STATUS_SEVERITY = ('failed', 'warning', 'unavailable', 'online')
+_STATUS_SEVERITY = ('failed', 'warning', 'unavailable', 'info', 'online')
 
 # Both charts' key, in DOM rather than on the canvas so it follows the scheme
 # with no repaint and reads the same in both panels.
@@ -139,7 +139,7 @@ def _build_table_rows(monitors, statuses, flt: _ChartFilter) -> list:
 
 def _build_chart_counts(monitors, statuses):
     """Tallies monitors by status, and per type by status, for the two charts."""
-    status_counts = {'online': 0, 'failed': 0, 'warning': 0, 'unavailable': 0}
+    status_counts = {'online': 0, 'info': 0, 'failed': 0, 'warning': 0, 'unavailable': 0}
     type_counts = {}
     for m in monitors:
         st = statuses.get(m.id, 'unavailable')

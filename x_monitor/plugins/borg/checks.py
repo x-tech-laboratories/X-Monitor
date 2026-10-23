@@ -13,6 +13,32 @@ _UNIT_FINISHED, _UNIT_FAILED = 'Finished ', 'Failed with result'
 # A check unit's previous run is looked for at most this far before its outcome when its start has scrolled out of the journal.
 _CHECK_RUN_WINDOW = 86400
 
+# The checks X-Monitor runs itself, which `check_kinds` can hold to a maximum age.
+_TRACKED_CHECKS = ('repository', 'archives', 'data', 'extract')
+
+# Each Check kind, the `borg check` options it adds, and the tracked checks a success of it renews; extract runs `borg extract --dry-run` instead.
+_CHECK_KINDS = {
+    'all': ([], ('repository', 'archives')),
+    'repository': (['--repository-only'], ('repository',)),
+    'archives': (['--archives-only'], ('archives',)),
+    'data': (['--verify-data'], ('repository', 'archives', 'data')),
+    'extract': ([], ('extract',)),
+}
+
+
+def _check_job_kind(kind: str) -> str:
+    """The job name a Check of this kind runs under, which is how its completion knows what it covered."""
+    return 'check' if kind == 'all' else f'check-{kind}'
+
+
+def _covered_by_check_job(job_kind: str) -> Tuple[str, ...]:
+    """The tracked checks a finished job renews, or none when it was not a Check."""
+    if job_kind == 'check':
+        return _CHECK_KINDS['all'][1]
+    if job_kind.startswith('check-') and job_kind[len('check-'):] in _CHECK_KINDS:
+        return _CHECK_KINDS[job_kind[len('check-'):]][1]
+    return ()
+
 
 def _journal_epoch(line: str) -> Optional[int]:
     """Read the epoch off a journalctl `-o short-unix` line."""

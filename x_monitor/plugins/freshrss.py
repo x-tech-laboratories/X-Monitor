@@ -2,7 +2,7 @@
 X-Monitor host using the Fever protocol's md5 username:password token. Config:
 api_url (required, X-Monitor-reachable), username, api_password /
 api_password_command, feed_stale_warning, feed_stale_threshold,
-refresh_stale_warning (all in hours), api_timeout. The refresh-cycle age is
+refresh_stale_warning (all in hours, each null to turn it off), api_timeout. The refresh-cycle age is
 the newest per-feed fetch time, which is the one signal that proves the
 updater is running (FreshRSS fills Fever's last_refreshed_on_time with the
 *oldest* feed's fetch, which one paused feed would keep permanently stale).
@@ -14,13 +14,15 @@ since no feed was measured."""
 import hashlib
 import json
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import (
     CollectResult, HttpRequest, HttpResult, Request, Result,
 )
-from x_monitor.plugins.base.plugin_helpers import StatusAccumulator, resolve_secret
+from x_monitor.plugins.base.plugin_helpers import (
+    StatusAccumulator, level_for, limit_from, resolve_secret,
+)
 
 
 def _fever_api_key(username: str, password: str) -> str:
@@ -52,7 +54,7 @@ def _format_age(hours: float) -> str:
 
 
 def _survey_feeds(feeds: List[Dict[str, Any]], now: float,
-                  feed_stale_warning: float, feed_stale_threshold: float):
+                  feed_stale_warning: Optional[float], feed_stale_threshold: Optional[float]):
     """Bucket feeds into (title, age-in-hours) warn/fail lists by how long since each last updated."""
     stale_warn = []
     stale_fail = []
@@ -60,9 +62,10 @@ def _survey_feeds(feeds: List[Dict[str, Any]], now: float,
         last_updated = feed.get('last_updated_on_time', 0) or 0
         age = (now - float(last_updated)) / 3600.0
         title = feed.get('title', '?')
-        if age >= feed_stale_threshold:
+        level = level_for(age, feed_stale_warning, feed_stale_threshold)
+        if level == 'failed':
             stale_fail.append((title, age))
-        elif age >= feed_stale_warning:
+        elif level == 'warning':
             stale_warn.append((title, age))
     return stale_warn, stale_fail
 
@@ -74,10 +77,10 @@ def _newest_fetch(feeds: List[Dict[str, Any]], fallback: Any) -> float:
 
 
 def _accumulate_freshness(refresh_age_hours: float, stale_warn, stale_fail,
-                          refresh_stale_warning: float) -> StatusAccumulator:
+                          refresh_stale_warning: Optional[float]) -> StatusAccumulator:
     """Fold the refresh-cycle age and stale-feed buckets into problem lines and a worst-of status."""
     acc = StatusAccumulator()
-    if refresh_age_hours >= refresh_stale_warning:
+    if level_for(refresh_age_hours, refresh_stale_warning, None) == 'warning':
         acc.escalate('warning',
                      f"refresh cycle stale ({_format_age(refresh_age_hours)} since last run)")
     if stale_fail:
@@ -108,16 +111,16 @@ class Freshrss(Plugin):
         # Resolve the API password once, on the X-Monitor host, so requests() stays pure.
         self.api_password = resolve_secret(config.get('api_password'),
                                            config.get('api_password_command'))
-        self.feed_stale_warning = float(config.get('feed_stale_warning', 48))
-        self.feed_stale_threshold = float(config.get('feed_stale_threshold', 168))
-        self.refresh_stale_warning = float(config.get('refresh_stale_warning', 6))
+        self.feed_stale_warning = limit_from(config, 'feed_stale_warning', 48)
+        self.feed_stale_threshold = limit_from(config, 'feed_stale_threshold', 168)
+        self.refresh_stale_warning = limit_from(config, 'refresh_stale_warning', 6)
         self.api_timeout = int(config.get('api_timeout', 10))
 
     def _refresh_color(self, v):
         """Warn once the last feed refresh is older than the configured limit."""
         if v is None:
             return None
-        return 'warning' if v >= self.refresh_stale_warning else 'online'
+        return level_for(v, self.refresh_stale_warning, None)
 
     def requests(self) -> List[Request]:
         if not self.api_url or not self.username:

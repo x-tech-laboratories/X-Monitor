@@ -73,7 +73,7 @@ class TestHostTiles:
 
     def test_a_monitor_with_no_status_yet_counts_as_unavailable(self, roots):
         tile = fleet.build_host_tiles(roots, {'odin-up': 'online'})[1]
-        assert tile.counts == {'online': 1, 'warning': 0, 'failed': 0, 'unavailable': 1}
+        assert tile.counts == {'online': 1, 'info': 0, 'warning': 0, 'failed': 0, 'unavailable': 1}
 
 
 class TestStripRows:

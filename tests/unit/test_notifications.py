@@ -90,6 +90,15 @@ class TestTracker:
         assert t.observe('m', 'unavailable', 0) == Alert(PROBLEM, 'unavailable', 0)
         assert t.observe('m', 'online', 1) == Alert(RECOVERED, 'online', 0)
 
+    def test_info_ends_a_problem_like_online(self):
+        t = self._tracker()
+        assert t.observe('m', 'failed', 0) == Alert(PROBLEM, 'failed', 0)
+        assert t.observe('m', 'info', 1) == Alert(RECOVERED, 'info', 0)
+
+    def test_info_is_not_a_status_a_rule_can_notify_on(self):
+        rules = resolve_rules([_plugin('a', notify={'on': ['failed', 'info']})], {}, ['desk'])
+        assert rules['a'].on == frozenset({'failed'})
+
     def test_statuses_outside_on_are_ignored(self):
         t = self._tracker()
         assert t.observe('m', 'warning', 0) is None
@@ -224,6 +233,14 @@ class TestEngine:
         await _drain()
         assert engine.channels['desk'].sent[-1].title == 'Nas recovered'
         assert engine.channels['desk'].sent[-1].key == 'recovered'
+
+    async def test_a_recovery_into_info_reads_as_recovered(self, engine, db_manager):
+        engine.start([_plugin('nas')])
+        db_manager.insert_status('nas', 'failed')
+        await _drain()
+        db_manager.insert_status('nas', 'info')
+        await _drain()
+        assert engine.channels['desk'].sent[-1].title == 'Nas recovered'
 
     async def test_a_status_held_before_restart_is_not_announced(self, engine, db_manager):
         db_manager.insert_status('nas', 'failed')

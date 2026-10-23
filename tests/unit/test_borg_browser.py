@@ -138,7 +138,7 @@ class TestBrowser:
 
 
 class TestJobPanel:
-    async def test_without_source_paths_it_says_the_other_jobs_still_run(self, user: User, plugin, monkeypatch):
+    async def test_has_no_run_button(self, user: User, plugin, monkeypatch):
         monkeypatch.setattr('x_monitor.core.ui.model.schedule_callback', lambda callback, run_now=True: callback())
 
         @ui.page('/jobs')
@@ -147,5 +147,5 @@ class TestJobPanel:
             render_job_panel(plugin, plugin.UI_SPEC['job_panel'])
 
         await user.open('/jobs')
-        await user.should_see('Run Backup needs source_paths')
-        await user.should_not_see('Not available')
+        await user.should_see('JOBS')
+        await user.should_not_see('Run Backup')

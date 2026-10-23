@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from x_monitor.plugins.base.signal_plugin import SignalPlugin
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import level_for, format_bytes
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from, limits_text, format_bytes
 
 
 def _format_memory_used(values: Dict[str, Any]) -> str:
@@ -22,8 +22,8 @@ class Memory(SignalPlugin):
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.warning   = float(config.get('warning',   75))
-        self.threshold = float(config.get('threshold', 90))
+        self.warning   = limit_from(config, 'warning',   75)
+        self.threshold = limit_from(config, 'threshold', 90)
 
     SAMPLED = True
 
@@ -60,7 +60,7 @@ class Memory(SignalPlugin):
             },
             logs=[(
                 f"MEM {memory_pct:.1f}% ({format_bytes(memory_used_gb)} / {format_bytes(memory_total_gb)}, "
-                f"warn {self.warning:g}% / fail {self.threshold:g}%)",
+                f"{limits_text(self.warning, self.threshold, '%')})",
                 Status(status).log_level,
             )],
             status=status,

@@ -72,33 +72,8 @@ def table_wrap():
     return ui.element('div').classes('halon-table-wrap')
 
 
-# The states that tint a whole card; a healthy card stays plain so the hint keeps its meaning.
-CARD_STATE_CLASSES = {'warning': 'halon-card--warning', 'failed': 'halon-card--failed'}
-
-
-def card_of(element):
-    """The panel an element sits in, or None when it is not inside one."""
-    while element is not None:
-        if 'halon-card' in element._classes:
-            return element
-        slot = element.parent_slot
-        element = slot.parent if slot is not None else None
-    return None
-
-
-def mark_card_state(panel, state: Optional[str]) -> None:
-    """Tint a panel's border and background with a warning or failed state, and clear any other."""
-    if panel is None:
-        return
-    panel.classes(remove=' '.join(CARD_STATE_CLASSES.values()))
-    if state in CARD_STATE_CLASSES:
-        panel.classes(add=CARD_STATE_CLASSES[state])
-
-
 def show_state(label, state: str, text: Optional[str] = None) -> None:
-    """Mark a card value with its status: a state word becomes a badge, a measured number takes the status color,
-    and a warning or failure tints the card around it."""
-    mark_card_state(card_of(label), state)
+    """Mark a card value with its status: a state word becomes a badge, a measured number takes the status color."""
     text = label.text if text is None else text
     label.classes(remove=' '.join(['halon-badge', *STATUS_BADGES.values()]))
     if any(char.isdigit() for char in text):
@@ -191,7 +166,7 @@ LEVEL_CELL_SLOT = '''
 '''
 
 # The badge each monitor state is drawn with; a state with no fill of its own stays neutral.
-STATUS_BADGES = {'online': 'halon-badge-success', 'failed': 'halon-badge-danger', 'warning': 'halon-badge-warning'}
+STATUS_BADGES = {'online': 'halon-badge-success', 'info': 'halon-badge-info', 'failed': 'halon-badge-danger', 'warning': 'halon-badge-warning'}
 
 STATUS_CELL_SLOT = '''
     <q-td :props="props">
@@ -811,7 +786,7 @@ def toggle_position(toggle: dict, value) -> Optional[bool]:
 
 
 def render_job_panel(plugin, spec: dict):
-    """Render the run/cancel controls, progress line and history table for a plugin's jobs."""
+    """Render the progress line and history table for a plugin's jobs, with run/cancel controls when the spec names a run action."""
     from x_monitor.core.ui.spec import ENABLED_PREDICATES, resolve
     from x_monitor.core.ui.theme import STATUS_COLORS
     from x_monitor.plugins.base.plugin_helpers import format_duration
@@ -820,19 +795,21 @@ def render_job_panel(plugin, spec: dict):
     enabled_name = spec.get('enabled_if')
     enabled_predicate = (resolve(ENABLED_PREDICATES, enabled_name) or (lambda p: True)) if enabled_name else (lambda p: True)
 
+    run_btn = cancel_btn = None
     with table_block():
         with table_heading(spec.get('title', 'Jobs')):
-            with ui.row().classes('halon-table-actions'):
-                run_btn = action_button(
-                    spec.get('run_label', 'Run'), icon=spec.get('run_icon', 'play_arrow'),
-                    weight='filled',
-                    on_click=lambda: asyncio.create_task(_start(plugin, spec)),
-                )
-                cancel_btn = action_button(
-                    spec.get('cancel_label', 'Cancel'), icon=spec.get('cancel_icon', 'stop'),
-                    danger=True,
-                    on_click=lambda: asyncio.create_task(_cancel(plugin)),
-                )
+            if spec.get('run_action_id'):
+                with ui.row().classes('halon-table-actions'):
+                    run_btn = action_button(
+                        spec.get('run_label', 'Run'), icon=spec.get('run_icon', 'play_arrow'),
+                        weight='filled',
+                        on_click=lambda: asyncio.create_task(_start(plugin, spec)),
+                    )
+                    cancel_btn = action_button(
+                        spec.get('cancel_label', 'Cancel'), icon=spec.get('cancel_icon', 'stop'),
+                        danger=True,
+                        on_click=lambda: asyncio.create_task(_cancel(plugin)),
+                    )
 
         with ui.row() as progress_row:
             progress_label = ui.label('').classes('halon-caption font-mono')
@@ -854,8 +831,9 @@ def render_job_panel(plugin, spec: dict):
         def update():
             running = plugin.jobs.is_running()
             enabled = enabled_predicate(plugin)
-            run_btn.set_enabled(enabled and not running)
-            cancel_btn.set_visibility(running)
+            if run_btn is not None:
+                run_btn.set_enabled(enabled and not running)
+                cancel_btn.set_visibility(running)
 
             if running:
                 job = plugin.data.job(plugin.jobs.current_id())

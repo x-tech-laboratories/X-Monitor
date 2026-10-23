@@ -24,12 +24,16 @@ class Status(str, Enum):
     """Canonical monitor status. A str subclass, so comparisons against stored
     strings, STATUS_COLORS lookups and JSON serialisation all keep working.
 
+    'info' ranks just above 'online': the monitor is healthy but in a passing
+    state worth seeing, such as a folder still syncing. It is never a problem.
+
     'unavailable' ranks below 'warning': a monitor that cannot measure is less
     alarming than one measuring a bad number. It is what any monitor reports
     when its host is unreachable or its data could not be gathered; only an
     availability monitor (Plugin.AVAILABILITY) calls an unreachable host failed."""
 
     ONLINE = 'online'
+    INFO = 'info'
     UNAVAILABLE = 'unavailable'
     WARNING = 'warning'
     FAILED = 'failed'
@@ -71,9 +75,10 @@ class Status(str, Enum):
         return worst
 
 
-_SEVERITY = {Status.ONLINE: 0, Status.UNAVAILABLE: 1, Status.WARNING: 2, Status.FAILED: 3}
+_SEVERITY = {Status.ONLINE: 0, Status.INFO: 1, Status.UNAVAILABLE: 2, Status.WARNING: 3,
+             Status.FAILED: 4}
 
-_LOG_LEVEL = {Status.ONLINE: 'INFO', Status.UNAVAILABLE: 'WARNING',
+_LOG_LEVEL = {Status.ONLINE: 'INFO', Status.INFO: 'INFO', Status.UNAVAILABLE: 'WARNING',
               Status.WARNING: 'WARNING', Status.FAILED: 'ERROR'}
 
 

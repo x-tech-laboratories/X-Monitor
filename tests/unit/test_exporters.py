@@ -56,6 +56,11 @@ class TestPrometheusExporter:
         assert 'metric="cpu_pct"} 55.0' in text
         assert text.endswith('\n')
 
+    def test_info_sits_between_warning_and_online(self, mgr):
+        mgr.insert_status('sync-mon', 'info')
+        mgr.flush()
+        assert 'x_monitor_up{monitor="sync-mon",state="info"} 0.75' in prometheus.render(mgr)
+
     def test_sanitizes_and_escapes(self, mgr):
         mgr.insert_status('weird"id', 'failed')
         mgr.flush()

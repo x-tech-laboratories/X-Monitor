@@ -65,6 +65,9 @@ their notifications.
 once. An availability monitor (`uptime`, `http`) reports that host as failed, which gives one
 notification instead of one per monitor.
 
+`info` is never a problem: it marks a healthy monitor in a passing state, such as a folder still
+syncing. A monitor that moves from a problem to `info` has recovered.
+
 While it is off, `unavailable` is neutral. A monitor that turns unavailable during a problem has
 not recovered, and the problem carries on once it measures again.
 

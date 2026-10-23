@@ -45,6 +45,7 @@ plugins:
           - {name: "Pi-hole", id: "heimdall-pihole", type: "pihole", api_url: "http://127.0.0.1:9", interval: 3, <<: *ssh}
           - {name: "Unbound", id: "heimdall-unbound", type: "unbound", interval: 5, <<: *ssh}
           - {name: "Containers", id: "heimdall-containers", type: "containers", interval: 5, <<: *ssh}
+          - {name: "Syncthing", id: "heimdall-syncthing", type: "syncthing", api_url: "http://127.0.0.1:9", api_key: "demo", interval: 3}
           - {name: "Calibre Web", id: "heimdall-calibre", type: "http", url: "http://127.0.0.1:9/opds", interval: 3}
       - name: "Backups"
         id: "heimdall-backups"
@@ -54,8 +55,11 @@ plugins:
             id: "heimdall-borgmatic"
             type: "group"
             children:
-              - {name: "On Disk", id: "heimdall-borg-disk", type: "borg", repo: "/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh}
-              - {name: "Ragnarok", id: "heimdall-borg-ragnarok", type: "borg", repo: "ssh://ragnarok.lan/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh}
+              - {name: "On Disk", id: "heimdall-borg-disk", type: "borg", repo: "/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh,
+                 schedule: [{action: run_backup, cron: "0 */3 * * *"}, {action: check_repo, cron: "0 4 * * mon"},
+                            {action: check_repo, cron: "0 4 15 * *", args: {kind: data}}]}
+              - {name: "Ragnarok", id: "heimdall-borg-ragnarok", type: "borg", repo: "ssh://ragnarok.lan/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh,
+                 schedule: [{action: run_backup, cron: "0 */3 * * *"}, {action: check_repo, cron: "0 4 * * tue"}]}
       - {name: "Vulnerability Scan", id: "heimdall-scan", type: "vuln_scan", scan_host: "heimdall.lan", interval: 10, <<: *ssh}
 
   - name: "Ragnarok"

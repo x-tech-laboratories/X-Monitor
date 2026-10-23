@@ -92,3 +92,21 @@ class TestUiSpec:
         assert repeat['container'] == 'bars'
         assert repeat['bar_marker'] == 70.0
         assert repeat['item_color_by'] == p._item_level
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Gpu, dict(CFG, util_threshold=None, mem_threshold=None, temp_threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _nvidia_smi(util=100.0, mem_used=8000, temp=120.0), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Gpu, dict(CFG, util_warning=None, mem_warning=None, temp_warning=None))
+        run_cycle(p, lambda c: CmdResult(0, _nvidia_smi(util=94.0, mem_used=7500, temp=89.0), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _nvidia_smi(temp=95.0), ""))
+        assert _latest_status() == "failed"
+
+    def test_without_a_utilization_warning_the_meters_have_no_tick(self, make_plugin):
+        p = make_plugin(Gpu, dict(CFG, util_warning=None))
+        assert p.UI_SPEC['cards']['gpus']['repeat']['bar_marker'] is None

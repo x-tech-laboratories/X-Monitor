@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from x_monitor.plugins.base.signal_plugin import SignalPlugin
 from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
 from x_monitor.core.settings.config_schema import PluginConfig
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from, limits_text
 
 
 def _extract_counter(block: str, key: str) -> Optional[int]:
@@ -27,8 +27,8 @@ class Interrupts(SignalPlugin):
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.warning   = float(config.get('warning',   20000))
-        self.threshold = float(config.get('threshold', 50000))
+        self.warning   = limit_from(config, 'warning',   20000)
+        self.threshold = limit_from(config, 'threshold', 50000)
 
 
     SAMPLED = True
@@ -62,7 +62,7 @@ class Interrupts(SignalPlugin):
         return CollectResult(
             metrics=metrics,
             logs=[(
-                f"{irq_rate:.0f} interrupts/sec (warn {self.warning:g} / fail {self.threshold:g})",
+                f"{irq_rate:.0f} interrupts/sec ({limits_text(self.warning, self.threshold)})",
                 Status(status).log_level,
             )],
             status=status,

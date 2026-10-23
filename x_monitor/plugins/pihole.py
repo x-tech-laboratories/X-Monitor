@@ -7,8 +7,9 @@ api_timeout, gravity_timeout. Disabled blocking, an empty gravity list, or a
 block rate under block_rate_threshold (once min_queries is reached) is
 failed; a merely low block rate or a stale gravity list is warning; an API
 that did not answer, or answered with something unparseable, is unavailable.
-Setting both block_rate thresholds to 0 stops the rate being judged at
-all -- it is then charted but sets neither the status nor the card colour."""
+Either block_rate limit may be null to turn that level off, and setting both
+to 0 or null stops the rate being judged at all -- it is then charted but
+sets neither the status nor the card colour."""
 
 import json
 import shlex
@@ -16,7 +17,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from x_monitor.plugins.base.plugin_helpers import (
-    SCRIPT_SEP, StatusAccumulator, dq, parse_duration, password_line,
+    SCRIPT_SEP, StatusAccumulator, dq, limit_from, parse_duration, password_line,
 )
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import ActionPlan, CmdResult, Command, CollectResult
@@ -148,19 +149,28 @@ def _gravity_age_seconds(gravity: Dict[str, Any], now: float) -> Optional[float]
     return max(0.0, now - float(last_update))
 
 
-def _rate_is_checked(warning: float, threshold: float) -> bool:
+def _rate_is_checked(warning: Optional[float], threshold: Optional[float]) -> bool:
     """Whether the block rate is being judged at all.
 
-    Both thresholds at zero turns it off: the rate measures what clients
+    Both limits at zero or null turns it off: the rate measures what clients
     happened to ask for, not whether Pi-hole is still blocking, so a site whose
     traffic is mostly cached and local lookups has no meaningful floor. Blocking
     being enabled and the gravity list being non-empty are the checks that
     answer that, and they are judged regardless."""
-    return warning > 0 or threshold > 0
+    return any(limit is not None and limit > 0 for limit in (warning, threshold))
+
+
+def _rate_level(block_rate: float, warning: Optional[float], threshold: Optional[float]) -> str:
+    """The block rate's level, where falling strictly under a limit fires it and a None limit never fires."""
+    if threshold is not None and block_rate < threshold:
+        return 'failed'
+    if warning is not None and block_rate < warning:
+        return 'warning'
+    return 'online'
 
 
 def _evaluate_health(metrics: Dict[str, float], gravity_age: Optional[float],
-                     block_rate_warning: float, block_rate_threshold: float,
+                     block_rate_warning: Optional[float], block_rate_threshold: Optional[float],
                      gravity_max_age: int, min_queries: int) -> StatusAccumulator:
     """Judge blocking state, block rate, and gravity freshness against the thresholds."""
     acc = StatusAccumulator()
@@ -173,12 +183,13 @@ def _evaluate_health(metrics: Dict[str, float], gravity_age: Optional[float],
         acc.escalate('failed', "gravity list is empty")
 
     if _rate_is_checked(block_rate_warning, block_rate_threshold)             and metrics['queries_total'] >= min_queries:
-        if block_rate < block_rate_threshold:
+        level = _rate_level(block_rate, block_rate_warning, block_rate_threshold)
+        if level == 'failed':
             acc.escalate('failed',
-                         f"block rate {block_rate:.1f}% below {block_rate_threshold}%")
-        elif block_rate < block_rate_warning:
+                         f"block rate {block_rate:.1f}% below {block_rate_threshold:g}%")
+        elif level == 'warning':
             acc.escalate('warning',
-                         f"block rate {block_rate:.1f}% below {block_rate_warning}%")
+                         f"block rate {block_rate:.1f}% below {block_rate_warning:g}%")
 
     if gravity_age is None:
         acc.escalate('warning', "gravity has never been updated")
@@ -213,8 +224,8 @@ class Pihole(Plugin):
         self.api_url = config.get('api_url', 'http://127.0.0.1:80')
         self.api_password = config.get('api_password')
         self.api_password_command = config.get('api_password_command')
-        self.block_rate_warning = float(config.get('block_rate_warning', 5))
-        self.block_rate_threshold = float(config.get('block_rate_threshold', 1))
+        self.block_rate_warning = limit_from(config, 'block_rate_warning', 5)
+        self.block_rate_threshold = limit_from(config, 'block_rate_threshold', 1)
         self.gravity_max_age = parse_duration(config.get('gravity_max_age', '8d'))
         self.min_queries = int(config.get('min_queries', 100))
         self.api_timeout = int(config.get('api_timeout', 10))
@@ -321,11 +332,7 @@ class Pihole(Plugin):
         # figure it is rather than as a health verdict.
         if not _rate_is_checked(self.block_rate_warning, self.block_rate_threshold):
             return None
-        if v < self.block_rate_threshold:
-            return 'failed'
-        if v < self.block_rate_warning:
-            return 'warning'
-        return 'online'
+        return _rate_level(v, self.block_rate_warning, self.block_rate_threshold)
 
     def _gravity_text(self, values: Dict[str, Any]) -> str:
         domains = values.get('gravity_domains')

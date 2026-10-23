@@ -87,16 +87,12 @@ class TestGauge:
         assert arc._style['stroke'] == STATUS_COLORS['warning']
         assert arc._style['stroke-dasharray'] == f'{charts.GAUGE_SWEEP_LENGTH * 0.78:.2f} 999'
 
-    async def test_a_gauge_past_its_warning_tints_its_card(self, user: User, plugin, render_page):
-        plugin.storage.apply(CollectResult(metrics={'cpu_pct': 78.0}, status='warning'))
+    async def test_a_gauge_past_its_warning_colors_its_arc_but_not_its_card(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'cpu_pct': 97.0}, status='failed'))
         built = await _ticked(user, render_page)
-        assert 'halon-card--warning' in _by_class(built, 'halon-gauge-card')[0]._classes
-
-    async def test_a_healthy_gauge_leaves_its_card_plain(self, user: User, plugin, render_page):
-        plugin.storage.apply(CollectResult(metrics={'cpu_pct': 12.0}, status='online'))
-        built = await _ticked(user, render_page)
-        classes = _by_class(built, 'halon-gauge-card')[0]._classes
-        assert 'halon-card--warning' not in classes and 'halon-card--failed' not in classes
+        panel = _by_class(built, 'halon-gauge-card')[0]
+        assert 'border-color' not in panel._style and 'background-color' not in panel._style
+        assert not [c for c in panel._classes if c.startswith('halon-card--') and c != 'halon-card--flush']
 
     async def test_the_value_is_styled_like_any_other_stat(self, user: User, render_page):
         built = await _ticked(user, render_page)

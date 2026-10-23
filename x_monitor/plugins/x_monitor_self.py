@@ -3,7 +3,7 @@ plus collection health across every other monitor, gathered through the
 io_call escape hatch since it reads local files and live engine state rather
 than issuing connector requests. Config: memory_warning / memory_threshold
 (MB of RSS), stale_warning / stale_threshold (how many intervals overdue a
-monitor may run). RSS past its bounds sets warning/failed, monitors overdue
+monitor may run); each is optional, and null turns that level off. RSS past its bounds sets warning/failed, monitors overdue
 past stale_warning are warning ("late"), and any past stale_threshold makes
 the status failed ("stalled"). A sample that raises before anything was
 read is unavailable."""
@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import CollectResult
-from x_monitor.plugins.base.plugin_helpers import level_for
+from x_monitor.plugins.base.plugin_helpers import level_for, limit_from
 
 _CLOCK_TICKS = os.sysconf('SC_CLK_TCK') if hasattr(os, 'sysconf') else 100
 
@@ -48,14 +48,14 @@ def _read_cpu_seconds() -> Optional[float]:
 class XMonitorSelfPlugin(Plugin):
     def __init__(self, name: str, config: Dict[str, Any]):
         super().__init__(name, config)
-        self.memory_warning   = float(config.get('memory_warning',   256))
-        self.memory_threshold = float(config.get('memory_threshold', 512))
+        self.memory_warning   = limit_from(config, 'memory_warning',   256)
+        self.memory_threshold = limit_from(config, 'memory_threshold', 512)
         # A pushed monitor is only guaranteed an event every
         # SAMPLE_MAX_QUIET_INTERVALS, so a bound at or under that would read a
         # healthy quiet stream as late.
-        self.stale_warning    = float(config.get(
-            'stale_warning', Plugin.SAMPLE_MAX_QUIET_INTERVALS + 1))
-        self.stale_threshold  = float(config.get('stale_threshold',  10))
+        self.stale_warning    = limit_from(
+            config, 'stale_warning', Plugin.SAMPLE_MAX_QUIET_INTERVALS + 1)
+        self.stale_threshold  = limit_from(config, 'stale_threshold',  10)
         self._started_at = time.time()
         self._last_cpu_sample: Optional[Tuple[float, float]] = None
         self.target = 'x-monitor'
@@ -87,10 +87,11 @@ class XMonitorSelfPlugin(Plugin):
             if not last:
                 continue
             overdue = (now - last) / p.interval if p.interval else 0
-            if overdue >= self.stale_threshold:
+            level = level_for(overdue, self.stale_warning, self.stale_threshold)
+            if level == 'failed':
                 stalled += 1
                 offenders.append((overdue, p.name))
-            elif overdue >= self.stale_warning:
+            elif level == 'warning':
                 late += 1
                 offenders.append((overdue, p.name))
 
