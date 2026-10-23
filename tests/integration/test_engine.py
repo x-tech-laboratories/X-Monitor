@@ -316,7 +316,7 @@ class TestPerMonitorScheduling:
             if len(calls) >= 3:
                 raise asyncio.CancelledError()
 
-        plugin = MagicMock(id="p", interval=42, offset=None)
+        plugin = MagicMock(id="p", interval=42, offset=None, next_cycle_in=lambda: None)
 
         engine = object.__new__(XMonitorEngine)
         engine._collecting = {}
@@ -340,7 +340,7 @@ class TestPerMonitorScheduling:
             if len(calls) >= 3:
                 raise asyncio.CancelledError()
 
-        plugin = MagicMock(id="p", interval=5, offset=None)
+        plugin = MagicMock(id="p", interval=5, offset=None, next_cycle_in=lambda: None)
 
         engine = object.__new__(XMonitorEngine)
         engine._collecting = {}
@@ -360,7 +360,7 @@ class TestPerMonitorScheduling:
             if len(calls) >= 3:
                 raise asyncio.CancelledError()
 
-        plugin = MagicMock(id="p", interval=3600, offset=2700)
+        plugin = MagicMock(id="p", interval=3600, offset=2700, next_cycle_in=lambda: None)
 
         engine = object.__new__(XMonitorEngine)
         engine.run_cycle_now = AsyncMock(return_value=True)
@@ -373,6 +373,48 @@ class TestPerMonitorScheduling:
         assert calls[0] == 1800
         assert calls[1] == 1800
         assert engine.run_cycle_now.await_count == 2
+
+    async def test_a_running_job_is_polled_sooner_without_moving_the_schedule(self):
+        calls = []
+
+        async def fake_sleep(seconds):
+            calls.append(seconds)
+            if len(calls) >= 5:
+                raise asyncio.CancelledError()
+
+        sooner = iter([30, 30, None, None])
+        plugin = MagicMock(id="p", interval=3600, offset=None, next_cycle_in=lambda: next(sooner))
+
+        engine = object.__new__(XMonitorEngine)
+        engine.run_cycle_now = AsyncMock(return_value=True)
+        with patch("x_monitor.core.coordination.engine.asyncio.sleep", side_effect=fake_sleep):
+            with pytest.raises(asyncio.CancelledError):
+                await engine._monitor_loop(plugin)
+
+        # Two quick polls while the job runs, then the rest of the hour, then one more hour (the mocked clock never advances).
+        assert calls[1:3] == [30, 30]
+        assert calls[3] == pytest.approx(3600, abs=0.5)
+        assert calls[4] - calls[3] == pytest.approx(3600, abs=0.5)
+
+    async def test_a_running_job_is_polled_sooner_on_a_pinned_clock(self):
+        calls = []
+
+        async def fake_sleep(seconds):
+            calls.append(seconds)
+            if len(calls) >= 3:
+                raise asyncio.CancelledError()
+
+        sooner = iter([30, None])
+        plugin = MagicMock(id="p", interval=3600, offset=2700, next_cycle_in=lambda: next(sooner))
+
+        engine = object.__new__(XMonitorEngine)
+        engine.run_cycle_now = AsyncMock(return_value=True)
+        with patch("x_monitor.core.coordination.engine.asyncio.sleep", side_effect=fake_sleep), \
+                patch("x_monitor.core.coordination.engine.time.time", return_value=36900.0):
+            with pytest.raises(asyncio.CancelledError):
+                await engine._monitor_loop(plugin)
+
+        assert calls[1:] == [30, 1800]
 
     def test_clock_slot_wraps_to_the_next_period(self):
         assert seconds_to_clock_slot(3600, 2700, 2700.0) == 0

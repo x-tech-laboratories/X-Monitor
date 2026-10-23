@@ -27,8 +27,25 @@ def _report(*lines: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _run(plugin, run_cycle, stdout, rc=0, stderr=""):
-    return run_cycle(plugin, lambda c: CmdResult(rc, stdout, stderr))
+def _poll(out, exit_code=None, alive=True):
+    """The raw stdout one poll of the detached check produces on the target."""
+    return CmdResult(0, (
+        f"===XMONITOR_SIZE===\n{len(out)}\n"
+        f"===XMONITOR_EXIT===\n{exit_code if exit_code is not None else ''}\n"
+        f"===XMONITOR_ALIVE===\n{1 if alive else 0}\n"
+        f"===XMONITOR_OUT===\n{out}"
+    ), "")
+
+
+def _launch(plugin, run_cycle, pid=4242):
+    """One cycle with no job running: it launches the check and records its pid."""
+    return run_cycle(plugin, lambda c: CmdResult(0, f"{pid}\n", ""))
+
+
+def _run(plugin, run_cycle, stdout, exit_code=0):
+    """Launch the check, then poll it once as finished with this output."""
+    _launch(plugin, run_cycle)
+    return run_cycle(plugin, lambda c: _poll(stdout, exit_code, alive=False))
 
 
 def _rows(plugin):
@@ -36,10 +53,8 @@ def _rows(plugin):
 
 
 class TestScript:
-    def test_one_command_checks_every_target(self, plugin):
-        commands = plugin.commands()
-        assert len(commands) == 1
-        text = commands[0].text
+    def test_one_script_checks_every_target(self, plugin):
+        text = plugin.check_script()
         assert "check Alpha 'github:owner/fleet#nixosConfigurations.\"Alpha\".config.system.build.toplevel'" in text
         assert "check kernel 'github:owner/fleet#packages.aarch64-linux.kernel'" in text
         assert "--store https://cache.example/fleet" in text
@@ -137,7 +152,7 @@ class TestParse:
         assert (row["status"], row["pushed"]) == ("unavailable", "Unknown")
 
     def test_no_output_is_unavailable(self, plugin, run_cycle):
-        result = _run(plugin, run_cycle, "", rc=-1, stderr="agent offline")
+        result = _run(plugin, run_cycle, "", exit_code=1)
         assert result.status == "unavailable"
 
     def test_missing_list_is_capped(self, make_plugin, run_cycle):
@@ -157,7 +172,104 @@ class TestParse:
         assert result.status == "failed"
 
 
+class TestDetachedJob:
+    def test_is_never_sampled_on_the_agent(self):
+        assert AtticPush.SAMPLED is False
+
+    def test_a_cycle_without_a_job_launches_the_check(self, plugin):
+        commands = plugin.commands()
+        assert len(commands) == 1
+        text = commands[0].text
+        assert "setsid" in text and "attic_push-test-plugin" in text
+        assert "timeout 1800 sh -c" in text
+
+    def test_launching_records_a_running_job(self, plugin, run_cycle):
+        result = _launch(plugin, run_cycle, pid=1234)
+        job = plugin.jobs.running()
+        assert job["kind"] == "check" and job["pid"] == 1234
+        assert result.status is None and result.snapshot is None
+
+    def test_a_failed_launch_is_unavailable_and_records_no_job(self, plugin, run_cycle):
+        result = run_cycle(plugin, lambda c: CmdResult(-1, "", "agent offline"))
+        assert result.status == "unavailable"
+        assert plugin.jobs.running() is None
+
+    def test_a_running_job_is_polled_instead_of_relaunched(self, plugin, run_cycle):
+        _launch(plugin, run_cycle)
+        text = plugin.commands()[0].text
+        assert "kill -0 4242" in text and "setsid" not in text
+
+    def test_a_running_check_keeps_the_previous_snapshot(self, plugin, run_cycle):
+        _run(plugin, run_cycle, _report(f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t1", "Alpha\town\t1"))
+        before = plugin.data.latest_snapshot()
+        _launch(plugin, run_cycle)
+        result = run_cycle(plugin, lambda c: _poll(f"Alpha\ttarget\t{ALPHA}\n"))
+        assert result.status is None and result.snapshot is None
+        assert plugin.data.latest_snapshot() == before
+        job = plugin.jobs.running()
+        assert job["progress"] == "1 of 3 targets evaluated"
+
+    def test_output_reaches_the_job_log_once(self, plugin, run_cycle, db_manager):
+        _launch(plugin, run_cycle)
+        first = f"Alpha\ttarget\t{ALPHA}\n"
+        run_cycle(plugin, lambda c: _poll(first))
+        run_cycle(plugin, lambda c: _poll(first + "Alpha\tbuilt\t1\n"))
+        job_id = plugin.jobs.running()["id"]
+        lines = [row["message"] for row in db_manager.job_output(job_id, limit=0)]
+        assert lines == [f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t1"]
+
+    def test_a_finished_check_is_parsed_from_its_whole_output(self, plugin, run_cycle):
+        _launch(plugin, run_cycle)
+        run_cycle(plugin, lambda c: _poll(f"Alpha\ttarget\t{ALPHA}\nAlpha\tbuilt\t1\n"))
+        result = run_cycle(plugin, lambda c: _poll(_report(
+            f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t1", "Alpha\town\t4",
+            f"Beta\ttarget\t{BETA}", "Beta\tbuilt\t1", "Beta\town\t2",
+            f"kernel\ttarget\t{KERNEL}", "kernel\tbuilt\t1", "kernel\town\t1"), 0, alive=False))
+        assert result.status == "online"
+        assert _rows(plugin)["Alpha"]["pushed"] == "All 4"
+        assert plugin.jobs.running() is None
+        assert plugin.jobs.recent()[0]["state"] == "succeeded"
+
+    def test_a_check_that_timed_out_fails_its_job(self, plugin, run_cycle):
+        _launch(plugin, run_cycle)
+        result = run_cycle(plugin, lambda c: _poll(f"Alpha\ttarget\t{ALPHA}\n", 124, alive=False))
+        assert plugin.jobs.recent()[0]["state"] == "failed"
+        assert any("exited with status 124" in message for message, _ in result.logs)
+
+    def test_a_vanished_check_fails_its_job(self, plugin, run_cycle):
+        _launch(plugin, run_cycle)
+        result = run_cycle(plugin, lambda c: _poll("", None, alive=False))
+        assert plugin.jobs.recent()[0]["state"] == "failed"
+        assert result.status == "unavailable"
+
+    def test_an_unanswered_poll_leaves_the_job_running(self, plugin, run_cycle):
+        _launch(plugin, run_cycle)
+        result = run_cycle(plugin, lambda c: CmdResult(-1, "", "Agent 'x' is not connected"))
+        assert plugin.jobs.running() is not None
+        assert result.status is None
+        assert any("Could not poll" in message for message, _ in result.logs)
+
+    def test_a_restarted_monitor_adopts_the_running_check(self, make_plugin, plugin, run_cycle):
+        _launch(plugin, run_cycle, pid=777)
+        restarted = make_plugin(AtticPush, CFG)
+        assert "kill -0 777" in restarted.commands()[0].text
+
+    def test_a_running_check_is_polled_sooner_than_the_interval(self, plugin, run_cycle):
+        assert plugin.next_cycle_in() is None
+        _launch(plugin, run_cycle)
+        assert plugin.next_cycle_in() == 30
+
+    def test_job_poll_is_configurable(self, make_plugin, run_cycle):
+        plugin = make_plugin(AtticPush, {**CFG, "job_poll": "10s"})
+        _launch(plugin, run_cycle)
+        assert plugin.next_cycle_in() == 10
+
+
 class TestUiSpec:
+    def test_check_runs_have_a_job_panel(self, plugin):
+        assert plugin.UI_SPEC['job_panel']['title'] == 'Check runs'
+        assert ['jobs'] in plugin.UI_SPEC['layout']
+
     def test_table_titles_are_in_sentence_case(self, plugin):
         tables = plugin.UI_SPEC['tables']
         assert tables['targets']['title'] == 'Tracked targets'
