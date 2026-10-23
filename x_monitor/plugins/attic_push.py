@@ -306,7 +306,7 @@ class AtticPush(Plugin):
             },
             'tables': {
                 'targets': {
-                    'title': 'TRACKED TARGETS',
+                    'title': 'Tracked targets',
                     'row_key': 'name',
                     'rows_attr': '_rows',
                     'columns': [
@@ -321,7 +321,7 @@ class AtticPush(Plugin):
                     ],
                 },
                 'missing': {
-                    'title': 'PATHS NOT IN THE CACHE',
+                    'title': 'Paths not in the cache',
                     'row_key': 'key',
                     'rows_attr': '_missing_rows',
                     'columns': [

@@ -155,3 +155,10 @@ class TestParse:
         result = _run(plugin, run_cycle, _report(f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t0",
                                                  "Alpha\town\t1"))
         assert result.status == "failed"
+
+
+class TestUiSpec:
+    def test_table_titles_are_in_sentence_case(self, plugin):
+        tables = plugin.UI_SPEC['tables']
+        assert tables['targets']['title'] == 'Tracked targets'
+        assert tables['missing']['title'] == 'Paths not in the cache'
