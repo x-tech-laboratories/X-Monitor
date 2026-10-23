@@ -373,6 +373,9 @@ class TestContainersPrune:
         assert plan.command == "docker system prune -f 2>&1"
         assert plan.timeout and plan.timeout >= 300
 
+    async def test_prune_runs_detached(self, make_plugin):
+        assert make_plugin(Containers, _cfg()).plan_action("prune").detached
+
     async def test_prune_flags_from_config(self, make_plugin):
         p = make_plugin(Containers, _cfg(runtime="podman", prune_volumes=True, prune_all_images=True))
         assert p.plan_action("prune").command == "podman system prune -f -a --volumes 2>&1"

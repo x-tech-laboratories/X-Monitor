@@ -447,6 +447,17 @@ Because the job lives on the target it **survives a X-Monitor restart**:
 any job with a pid is re-adopted by the owning plugin's next poll (pid alive →
 resume; pid/exit gone → finalize).
 
+A plugin's main job is the one `jobs.running()` returns; side jobs run beside
+it and never grey out its actions. A kind in `Plugin.SIDE_JOB_KINDS` is a side
+job the plugin polls itself. An action whose plan sets `ActionPlan.detached` (a
+custom action with `detached: true`, a container prune, a borg diff or restore
+check) is a side job of kind `action:<action id>` that the plugin never polls:
+the engine launches it, and `ActionJobs` in `coordination/action_jobs.py`
+polls every running one every few seconds. When one ends, its whole output goes
+to the action's interpreter as a `CmdResult`, as if the command had run inline.
+The action's arguments live only in memory, so after a restart a run is
+interpreted without them.
+
 Jobs live in the store like everything else, so **job ids are assigned by the
 store**, not by SQLite's autoincrement — `jobs.create` returns an id
 immediately, with the row persisted asynchronously under that same id. A

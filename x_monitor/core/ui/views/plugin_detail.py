@@ -6,7 +6,8 @@ from typing import Any, Callable, Dict, List, Optional
 from nicegui import ui
 from x_monitor.core.contracts import ActionButtonSpec, EngineLike
 from ..components import (
-    _outcome_notice, action_button, confirmed, notify_client, on_data_event, open_dialog_impl, page_header,
+    _outcome_notice, action_button, confirmed, follow_action_job, notify_client, on_data_event, open_dialog_impl,
+    page_header,
     set_pressed, toggle_button,
 )
 from .notifications import render_mute_button
@@ -82,7 +83,8 @@ async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
         more = [action for action in actions if action.get('more') and action.get('kind') != 'toggle']
         if more:
             _render_more(plugin, more, client)
-        if getattr(plugin, 'jobs', None) is not None and any(action.get('job') for action in actions):
+        if getattr(plugin, 'jobs', None) is not None and any(
+                action.get('job') or action.get('detached') for action in actions):
             _render_cancel(plugin, client)
         render_mute_button(engine, plugin)
 
@@ -105,6 +107,9 @@ async def _run_header_action(plugin: Any, action: ActionButtonSpec, client: Any)
     success, content = await plugin.run_action(action['action_id'])
     notify_client(client, _outcome_notice(action['name'], success, content),
                   type='positive' if success else 'negative')
+    if success:
+        with client:
+            await follow_action_job(plugin, action['action_id'])
 
 
 def _render_action(plugin: Any, action: ActionButtonSpec, client: Any):
@@ -167,7 +172,7 @@ def _render_cancel(plugin: Any, client: Any):
             notify_client(client, 'No job is running', type='info')
 
     def sync():
-        button.set_visibility(plugin.jobs.is_running())
+        button.set_visibility(plugin.jobs.any_running())
 
     button = action_button('Cancel', on_click=clicked, icon='stop', danger=True)
     on_data_event(sync)

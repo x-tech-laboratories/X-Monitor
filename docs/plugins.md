@@ -215,8 +215,11 @@ Every monitor, whatever its type, accepts an `actions` list of your own commands
 | `more`    | Puts the action in the header's More menu instead of on a button of its own (default: `false`) |
 | `timeout` | How long the command may run, as seconds or a duration such as `2m` |
 | `agent`   | Run on this agent instead of the monitor's own host |
+| `detached` | Run it as a detached job, so restarting X-Monitor never kills it (default: `false`) |
 
 The command runs where the monitor's own commands run: over its agent, or over SSH to its host. It succeeds on exit code 0, and each run is logged on the monitor with the start of its output, or of its error when it fails. Custom ids start with `custom:`, so they never clash with the plugin's own actions, and [`schedule`](#scheduled-actions) and [`triggers`](#triggered-actions) can run them like any other action.
+
+A `detached` action is for a command that runs for minutes or longer. It starts in the background on its host, and X-Monitor polls it every few seconds until it ends. Clicking it opens its live log, the button stays filled while it runs, and **Cancel** in the header stops it. A restarted X-Monitor goes on polling a run that was already going. Its outcome is logged as it would be for a command that ran inline, and `timeout` then limits the whole run.
 
 ---
 
@@ -1444,7 +1447,7 @@ Each cycle lists the newest archives (`borg list --json`) and, with `collect_sta
 
 **Restoring** always extracts into a new folder under `restore_dir`, named after the archive and the time, and never over live files. It runs as a detached job, listed under Jobs with its progress. The archive table's restore button does the same for a path you type.
 
-**Maintenance.** Check, Compact and Prune run as detached jobs, one job at a time per monitor (see [Job control](develop.md#job-control)). Prune applies the `keep_*` policy for real, so use Prune Preview first to see what it would drop. Compact is what actually frees the space afterwards (borg 1.2 or later). An archive row can show what changed since the previous archive (`borg diff`), or delete the archive. **Prune, delete and Break Lock are off unless `allow_delete: true`**, and each one asks for confirmation.
+**Maintenance.** Check, Compact and Prune run as detached jobs, one job at a time per monitor (see [Job control](develop.md#job-control)). Prune applies the `keep_*` policy for real, so use Prune Preview first to see what it would drop. Compact is what actually frees the space afterwards (borg 1.2 or later). An archive row can show what changed since the previous archive (`borg diff`), or delete the archive. Changes and Verify Restore run as detached actions beside any job, so a restart never cuts them short: each opens its live log, and its result is logged as an event when it ends. **Prune, delete and Break Lock are off unless `allow_delete: true`**, and each one asks for confirmation.
 
 **Running backups on a schedule.** With a `schedule` (see [Scheduled actions](#scheduled-actions)) this monitor can take over from borgmatic or Vorta. `prune_after_backup` and `compact_after_backup` make each real backup prune by the `keep_*` policy and then compact, the way borgmatic runs `create prune compact`; each step runs only while the ones before it succeeded or ended with a borg warning, and the job exits with the worst status. A dry run never prunes.
 
@@ -1536,7 +1539,7 @@ Monitors Docker or Podman containers over SSH via `<runtime> ps -a`, counting ru
 
 For safety, the restart action only ever targets containers explicitly listed in `expect_running`.
 
-**Prune.** The **Prune** button runs `<runtime> system prune -f` on the target after a confirmation that spells out what it deletes: every stopped container, unused networks, dangling images and the build cache. `prune_all_images: true` adds `-a` (every image no container uses) and `prune_volumes: true` adds `--volumes` (every unused volume, with its data). The space reclaimed and the number of objects deleted are shown when it finishes and logged as an event; a failed prune is logged as an error event without changing the status. There is no per-container "pull and recreate": a plain `docker run` container cannot be recreated with its original options from what the runtime reports, so pull and recreate through whatever started it (compose, systemd, `podman auto-update`).
+**Prune.** The **Prune** button runs `<runtime> system prune -f` on the target after a confirmation that spells out what it deletes: every stopped container, unused networks, dangling images and the build cache. `prune_all_images: true` adds `-a` (every image no container uses) and `prune_volumes: true` adds `--volumes` (every unused volume, with its data). It runs as a detached job, so restarting X-Monitor never cuts it short, and its live log opens when it starts. The space reclaimed and the number of objects deleted are logged as an event when it finishes; a failed prune is logged as an error event without changing the status. There is no per-container "pull and recreate": a plain `docker run` container cannot be recreated with its original options from what the runtime reports, so pull and recreate through whatever started it (compose, systemd, `podman auto-update`).
 
 **Image updates.** Each cycle the target also reports every container's image reference and the RepoDigests of the image it runs (`<runtime> container inspect` / `image inspect`), so the target needs nothing beyond the runtime. Every `update_check_interval` X-Monitor itself asks each image's registry for the digest its tag points at now (a `HEAD` on `/v2/<repo>/manifests/<tag>`), and the **Update** column shows one of:
 
