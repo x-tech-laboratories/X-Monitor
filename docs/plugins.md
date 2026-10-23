@@ -1478,7 +1478,7 @@ check_kinds: {repository: 8d, archives: 8d, data: 32d}
 | `collect_stats` | Read sizes with `borg info` (default: `true`) |
 | `cache_dir` | borg's cache and config dir for jobs, and for polls when set (default: `/var/cache/x-monitor-borg`) |
 | `lock_wait` / `backup_lock_wait` | Seconds to wait for a lock in polls / in jobs (defaults: `30` / `600`) |
-| `source_paths`, `exclude`, `exclude_from`, `exclude_caches`, `exclude_if_present`, `one_file_system`, `compression`, `archive_prefix` | The backup set for the Run Backup action |
+| `source_paths`, `exclude`, `exclude_from`, `exclude_caches`, `exclude_if_present`, `one_file_system`, `compression`, `archive_prefix` | The backup set for the Run Backup action; an archive is named `<archive_prefix>-<local time>` |
 | `canary_path` / `canary_interval` | A file extracted from the newest archive and compared with the live copy, and how often (default: `1d`) |
 | `check_units` / `check_max_age` | systemd units that run `borg check`, read from the journal, and how old their last success may be (default: `8d`) |
 | `keep_within`, `keep_last`, `keep_hourly`, `keep_daily`, `keep_weekly`, `keep_monthly`, `keep_yearly`, … | Retention policy for Prune Preview and Prune |
