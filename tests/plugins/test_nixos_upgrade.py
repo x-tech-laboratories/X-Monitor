@@ -550,6 +550,30 @@ class TestActions:
         assert outcome.success is False
         assert plugin.jobs.running() is None
 
+    async def test_launch_failure_is_kept_in_the_history_with_its_output(self, plugin):
+        plugin.plan_action("switch")
+        plugin.interpret_action("switch", CmdResult(1, "", "setsid: not found"))
+        job = plugin.jobs.recent(limit=1)[0]
+        assert (job['kind'], job['state'], job['error']) == ("switch", "failed", "The job could not be launched")
+        assert [line['message'] for line in await plugin.jobs.log(job['id'])] == ["setsid: not found"]
+
+    async def test_reboot_is_kept_in_the_history(self, plugin):
+        plugin.plan_action("reboot")
+        plugin.interpret_action("reboot", CmdResult(0, "", ""))
+        job = plugin.jobs.recent(limit=1)[0]
+        assert (job['kind'], job['state'], job['command']) == ("reboot", "succeeded", "sudo -n systemctl reboot")
+
+    async def test_failed_reboot_keeps_its_output(self, plugin):
+        plugin.plan_action("reboot")
+        plugin.interpret_action("reboot", CmdResult(1, "", "sudo: a password is required"))
+        job = plugin.jobs.recent(limit=1)[0]
+        assert (job['state'], job['exit_code']) == ("failed", 1)
+        log = await plugin.jobs.log(job['id'])
+        assert [(line['stream'], line['message']) for line in log] == [("stderr", "sudo: a password is required")]
+
+    def test_job_panel_is_titled_jobs(self, plugin):
+        assert plugin.UI_SPEC['job_panel']['title'] == 'Jobs'
+
     async def test_second_job_refused_while_one_runs(self, plugin):
         await _launch(plugin)
         refused = plugin.plan_action("update_flake")
@@ -977,7 +1001,7 @@ class TestUI:
         assert {_state(plugin, a) for a in ("update_flake", "switch", "reboot")} == {'disabled'}
 
     def test_details_table_has_a_title(self, plugin):
-        assert plugin.UI_SPEC['tables']['details']['title'] == 'DEPLOYMENT DETAILS'
+        assert plugin.UI_SPEC['tables']['details']['title'] == 'Deployment details'
 
     async def test_job_controls_live_in_the_header_only(self, plugin):
         spec = plugin.UI_SPEC

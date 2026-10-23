@@ -25,6 +25,7 @@ import hashlib
 import queue
 import threading
 import time
+from concurrent.futures import Future
 from datetime import datetime, timedelta
 from typing import Optional, Any, Dict, List, Callable, TYPE_CHECKING
 from peewee import *
@@ -88,8 +89,8 @@ class _AsyncWriter:
     """Serialises persistence onto one background thread, batching whatever
     arrives inside ``batch_window`` into a single transaction.
 
-    Now that no read path touches SQLite, this thread is the only thing that
-    does, and nothing waits on it — writes are submitted and forgotten. The
+    This thread is the only thing that touches SQLite, and writes are submitted
+    and forgotten; the one read, a finished job's log, is queued here too. The
     batching amortises fsync across a poll cycle's worth of metrics rather
     than paying it per row."""
 
@@ -919,6 +920,39 @@ class DatabaseManager:
             }
             for o in self.store.job_output(job_id, after_seq=after_seq, limit=limit)
         ]
+
+    def job_log(self, job_id: int) -> "Future[List[JobOutputDict]]":
+        """A job's whole output, up to the running-job buffer's length: a running job's from memory, a finished one's from disk."""
+        future: "Future[List[JobOutputDict]]" = Future()
+        job = self.store.get_job(job_id)
+        if job is None or job["state"] == "running":
+            future.set_result(self.job_output(job_id, limit=0))
+            return future
+        keep = self.store.buffers.job_output
+
+        def _read():
+            try:
+                rows = list(
+                    JobOutput.select()
+                    .where(JobOutput.job == job_id)
+                    .order_by(JobOutput.seq.desc())
+                    .limit(keep)
+                )
+                future.set_result([
+                    {
+                        "seq": row.seq,
+                        "timestamp": row.timestamp.isoformat(sep=" ", timespec="seconds"),
+                        "stream": row.stream,
+                        "message": row.message,
+                    }
+                    for row in reversed(rows)
+                ])
+            except Exception as e:
+                future.set_exception(e)
+
+        # Read on the writer thread, so the lines still queued for disk are written first.
+        _writer.submit(_read)
+        return future
 
     def reconcile_orphaned_jobs(self) -> int:
         """Jobs run detached on the target and survive a X-Monitor restart, so a

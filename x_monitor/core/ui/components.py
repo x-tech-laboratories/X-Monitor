@@ -856,9 +856,18 @@ def render_job_panel(plugin, spec: dict):
                     {'name': 'state', 'label': 'State', 'field': 'state', 'align': 'left'},
                     {'name': 'duration', 'label': 'Duration', 'field': 'duration', 'align': 'left',
                      'sort_field': 'duration_seconds'},
+                    {'name': 'log', 'label': '', 'field': 'id', 'sortable': False, 'align': 'center'},
                 ],
                 row_key='id', filter_input=False,
             ).classes('w-full').props('flat')
+            jobs_table.add_slot('body-cell-log', '''
+<q-td :props="props">
+  <div class="row items-center justify-center halon-row-actions">
+    <q-btn flat no-caps icon="article" title="Log" @click="$parent.$emit('show_log', props.row)" />
+  </div>
+</q-td>
+''')
+            jobs_table.on('show_log', lambda e: show_job_log(plugin, (e.args or {}).get('id')))
 
         last_progress_color = [None]
 
@@ -894,6 +903,55 @@ def render_job_panel(plugin, spec: dict):
             ])
 
         on_data_event(update)
+
+
+def _job_summary(job: dict) -> str:
+    """The dialog's one-line description of a job: when it started, its state and how it ended."""
+    from x_monitor.plugins.base.plugin_helpers import format_duration
+    parts = [f"Started {job['started']}", job['state']]
+    if job.get('exit_code') is not None:
+        parts.append(f"exit {job['exit_code']}")
+    parts.append(format_duration(job['duration']))
+    return ' · '.join(parts)
+
+
+async def show_job_log(plugin, job_id: Optional[int]):
+    """Open a dialog with a job's command and output, following new lines until the job ends."""
+    job = plugin.data.job(job_id) if job_id is not None else None
+    if job is None:
+        ui.notify('That job is no longer kept', type='warning')
+        return
+    with ui.dialog() as dialog:
+        body, footer = dialog_card(f"{job['kind'].capitalize()} log", width='64rem')
+        with body:
+            summary = ui.label(_job_summary(job)).classes('halon-caption')
+            ui.label(job['command']).classes('font-mono halon-caption halon-job-command')
+            error = ui.label(job.get('error') or '').classes('halon-caption halon-text-danger')
+            error.set_visibility(bool(job.get('error')))
+            output = ui.log().classes('w-full font-mono halon-job-log')
+            empty = ui.label('No output').classes('halon-caption')
+        with footer:
+            action_button('Close', on_click=dialog.close, icon=None)
+    shown = [-1]
+
+    async def refresh():
+        current = plugin.data.job(job_id) or job
+        lines = await plugin.jobs.log(job_id)
+        for line in lines:
+            if line['seq'] > shown[0]:
+                output.push(line['message'])
+                shown[0] = line['seq']
+        empty.set_visibility(shown[0] < 0)
+        summary.text = _job_summary(current)
+        error.text = current.get('error') or ''
+        error.set_visibility(bool(current.get('error')))
+        if current['state'] != 'running':
+            follow.deactivate()
+
+    with dialog:
+        follow = ui.timer(2.0, refresh)
+    dialog.on_value_change(lambda e: dialog.delete() if not e.value else None)
+    dialog.open()
 
 
 async def _start(plugin, spec: dict):

@@ -4,6 +4,7 @@ the target (a Job row) advanced by the owning plugin's poll; "running" is a DB
 state, not a live coroutine, so everything here is DB reads and writes plus
 (for cancel) one ordinary SSH command on the host the job runs on."""
 
+import asyncio
 from typing import Awaitable, Callable, Optional
 
 
@@ -35,6 +36,10 @@ class JobsGateway:
         """Return the plugin's most recent job rows."""
         return self._db.recent_jobs(plugin_id=self._plugin.id, limit=limit)
 
+    async def log(self, job_id: int) -> list:
+        """Return a job's whole output, read from disk once the job has finished."""
+        return await asyncio.wrap_future(self._db.job_log(job_id))
+
     async def cancel(self) -> bool:
         """Kill the plugin's running detached job on the target (one ordinary
         SSH command) and mark it cancelled. The plugin's next poll would also
@@ -48,7 +53,7 @@ class JobsGateway:
         self._db.finish_job(job['id'], 'cancelled', exit_code=130, error='Cancelled by user')
         return True
 
-    def create(self, kind: str, command: str, workdir: str) -> int:
+    def create(self, kind: str, command: str, workdir: Optional[str] = None) -> int:
         """Record a newly launched detached job and return its id."""
         return self._db.create_job(plugin_id=self._plugin.id, target=self._plugin.target,
                                    kind=kind, command=command, workdir=workdir)
@@ -61,9 +66,9 @@ class JobsGateway:
         """Update the one-line progress summary the job panel shows."""
         self._db.set_job_progress(job_id, summary)
 
-    def append_output(self, job_id: int, lines: list) -> None:
+    def append_output(self, job_id: int, lines: list, stream: str = 'stdout') -> None:
         """Append newly observed output lines to the job's log."""
-        self._db.append_job_output(job_id, lines)
+        self._db.append_job_output(job_id, lines, stream)
 
     def bump_output_seq(self, job_id: int, new_seq: int) -> None:
         """Advance the byte offset up to which the job's output was consumed."""

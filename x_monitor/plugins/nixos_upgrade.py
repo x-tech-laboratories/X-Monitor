@@ -17,7 +17,8 @@ and update jobs on another agent's host, which with `target_host` lets one host
 build every other's closure and activate it over SSH; the probe stays on the target,
 so drift is still read from the machine it describes. Actions launch
 detached jobs on the target: `nix flake update` on the flake, and
-`nixos-rebuild switch --flake`; Reboot runs `systemctl reboot` on the target itself; a `github:` flake with a `push_ssh_key` is
+`nixos-rebuild switch --flake`; Reboot runs `systemctl reboot` on the target itself. Every action,
+a reboot or a failed launch included, lands in the job history with its output; a `github:` flake with a `push_ssh_key` is
 updated in a fresh clone that is committed and pushed back over SSH. With `auto_switch`, drift that outlasts
 `auto_switch_after` launches the switch itself, once per target closure, and
 only when the flake changed after the running generation was made. `update_at` and
@@ -759,6 +760,7 @@ class NixosUpgrade(Plugin):
 
     def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
         if action_id == 'reboot':
+            self._record_finished('reboot', f'{self._sudo()}systemctl reboot', result)
             if result.exit_code != 0:
                 return CollectResult.failed(
                     f"Failed to reboot: {(result.stderr or result.stdout).strip()[:200]}")
@@ -771,6 +773,7 @@ class NixosUpgrade(Plugin):
 
         pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
         if pid is None:
+            self._record_finished(kind, command, result, error='The job could not be launched')
             return CollectResult.failed(
                 f"Failed to launch {kind}: {(result.stderr or result.stdout).strip()[:200]}")
 
@@ -778,6 +781,16 @@ class NixosUpgrade(Plugin):
         self.jobs.set_pid(job_id, pid)
         return CollectResult(logs=[(f"{kind.capitalize()} started (pid {pid})", 'INFO')],
                              success=True)
+
+    def _record_finished(self, kind: str, command: str, result: CmdResult,
+                         error: Optional[str] = None) -> None:
+        """Keep a command that ran no detached job in the job history, with whatever it printed."""
+        job_id = self.jobs.create(kind, command, None)
+        self.jobs.append_output(job_id, (result.stdout or '').splitlines())
+        self.jobs.append_output(job_id, (result.stderr or '').splitlines(), stream='stderr')
+        succeeded = result.exit_code == 0 and error is None
+        self.jobs.finish(job_id, 'succeeded' if succeeded else 'failed', exit_code=result.exit_code,
+                         error=None if succeeded else error or f"Exited with status {result.exit_code}")
 
     # --- UI ---
 
@@ -903,7 +916,7 @@ class NixosUpgrade(Plugin):
             },
             'tables': {
                 'details': {
-                    'title': 'DEPLOYMENT DETAILS',
+                    'title': 'Deployment details',
                     'row_key': 'label',
                     'rows_attr': '_detail_rows',
                     'columns': [
@@ -912,6 +925,6 @@ class NixosUpgrade(Plugin):
                     ],
                 },
             },
-            'job_panel': {'widget': 'jobs', 'title': 'REBUILD JOBS', 'history_limit': 10},
+            'job_panel': {'widget': 'jobs', 'title': 'Jobs', 'history_limit': 10},
             'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }

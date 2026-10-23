@@ -792,6 +792,21 @@ a, .q-link { color: var(--accent); }
     font-size: var(--text-caption);
 }
 
+/* A job's log: the command it ran, then its output in a recessed scrolling well. */
+.halon-job-command { white-space: pre-wrap; word-break: break-word; color: var(--text-secondary); }
+.halon-text-danger { color: var(--status-danger); }
+.halon-job-log {
+    height: 60vh;
+    padding: var(--space-4);
+    background-color: var(--surface-root);
+    border: var(--border-width) solid var(--border-default);
+    border-radius: var(--radius-default);
+    color: var(--text-body);
+    font-size: var(--text-caption);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* A list inside a dialog: hairline rows rather than boxes. */
 .halon-list { width: 100%; gap: 0; }
 
