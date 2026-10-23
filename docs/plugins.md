@@ -1229,12 +1229,11 @@ Network interface throughput, from two `/proc/net/dev` samples a second apart. W
 ---
 
 ### `connections`
-TCP connection counts by state, read from `/proc/net/tcp`. Thresholds apply to the total, which is what catches a connection leak or a flood.
+TCP connection counts by state, read from `/proc/net/tcp`. The limit applies to the total, which is what catches a connection leak or a flood. It only ever warns: a short burst of sockets, such as a port scan, is normal and is never a failure.
 
 | Option       | Description                                                  |
 |--------------|--------------------------------------------------------------|
 | `warning`    | Total connections that trigger `warning` (default: `500`)    |
-| `threshold`  | Total connections that trigger `failed` (default: `1000`)    |
 | `interval`   | Polling frequency (default: `60`)                            |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
 
@@ -1246,7 +1245,6 @@ TCP connection counts by state, read from `/proc/net/tcp`. Thresholds apply to t
   type: "connections"
   interval: 1m
   warning: 500
-  threshold: 1000
   ssh_config:
     host: "ragnarok.example.com"
 ```

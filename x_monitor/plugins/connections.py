@@ -1,6 +1,7 @@
-"""TCP connection counts by state, read from /proc/net/tcp. The total is
-ranked against warning/threshold; a table that could not be read is
-unavailable."""
+"""TCP connection counts by state, read from /proc/net/tcp. A total at or
+above `warning` is a warning, never a failure, since a burst of short-lived
+sockets (a port scan, a busy client) is normal; a table that could not be read
+is unavailable."""
 
 from collections import Counter
 
@@ -48,8 +49,7 @@ class Connections(SignalPlugin):
 
     def __init__(self, name: str, config: PluginConfig):
         super().__init__(name, config)
-        self.warning   = limit_from(config, 'warning',   500)
-        self.threshold = limit_from(config, 'threshold', 1000)
+        self.warning = limit_from(config, 'warning', 500)
 
 
     SAMPLED = True
@@ -69,7 +69,7 @@ class Connections(SignalPlugin):
                    for state in _TCP_STATES.values()}
         metrics['conn_total'] = float(total)
 
-        status = level_for(total, self.warning, self.threshold)
+        status = level_for(total, self.warning, None)
         summary = ', '.join(f"{s}={counts[s]}" for s in sorted(counts)) or "no connections"
         return CollectResult(
             metrics=metrics,
@@ -81,8 +81,7 @@ class Connections(SignalPlugin):
         return {
             'conn_total_card': {'metric': 'conn_total', 'title': 'CONNECTIONS',
                                 'format': 'int_rounded',
-                                'color': {'warning': self.warning,
-                                          'threshold': self.threshold}},
+                                'color': {'warning': self.warning}},
             'conn_states_card': {'kind': 'share', 'title': 'BY STATE', 'format': 'int_rounded',
                                  'parts': [
                                      {'metric': 'conn_established', 'label': 'Established',
