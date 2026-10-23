@@ -336,6 +336,27 @@ def parse_poll(stdout: str) -> PollResult:
     )
 
 
+def stream_stderr(command: str, status_file: str, stdout_to: Optional[str] = None,
+                  keep: Optional[str] = None, prefix: str = '', to_stderr: bool = False) -> str:
+    """Build shell that runs `command` with its stderr copied to this script's stdout line by line as it arrives.
+
+    A detached job's log then shows a command's progress and errors while it
+    runs, even when its stdout is kept apart for parsing. The command's stdout
+    goes to the file `stdout_to` when given, else to this script's stdout;
+    `keep` also saves the stderr to a file, `prefix` starts each copied line,
+    and the exit status is written to `status_file`. `to_stderr` sends the
+    copy to this script's stderr instead, for a command whose stdout is
+    captured by $(...). The file arguments are shell words, already quoted."""
+    copy = f'tee {keep}' if keep else 'cat'
+    if prefix:
+        copy += f' | while IFS= read -r line; do printf "%s%s\\n" {shlex.quote(prefix)} "$line"; done'
+    if to_stderr:
+        copy = f'{{ {copy}; }} >&2'
+    target = stdout_to or '&1'
+    # A subshell, so the redirects cover the whole command and an exit inside it still leaves its status behind.
+    return f'{{ {{ ( {command}\n) 2>&1 1>&3 3>&-; echo $? > {status_file}; }} | {copy}; }} 3>{target}'
+
+
 def cancel_command(pid: int) -> str:
     """Terminate the detached job, then force-kill after a short grace. Best
     effort — mirrors the terminate()->kill() escalation."""

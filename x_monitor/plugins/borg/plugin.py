@@ -29,7 +29,6 @@ import json
 import shlex
 import time
 from collections import OrderedDict
-from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -218,8 +217,12 @@ class Borg(Plugin):
         return self._sequence_command([command for _, command in self._poll_plan()])
 
     def _sequence_command(self, calls: List[str], limits: Optional[Dict[int, int]] = None,
-                          filters: Optional[Dict[int, str]] = None) -> str:
-        """Runs calls one after another under one deadline and frames each one's output; `filters` pipes a call's stdout through a shell filter and `limits` then caps it at that many lines."""
+                          filters: Optional[Dict[int, str]] = None, live: bool = False) -> str:
+        """Runs calls one after another under one deadline and frames each one's output; `filters` pipes a call's stdout through a shell filter and `limits` then caps it at that many lines.
+
+        `live` prints each call's stdout as it is written, for a detached job
+        whose log is read while it runs; its exit code then follows in the
+        frame that opens its stderr."""
         base = f"${_POLL_BASE_DIR_VAR}"
         # The trap is what keeps the throwaway dir throwaway, since borg builds a full chunks cache in it on every poll
         parts = [
@@ -234,6 +237,9 @@ class Borg(Plugin):
                 f'[ "$__x_monitor_left" -lt 1 ] && __x_monitor_left=1; printf %s "$__x_monitor_left"; }}'
             )
         for index, call in enumerate(calls):
+            if live:
+                parts.extend(self._live_call(index, call, (limits or {}).get(index), (filters or {}).get(index)))
+                continue
             parts.append(
                 f'{call} >"{base}/{index}.out" 2>"{base}/{index}.err"; {_POLL_RC_VAR}=$?'
             )
@@ -247,6 +253,23 @@ class Borg(Plugin):
                 parts.append(f"{reader} | head -n {int(limit)}" if limit else reader)
                 parts.append("printf '\\n'")
         return "; ".join(parts)
+
+    @staticmethod
+    def _live_call(index: int, call: str, limit: Optional[int], keep: Optional[str]) -> List[str]:
+        """One call of a live sequence: its stdout printed as it comes, then its stderr under a frame carrying its exit code."""
+        base = f"${_POLL_BASE_DIR_VAR}"
+        reader = f" | {keep}" if keep else ""
+        # awk keeps reading past the limit, so the call never dies of a closed pipe.
+        reader += f" | awk 'NR <= {int(limit)}'" if limit else ""
+        return [
+            f'printf \'%s\\n\' "{_frame_line(index, "out", "-")}"',
+            f'{{ {call} 2>"{base}/{index}.err"; echo $? >"{base}/{index}.rc"; }}{reader}',
+            f'{_POLL_RC_VAR}=$(cat "{base}/{index}.rc")',
+            "printf '\\n'",
+            f'printf \'%s\\n\' "{_frame_line(index, "err", f"${_POLL_RC_VAR}")}"',
+            f'cat "{base}/{index}.err"',
+            "printf '\\n'",
+        ]
 
     def _list_command(self) -> str:
         # Never add --bypass-lock to a read: borg rewrites the index on open, and unlocked mid-compaction that corrupts it.
@@ -746,6 +769,11 @@ class Borg(Plugin):
                                                  filters={0: keep} if keep else None),
                           timeout=self.timeout or None)
 
+    def _run_detached(self, calls: List[str], limit: Optional[int] = None) -> ActionPlan:
+        """Framed borg calls as a detached action whose output reaches its log as it is written; the sequence's own deadline bounds it by `timeout`."""
+        command = self._sequence_command(calls, limits={0: limit} if limit else None, live=True)
+        return ActionPlan(command, detached=True)
+
     def _launch(self, kind: str, command: str, started: str = '') -> ActionPlan:
         """Launches `command` as a detached job; interpret_action records the pid it prints and creates the job row."""
         token = f"{self.id}-{int(time.time())}"
@@ -853,9 +881,7 @@ class Borg(Plugin):
         archive = self._canary_archive()
         if not archive:
             return self._refused("Cannot verify a restore: no archive has been listed yet")
-        # Detached, so a restart never cuts it short; the sequence's own deadline still bounds it by `timeout`.
-        return ActionPlan(self._sequence_command([command for _, command in self._canary_calls(archive)]),
-                          detached=True)
+        return self._run_detached([command for _, command in self._canary_calls(archive)])
 
     def _interpret_verify_restore(self, result: CmdResult, **_):
         by_name = dict(zip(('canary', 'canary_live'), _split_poll(result, 2)))
@@ -1081,7 +1107,7 @@ class Borg(Plugin):
             "--lock-wait", str(self.lock_wait),
             f"{self.repo}::{older}", archive,
         ], persistent_cache=self.cache_dir_configured, bounded=True, wrapped=False)
-        return replace(self._run_one(call, limit=self.browse_limit + 1), timeout=None, detached=True)
+        return self._run_detached([call], limit=self.browse_limit + 1)
 
     def _interpret_diff(self, result: CmdResult, archive: Optional[str] = None, **_):
         call = _split_poll(result, 1)[0]

@@ -88,12 +88,14 @@ class TestScript:
         nix.chmod(0o755)
         script = check_script("/f", [("Alpha", "/f#a"), ("Broken", "/f#Broken")],
                               "https://c", ["cache.nixos.org-1"], str(nix))
-        stdout = subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout
-        facts, metadata = parse_report(stdout)
+        run = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+        facts, metadata = parse_report(run.stdout)
         assert facts["Alpha"] == {"target": ALPHA, "built": "1", "own": "2",
                                   "missing": ["/nix/store/dddd-dep"]}
         assert facts["Broken"]["error"] == "error: no such attribute"
         assert metadata == {"revision": "abc"}
+        # The evaluation's stderr is copied to the job's log as it runs, not only into the report.
+        assert run.stderr == "error: no such attribute\n"
 
 
 class TestParse:
