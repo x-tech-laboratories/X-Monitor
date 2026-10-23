@@ -191,7 +191,7 @@ class JobPanelSpec(TypedDict, total=False):
     cancel_icon: str
     enabled_if: str                # ENABLED_PREDICATES key
     disabled_text: str             # shown while enabled_if is false; default names the config
-    run_action_id: str
+    run_action_id: str             # without it the panel has no run/cancel buttons
     history_limit: int
 
 

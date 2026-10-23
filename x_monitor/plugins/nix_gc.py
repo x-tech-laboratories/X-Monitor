@@ -496,7 +496,7 @@ class NixGc(Plugin):
     # --- actions ---
 
     def get_actions(self) -> List[Dict[str, str]]:
-        return [{'name': 'Collect Garbage', 'action_id': 'collect',
+        return [{'name': 'Collect Garbage', 'action_id': 'collect', 'job': 'collection',
                  'variant': 'primary', 'icon': 'delete_sweep'}]
 
     def _collect_command(self) -> str:
@@ -631,13 +631,6 @@ class NixGc(Plugin):
                 },
             },
             'chart': {'metric': 'store_paths', 'title': f'STORE PATHS — {self.store}'},
-            'job_panel': {
-                'widget': 'jobs',
-                'title': 'COLLECTION JOBS',
-                'run_action_id': 'collect',
-                'run_label': 'Collect Garbage', 'run_icon': 'delete_sweep',
-                'cancel_label': 'Cancel', 'cancel_icon': 'stop',
-                'history_limit': 10,
-            },
+            'job_panel': {'widget': 'jobs', 'title': 'COLLECTION JOBS', 'history_limit': 10},
             'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }

@@ -438,6 +438,11 @@ class TestLocalPath:
         assert make_plugin(NixosUpgrade, {**BASE_CFG, "flake": ref}).local_path == expected
 
 
+def _state(plugin, action_id):
+    """The header state of one of the plugin's own actions."""
+    return plugin.action_state(next(a for a in plugin.get_actions() if a['action_id'] == action_id))
+
+
 async def _launch(plugin, action_id="switch", pid=4242):
     """Drive plan_action -> ActionPlan (launch) -> interpret_action, mirroring
     XMonitorEngine.dispatch_action for a launched detached job."""
@@ -471,8 +476,37 @@ def _poll_once(plugin, poll_result):
 
 
 class TestActions:
-    def test_both_actions_exposed(self, plugin):
-        assert {a['action_id'] for a in plugin.get_actions()} == {"update_flake", "switch"}
+    def test_every_action_exposed(self, plugin):
+        assert {a['action_id'] for a in plugin.get_actions()} == {"update_flake", "switch", "reboot"}
+
+    def test_reboot_asks_first(self, plugin):
+        reboot = next(a for a in plugin.get_actions() if a['action_id'] == "reboot")
+        assert reboot['confirm'] and reboot['variant'] == "danger"
+
+    def test_reboot_runs_on_the_target_as_root(self, make_plugin):
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "switch_agent": "builder"})
+        plan = p.plan_action("reboot")
+        assert plan.command == "sudo -n systemctl reboot" and plan.agent is None
+
+    def test_reboot_honours_require_sudo(self, make_plugin):
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "require_sudo": False})
+        assert p.plan_action("reboot").command == "systemctl reboot"
+
+    async def test_reboot_starts_no_job(self, plugin):
+        outcome = await _launch(plugin, "reboot")
+        assert outcome.success is True
+        assert plugin.jobs.running() is None
+
+    async def test_failed_reboot_logs_why(self, plugin):
+        plugin.plan_action("reboot")
+        outcome = plugin.interpret_action("reboot", CmdResult(1, "", "sudo: a password is required"))
+        assert outcome.success is False
+        assert any("password is required" in m for m, _ in outcome.logs)
+
+    async def test_reboot_refused_while_a_job_runs(self, plugin):
+        await _launch(plugin)
+        refused = plugin.plan_action("reboot")
+        assert any("already running" in m for m, _ in refused.logs)
 
     def test_unknown_action_is_unhandled(self, plugin):
         assert plugin.plan_action("nonsense") is None
@@ -914,18 +948,38 @@ class TestUI:
 
     async def test_update_button_hidden_for_a_non_github_remote_flake(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "git+https://example.com/config"})
-        button = p.UI_SPEC['buttons']['controls'][0]
-        assert button['visible_if'](p) is False
+        assert _state(p, "update_flake") == 'hidden'
 
     async def test_update_button_hidden_for_a_github_flake_without_a_key(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "github:owner/config"})
-        assert p.UI_SPEC['buttons']['controls'][0]['visible_if'](p) is False
+        assert _state(p, "update_flake") == 'hidden'
 
     async def test_update_button_shown_for_a_github_flake(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, **GITHUB_PUSH})
-        assert p.UI_SPEC['buttons']['controls'][0]['visible_if'](p) is True
+        assert _state(p, "update_flake") == 'normal'
 
-    async def test_ui_spec_renders_without_data(self, plugin):
+    async def test_every_action_is_normal_while_no_job_runs(self, plugin):
+        assert {_state(plugin, a) for a in ("update_flake", "switch", "reboot")} == {'normal'}
+
+    async def test_a_running_switch_fills_its_button_and_greys_out_the_rest(self, plugin):
+        await _launch(plugin, "switch")
+        assert _state(plugin, "switch") == 'accent'
+        assert _state(plugin, "update_flake") == 'disabled'
+        assert _state(plugin, "reboot") == 'disabled'
+
+    async def test_a_running_update_fills_its_own_button(self, plugin):
+        await _launch(plugin, "update_flake")
+        assert _state(plugin, "update_flake") == 'accent'
+        assert _state(plugin, "switch") == 'disabled'
+
+    async def test_a_running_build_greys_out_every_button(self, plugin):
+        await _launch(plugin, "build")
+        assert {_state(plugin, a) for a in ("update_flake", "switch", "reboot")} == {'disabled'}
+
+    def test_details_table_has_a_title(self, plugin):
+        assert plugin.UI_SPEC['tables']['details']['title'] == 'DEPLOYMENT DETAILS'
+
+    async def test_job_controls_live_in_the_header_only(self, plugin):
         spec = plugin.UI_SPEC
-        assert spec['job_panel']['run_action_id'] == 'switch'
+        assert 'run_action_id' not in spec['job_panel'] and 'buttons' not in spec
         assert spec['cards']['flake_card']['value'] == "/etc/nixos"

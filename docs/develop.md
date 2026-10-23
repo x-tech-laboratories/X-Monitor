@@ -847,8 +847,8 @@ Two hazards are worth knowing before editing either sheet:
 
 ## The overview's fleet sections
 
-Above its charts the overview draws the fleet: a tile per root of the monitor tree, tinted
-by the worst state among its monitors and opening that group's page; reachability strips for every
+Above its charts the overview draws the fleet: a tile per root of the monitor tree, its
+dot showing the worst state among its monitors, opening that group's page; reachability strips for every
 uptime, http, mosquitto, dns_record and push monitor, grouped by host; a meter per borg repository
 of the time since its newest archive, half full at its max age; a tile per NixOS deployment; and a
 bar per vulnerability scan. A section appears only when the fleet has monitors of its kind.
@@ -947,6 +947,10 @@ SVG ring with round caps for the gauge, one rounded element per strip cell, flex
 share bar. They follow the client's scheme with no repaint and send only what changed. The
 multi-series chart is ECharts like `history_chart`, so it repaints its literal colors through `theme.on_scheme_change`; `palette()['series']` gives it the three
 `--series-*` tokens, the first of which is the accent itself.
+
+Cards and tiles stay plain whatever their state: status shows only in the marks inside them,
+the colored value, badge, dot, arc, meter or strip cell, so a page of trouble reads as marks to
+scan rather than a wall of tinted panels.
 
 Every widget prints its value next to its shape. A bar on its own track can be too faint to
 read (§3.6 of Halon's guide), and a printed number makes the shape reinforcement rather than

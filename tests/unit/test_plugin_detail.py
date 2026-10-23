@@ -182,6 +182,12 @@ def _button(user: User, label='Start on Boot'):
     return next(iter(user.find(kind=ui.button, content=label).elements))
 
 
+def _all_buttons(user: User, label=None):
+    """Every button on the page, hidden ones too, which user.find leaves out."""
+    return [e for e in user.client.elements.values()
+            if isinstance(e, ui.button) and (label is None or e.text == label)]
+
+
 def _pressed(button) -> bool:
     return 'halon-button-active' in button.classes and button.props.get('aria-pressed') == 'true'
 
@@ -244,3 +250,111 @@ class TestActionNames:
             'disable_service': 'Start on Boot: off',
             'restart': 'Restart',
         }
+
+
+class _JobPlugin:
+    """A monitor with one job action whose header state the test sets, and a job that may be running."""
+
+    name = 'host'
+    id = 'host'
+    actions = [{'name': 'Rebuild', 'action_id': 'switch', 'job': 'switch'}]
+
+    def __init__(self, state='normal', running=False):
+        self.state = state
+        self.ran = []
+        self.cancelled = False
+        self.jobs = SimpleNamespace(is_running=lambda: running, cancel=self._cancel)
+
+    async def _cancel(self):
+        self.cancelled = True
+        return True
+
+    def action_state(self, action):
+        return self.state
+
+    async def run_action(self, action_id):
+        self.ran.append(action_id)
+        return True, ''
+
+    async def present(self):
+        return {'actions': self.actions}
+
+    def get_actions(self):
+        return self.actions
+
+    def render_ui(self, context='page'):
+        ui.label('plugin body')
+
+
+class TestActionState:
+    async def test_a_normal_action_runs_when_clicked(self, user: User):
+        plugin = _JobPlugin()
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('Rebuild')
+        assert 'halon-button-filled' not in _button(user, 'Rebuild').classes
+        user.find(kind=ui.button, content='Rebuild').click()
+        await user.should_see('Action completed successfully')
+        assert plugin.ran == ['switch']
+
+    async def test_a_disabled_action_is_greyed_out(self, user: User):
+        _toggle_page(_JobPlugin(state='disabled'))
+        await user.open('/')
+        await user.should_see('Rebuild')
+        assert not _button(user, 'Rebuild').enabled
+
+    async def test_a_running_action_is_filled_and_ignores_clicks(self, user: User):
+        plugin = _JobPlugin(state='accent', running=True)
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('Rebuild')
+        button = _button(user, 'Rebuild')
+        assert 'halon-button-filled' in button.classes and 'halon-button' not in button.classes
+        user.find(kind=ui.button, content='Rebuild').click()
+        await asyncio.sleep(0.01)
+        assert plugin.ran == []
+
+    async def test_a_hidden_action_is_not_shown(self, user: User):
+        _toggle_page(_JobPlugin(state='hidden'))
+        await user.open('/')
+        await user.should_see('Poll Now')
+        assert not _all_buttons(user, 'Rebuild')[0].visible
+
+
+class TestCancel:
+    async def test_is_hidden_while_no_job_runs(self, user: User):
+        _toggle_page(_JobPlugin())
+        await user.open('/')
+        await user.should_see('Rebuild')
+        assert not _all_buttons(user, 'Cancel')[0].visible
+
+    async def test_cancels_the_running_job(self, user: User):
+        plugin = _JobPlugin(state='accent', running=True)
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('Cancel')
+        user.find(kind=ui.button, content='Cancel').click()
+        await user.should_see('Cancellation requested')
+        assert plugin.cancelled
+
+    async def test_is_absent_without_a_job_action(self, user: User):
+        _toggle_page(_TogglePlugin(enabled=1.0))
+        await user.open('/')
+        await user.should_see('Start on Boot')
+        assert not _all_buttons(user, 'Cancel')
+
+
+class TestJobPanel:
+    async def test_has_no_buttons_without_a_run_action(self, user: User):
+        from x_monitor.core.ui.components import render_job_panel
+        plugin = SimpleNamespace(
+            jobs=SimpleNamespace(is_running=lambda: False, recent=lambda limit: []),
+            data=SimpleNamespace(job=lambda _id: None))
+
+        @ui.page('/')
+        def _page():
+            render_job_panel(plugin, {'title': 'REBUILD JOBS'})
+
+        await user.open('/')
+        await user.should_see('REBUILD JOBS')
+        assert not _all_buttons(user)

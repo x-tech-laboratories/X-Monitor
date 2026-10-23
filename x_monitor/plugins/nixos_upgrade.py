@@ -17,7 +17,7 @@ and update jobs on another agent's host, which with `target_host` lets one host
 build every other's closure and activate it over SSH; the probe stays on the target,
 so drift is still read from the machine it describes. Actions launch
 detached jobs on the target: `nix flake update` on the flake, and
-`nixos-rebuild switch --flake`; a `github:` flake with a `push_ssh_key` is
+`nixos-rebuild switch --flake`; Reboot runs `systemctl reboot` on the target itself; a `github:` flake with a `push_ssh_key` is
 updated in a fresh clone that is committed and pushed back over SSH. With `auto_switch`, drift that outlasts
 `auto_switch_after` launches the switch itself, once per target closure, and
 only when the flake changed after the running generation was made. `update_at` and
@@ -51,7 +51,6 @@ _DEFAULT_LAYOUT = [
     ['host_card', 'drift_card', 'reboot_card', 'generation_card'],
     ['flake_card', 'revision_card', 'switched_card', 'inputs_card'],
     ['details'],
-    ['controls'],
     ['jobs'],
     ['events'],
 ]
@@ -665,11 +664,21 @@ class NixosUpgrade(Plugin):
 
     def get_actions(self) -> List[Dict[str, str]]:
         return [
-            {'name': 'Update Flake', 'action_id': 'update_flake',
+            {'name': 'Update Flake', 'action_id': 'update_flake', 'job': 'update',
              'variant': 'secondary', 'icon': 'sync'},
-            {'name': 'Rebuild & Switch', 'action_id': 'switch',
+            {'name': 'Rebuild & Switch', 'action_id': 'switch', 'job': 'switch',
              'variant': 'primary', 'icon': 'rocket_launch'},
+            {'name': 'Reboot', 'action_id': 'reboot', 'variant': 'danger', 'icon': 'restart_alt',
+             'confirm': f'Reboot {self.name}? Everything running on it stops until it is back up.'},
         ]
+
+    def action_state(self, action) -> str:
+        """Update Flake is hidden for a flake this host cannot write, and Reboot greys out while a job runs."""
+        if action.get('action_id') == 'update_flake' and not self._update_enabled(self):
+            return 'hidden'
+        if action.get('action_id') == 'reboot' and self._running_job() is not None:
+            return 'disabled'
+        return super().action_state(action)
 
     def _update_command(self) -> str:
         nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
@@ -726,11 +735,14 @@ class NixosUpgrade(Plugin):
         return f'{switch}; rc=$?; {self.post_switch}; (exit $rc)'
 
     def plan_action(self, action_id: str, **kwargs):
-        if action_id not in ('update_flake', 'switch', 'build'):
+        if action_id not in ('update_flake', 'switch', 'build', 'reboot'):
             return None
         if self._running_job() is not None:
             return CollectResult.failed('A job is already running for this monitor',
                                         level='WARNING', status=None)
+        # The reboot is for the probed machine, so it ignores switch_agent and runs no job.
+        if action_id == 'reboot':
+            return ActionPlan(f'{self._sudo()}systemctl reboot')
         if action_id == 'update_flake' and not (self.local_path or self.pushes_to_github):
             return CollectResult.failed(
                 f"Cannot update {self.flake}: only a local checkout, or a github: flake with a "
@@ -746,6 +758,11 @@ class NixosUpgrade(Plugin):
         return ActionPlan(detached.launch_command(command, workdir), agent=self._agent_for(kind))
 
     def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
+        if action_id == 'reboot':
+            if result.exit_code != 0:
+                return CollectResult.failed(
+                    f"Failed to reboot: {(result.stderr or result.stdout).strip()[:200]}")
+            return CollectResult(logs=[('Reboot requested', 'INFO')], success=True)
         if action_id not in ('update_flake', 'switch', 'build'):
             return result.exit_code == 0
 
@@ -886,6 +903,7 @@ class NixosUpgrade(Plugin):
             },
             'tables': {
                 'details': {
+                    'title': 'DEPLOYMENT DETAILS',
                     'row_key': 'label',
                     'rows_attr': '_detail_rows',
                     'columns': [
@@ -894,20 +912,6 @@ class NixosUpgrade(Plugin):
                     ],
                 },
             },
-            'buttons': {
-                'controls': [
-                    {'id': 'update_flake', 'label': 'Update Flake', 'icon': 'sync',
-                     'color': 'secondary', 'kind': 'dispatch',
-                     'visible_if': self._update_enabled},
-                ],
-            },
-            'job_panel': {
-                'widget': 'jobs',
-                'title': 'REBUILD JOBS',
-                'run_action_id': 'switch',
-                'run_label': 'Rebuild & Switch', 'run_icon': 'rocket_launch',
-                'cancel_label': 'Cancel', 'cancel_icon': 'stop',
-                'history_limit': 10,
-            },
+            'job_panel': {'widget': 'jobs', 'title': 'REBUILD JOBS', 'history_limit': 10},
             'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }

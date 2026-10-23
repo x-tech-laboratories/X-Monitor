@@ -206,6 +206,13 @@ class Plugin(PluginConfigMixin, ABC):
     def get_actions(self) -> List[ActionButtonSpec]:
         return []
 
+    def action_state(self, action: ActionButtonSpec) -> str:
+        """How the header shows an action now: 'accent' while its job runs, 'disabled' while another job runs, else 'normal'; a subclass may also answer 'hidden'."""
+        job = self.jobs.running() if self.jobs and action.get('job') else None
+        if job is None:
+            return 'normal'
+        return 'accent' if job.get('kind') == action['job'] else 'disabled'
+
     def all_actions(self) -> List[ActionButtonSpec]:
         """The plugin's own action buttons followed by the custom ones its config adds."""
         return self.get_actions() + [action.button() for action in self.custom_actions]
