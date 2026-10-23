@@ -32,6 +32,7 @@ let
   settings = {
     url = cfg.url;
     id = cfg.id;
+    state_dir = "/var/lib/x-monitor-agent";
   }
   // lib.optionalAttrs (cfg.keyFile != null) { key_file = toString cfg.keyFile; }
   // lib.optionalAttrs (cfg.hostname != null) { hostname = cfg.hostname; }
@@ -273,6 +274,8 @@ in
 
         serviceConfig = {
           ExecStart = "${cfg.package}/bin/x-monitor-agent --config ${configFile}";
+          # Holds the plan of monitors the agent runs itself and the records it has not synced yet.
+          StateDirectory = "x-monitor-agent";
           User = cfg.user;
           Group = cfg.group;
 
