@@ -82,14 +82,43 @@ def plugin(make_plugin):
     return make_plugin(NixosUpgrade, BASE_CFG)
 
 
-def _collect(plugin, probe=None, eval_result=None, metadata=None):
-    """Drive one cycle, feeding whichever commands the plugin asked for."""
-    outputs = [probe if probe is not None else _probe()]
-    if len(plugin.commands()) > 1:
-        outputs.append(eval_result if eval_result is not None
-                       else CmdResult(0, TARGET + "\n", ""))
-        outputs.append(metadata if metadata is not None else _metadata())
-    result = plugin.parse(outputs)
+def _eval_output(eval_result, metadata) -> str:
+    """The output the evaluation script prints once both of its commands have run."""
+    sections = []
+    for name, result in (("eval", eval_result), ("metadata", metadata)):
+        for stream, text in (("stdout", result.stdout), ("stderr", result.stderr),
+                             ("exit", str(result.exit_code))):
+            sections.append(f"@@x-monitor-eval {name} {stream}\n{text}\n")
+    return "".join(sections)
+
+
+def _launches_eval(plugin) -> bool:
+    """Whether the plugin's next cycle launches an evaluation beside its probe."""
+    cmds = plugin.commands()
+    return len(cmds) == 2 and "setsid" in cmds[1].text
+
+
+def _cycle(plugin, *outputs):
+    """Run one cycle on the plugin's commands, feeding it these outputs."""
+    plugin.commands()
+    result = plugin.parse(list(outputs))
+    plugin.storage.apply(result)
+    return result
+
+
+def _collect(plugin, probe=None, eval_result=None, metadata=None, pid=4343):
+    """Drive the plugin until this cycle's probe is judged, launching and then
+    finishing an evaluation with these results whenever one is due."""
+    probe = probe if probe is not None else _probe()
+    if not _launches_eval(plugin):
+        return _cycle(plugin, probe)
+    _cycle(plugin, probe, CmdResult(0, f"{pid}\n", ""))
+    cmds = plugin.commands()
+    assert len(cmds) == 2 and "XMONITOR_SIZE" in cmds[1].text    # the next cycle polls it
+    eval_result = eval_result if eval_result is not None else CmdResult(0, TARGET + "\n", "")
+    metadata = metadata if metadata is not None else _metadata()
+    code = 0 if eval_result.exit_code == 0 and metadata.exit_code == 0 else 1
+    result = plugin.parse([probe, _poll(1, code, False, _eval_output(eval_result, metadata))])
     plugin.storage.apply(result)
     return result
 
@@ -135,7 +164,7 @@ class TestDrift:
         result = _collect(plugin, probe=_probe(current=newer))            # a deploy landed since
         assert "up_to_date" not in result.metrics
         assert _latest_status("test-nixos") == "online"
-        assert len(plugin.commands()) == 3                                # the next cycle evaluates
+        assert _launches_eval(plugin)                                     # the next cycle evaluates
 
     async def test_new_closure_that_still_differs_after_evaluation_is_drift(self, plugin):
         _collect(plugin, eval_result=CmdResult(0, CURRENT + "\n", ""))
@@ -159,9 +188,16 @@ class TestDrift:
         assert _latest_status("test-nixos") == "unavailable"
 
     async def test_unreachable_eval_host_is_unavailable(self, plugin):
-        _collect(plugin, eval_result=CmdResult(-1, "", "not connected"))
+        _cycle(plugin, _probe(), CmdResult(-1, "", "Agent 'x' is not connected"))
         assert _latest_status("test-nixos") == "unavailable"
         assert _latest_metric("test-nixos", "up_to_date") is None
+        assert plugin.jobs.running_side("eval") is None
+
+    async def test_failed_launch_is_a_failed_evaluation(self, plugin):
+        _cycle(plugin, _probe(), CmdResult(1, "", "setsid: not found"))
+        assert _latest_status("test-nixos") == "failed"
+        state = json.loads(plugin.data.latest_metric("flake_eval_epoch").metadata)
+        assert "setsid: not found" in state["eval_error"]
 
 
 class TestReboot:
@@ -225,35 +261,35 @@ class TestFlakeMetadata:
 
 class TestEvalSchedule:
     async def test_first_cycle_evaluates(self, plugin):
-        assert len(plugin.commands()) == 3
+        assert _launches_eval(plugin)
 
     async def test_fresh_evaluation_is_not_repeated(self, plugin):
         _collect(plugin)
-        assert len(plugin.commands()) == 1
+        assert not _launches_eval(plugin)
 
     async def test_stale_evaluation_is_redone(self, plugin):
         _collect(plugin)
         _rewind_eval(plugin, 7200)
-        assert len(plugin.commands()) == 3
+        assert _launches_eval(plugin)
 
     async def test_fresh_failure_is_not_retried_immediately(self, plugin):
         _collect(plugin, eval_result=CmdResult(1, "", "error: attribute missing"))
-        assert len(plugin.commands()) == 1
+        assert not _launches_eval(plugin)
 
     async def test_failed_evaluation_retries_after_retry_interval(self, plugin):
         _collect(plugin, eval_result=CmdResult(1, "", "error: attribute missing"))
         _rewind_eval(plugin, 20 * 60)                      # past 15m retry, short of 1h eval
-        assert len(plugin.commands()) == 3
+        assert _launches_eval(plugin)
 
     async def test_failed_metadata_retries_too(self, plugin):
         _collect(plugin, metadata=CmdResult(1, "", "error: unable to download"))
         _rewind_eval(plugin, 20 * 60)
-        assert len(plugin.commands()) == 3
+        assert _launches_eval(plugin)
 
     async def test_healthy_evaluation_ignores_retry_interval(self, plugin):
         _collect(plugin)
         _rewind_eval(plugin, 20 * 60)
-        assert len(plugin.commands()) == 1
+        assert not _launches_eval(plugin)
 
     def test_retry_interval_never_exceeds_eval_interval(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "eval_interval": "10m", "retry_interval": "15m"})
@@ -263,7 +299,7 @@ class TestEvalSchedule:
         _collect(plugin)                                   # fresh, so a tick would probe only
         plugin.engine = MagicMock(run_cycle_now=AsyncMock(return_value=True))
         assert await plugin.run_cycle() is True
-        assert len(plugin.commands()) == 3
+        assert _launches_eval(plugin)
 
     async def test_probe_only_cycle_still_tracks_drift(self, plugin):
         _collect(plugin)                                   # evaluates, drift found
@@ -278,41 +314,39 @@ class TestCommands:
 
     async def test_eval_agent_offloads_only_the_evaluation(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "eval_agent": "big-host", "configuration": "host"})
-        probe, eval_cmd, meta_cmd = p.commands()
+        probe, launch = p.commands()
         assert probe.agent is None                          # the probe stays on the target
-        assert eval_cmd.agent == "big-host" and meta_cmd.agent == "big-host"
+        assert launch.agent == "big-host"
 
     async def test_offloaded_eval_waits_for_the_probed_hostname(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "eval_agent": "big-host"})
         assert len(p.commands()) == 1                       # no name yet: probe only
-        _collect(p)                                         # the probe reports hostname=host
-        eval_cmd = p.commands()[1]
-        assert eval_cmd.agent == "big-host"
-        assert 'nixosConfigurations.\\"host\\"' in eval_cmd.text
-        assert "uname" not in eval_cmd.text                 # never the evaluating host's own name
+        _cycle(p, _probe())                                 # the probe reports hostname=host
+        assert p.commands()[1].agent == "big-host"
+        assert 'nixosConfigurations.\\"host\\"' in p._eval_script()
+        assert "uname" not in p._eval_script()              # never the evaluating host's own name
 
     def test_local_flake_needs_no_refresh(self, plugin):
-        eval_cmd = plugin.commands()[1].text
-        assert "--refresh" not in eval_cmd
-        assert '"/etc/nixos#nixosConfigurations.\\"$(uname -n)\\"' in eval_cmd
+        script = plugin._eval_script()
+        assert "--refresh" not in script
+        assert '"/etc/nixos#nixosConfigurations.\\"$(uname -n)\\"' in script
 
     def test_remote_flake_refreshes(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "github:owner/config"})
-        assert "--refresh" in p.commands()[1].text
-        assert "--refresh" in p.commands()[2].text
+        assert p._eval_script().count("--refresh") == 2
 
     def test_configuration_overrides_the_hostname(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "configuration": "ragnarok"})
-        assert 'nixosConfigurations.\\"ragnarok\\"' in p.commands()[1].text
-        assert "$(uname -n)" not in p.commands()[1].text
+        assert 'nixosConfigurations.\\"ragnarok\\"' in p._eval_script()
+        assert "$(uname -n)" not in p._eval_script()
 
     def test_eval_never_writes_the_lock_file(self, plugin):
-        assert "--no-write-lock-file" in plugin.commands()[1].text
-        assert "--no-write-lock-file" in plugin.commands()[2].text
+        assert plugin._eval_script().count("--no-write-lock-file") == 2
 
     def test_eval_carries_its_own_timeout(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "eval_timeout": "20m"})
-        assert p.commands()[1].timeout == 1200
+        assert p._eval_command().startswith("timeout 1200 sh -c ")
+        assert "timeout 1200" in p.commands()[1].text
 
     def test_switch_targets_the_flake(self, plugin):
         assert plugin._switch_command() == "sudo -n nixos-rebuild switch --flake /etc/nixos"
@@ -612,13 +646,14 @@ class TestJobPolling:
         assert plugin.jobs.recent()[0]['state'] == 'failed'
 
     async def test_job_started_mid_cycle_does_not_swallow_the_probe(self, plugin):
-        cmds = plugin.commands()                           # asked for a probe: no job yet
-        assert len(cmds) == 3
-        await _launch(plugin)                              # the button lands before parse
-        result = plugin.parse([_probe(), CmdResult(0, TARGET + "\n", ""), _metadata()])
+        cmds = plugin.commands()                           # asked for a probe and an evaluation: no job yet
+        assert len(cmds) == 2
+        await _launch(plugin, pid=1111)                    # the button lands before parse
+        result = plugin.parse([_probe(), CmdResult(0, "2222\n", "")])
         plugin.storage.apply(result)
-        assert plugin.jobs.running() is not None           # the job was not judged by probe output
-        assert result.metrics["up_to_date"] == 0.0         # and the probe was still read as a probe
+        assert plugin.jobs.running()["pid"] == 1111        # the job was not judged by probe output
+        assert plugin.jobs.running_side("eval")["pid"] == 2222
+        assert result.snapshot["current"] == CURRENT       # and the probe was still read as a probe
 
     async def test_unanswered_poll_leaves_the_job_running(self, plugin):
         await _launch(plugin)
@@ -628,10 +663,196 @@ class TestJobPolling:
 
     async def test_finished_job_forces_a_re_evaluation(self, plugin):
         _collect(plugin)                                   # evaluation is now fresh
-        assert len(plugin.commands()) == 1
+        assert not _launches_eval(plugin)
         await _launch(plugin)
         _poll_once(plugin, _poll(20, 0, False, "done\n"))
-        assert len(plugin.commands()) == 3
+        assert _launches_eval(plugin)
+
+
+def _launch_eval(plugin, pid=4343):
+    """Run the cycle that launches an evaluation, returning its job row."""
+    assert _launches_eval(plugin)
+    _cycle(plugin, _probe(), CmdResult(0, f"{pid}\n", ""))
+    return plugin.jobs.running_side("eval")
+
+
+def _poll_eval(plugin, poll_result, probe=None):
+    """Run one cycle that polls the running evaluation beside the probe."""
+    cmds = plugin.commands()
+    assert len(cmds) == 2 and "XMONITOR_SIZE" in cmds[1].text
+    result = plugin.parse([probe if probe is not None else _probe(), poll_result])
+    plugin.storage.apply(result)
+    return result
+
+
+def _finished(eval_result=None, metadata=None, code=0):
+    """A poll of an evaluation that has finished with these results."""
+    eval_result = eval_result if eval_result is not None else CmdResult(0, TARGET + "\n", "")
+    metadata = metadata if metadata is not None else _metadata()
+    return _poll(1, code, False, _eval_output(eval_result, metadata))
+
+
+class TestDetachedEvaluation:
+    async def test_launch_records_a_side_job(self, plugin):
+        command = plugin._eval_command()
+        job = _launch_eval(plugin, pid=4343)
+        assert (job["kind"], job["pid"]) == ("eval", 4343)
+        assert job["workdir"] == plugin.eval_workdir and job["command"] == command
+        assert plugin.jobs.running() is None                # never the main job
+
+    async def test_a_running_evaluation_blocks_no_action(self, plugin):
+        _launch_eval(plugin)
+        assert {_state(plugin, a) for a in ("update_flake", "switch", "reboot")} == {'normal'}
+        assert (await _launch(plugin, "switch")).success is True
+
+    async def test_the_workdir_is_fixed_per_monitor(self, plugin, make_plugin):
+        assert plugin.eval_workdir == make_plugin(NixosUpgrade, BASE_CFG).eval_workdir
+        assert plugin.eval_workdir.endswith("nixos_upgrade-test-nixos-eval")
+
+    async def test_a_running_evaluation_keeps_the_stored_state(self, plugin):
+        _collect(plugin)                                    # drift against TARGET
+        _rewind_eval(plugin, 7200)
+        _launch_eval(plugin)
+        result = _poll_eval(plugin, _poll(0, None, True, ""))
+        assert result.metrics["up_to_date"] == 0.0          # still judged against the stored target
+        assert plugin.jobs.running_side("eval") is not None
+
+    async def test_a_running_evaluation_is_never_relaunched(self, plugin):
+        _launch_eval(plugin)
+        plugin.engine = MagicMock(run_cycle_now=AsyncMock(return_value=True))
+        await plugin.run_cycle()                            # a dashboard poll
+        assert plugin._force_eval is False
+        assert not _launches_eval(plugin)
+        _poll_eval(plugin, _poll(0, None, True, ""))
+        assert len(plugin.jobs.recent(limit=99)) == 1
+
+    async def test_finishing_folds_the_result(self, plugin):
+        job = _launch_eval(plugin)
+        result = _poll_eval(plugin, _finished(eval_result=CmdResult(0, CURRENT, "")))
+        assert result.metrics["up_to_date"] == 1.0
+        assert plugin.jobs.running_side("eval") is None
+        row = plugin.jobs.recent(limit=1)[0]
+        assert (row["id"], row["state"]) == (job["id"], "succeeded")
+        assert not _launches_eval(plugin)                   # fresh until eval_interval passes
+
+    async def test_finished_output_stays_in_the_job_log(self, plugin):
+        job = _launch_eval(plugin)
+        _poll_eval(plugin, _finished(eval_result=CmdResult(0, TARGET, "evaluating...")))
+        log = [line["message"] for line in await plugin.jobs.log(job["id"])]
+        assert TARGET in log and "evaluating..." in log
+
+    async def test_an_evaluation_error_is_failed(self, plugin):
+        _launch_eval(plugin)
+        _poll_eval(plugin, _finished(eval_result=CmdResult(1, "", "error: attribute 'nope' missing"),
+                                     code=1))
+        assert _latest_status("test-nixos") == "failed"
+        state = json.loads(plugin.data.latest_metric("flake_eval_epoch").metadata)
+        assert "attribute 'nope' missing" in state["eval_error"] and not state["eval_unreachable"]
+        assert plugin.jobs.recent(limit=1)[0]["state"] == "failed"
+
+    async def test_a_vanished_evaluation_is_a_failed_job_and_an_eval_error(self, plugin):
+        _launch_eval(plugin)
+        _poll_eval(plugin, _poll(0, None, False, ""))
+        row = plugin.jobs.recent(limit=1)[0]
+        assert (row["state"], row["exit_code"]) == ("failed", -1)
+        assert _latest_status("test-nixos") == "failed"
+        state = json.loads(plugin.data.latest_metric("flake_eval_epoch").metadata)
+        assert "without writing an exit code" in state["eval_error"]
+
+    async def test_a_timed_out_evaluation_says_so(self, plugin):
+        _launch_eval(plugin)
+        _poll_eval(plugin, _poll(0, 124, False, ""))
+        state = json.loads(plugin.data.latest_metric("flake_eval_epoch").metadata)
+        assert "Timed out after 10 Minutes" in state["eval_error"]
+        assert _latest_status("test-nixos") == "failed"
+
+    async def test_an_unanswered_poll_is_unreachable_and_keeps_the_job(self, plugin):
+        _launch_eval(plugin)
+        _poll_eval(plugin, CmdResult(-1, "", "Agent 'x' is not connected"))
+        assert _latest_status("test-nixos") == "unavailable"
+        assert plugin.jobs.running_side("eval") is not None
+        _poll_eval(plugin, _finished(eval_result=CmdResult(0, CURRENT, "")))
+        assert _latest_status("test-nixos") == "online"
+
+    async def test_a_failed_probe_still_records_the_launch(self, plugin):
+        assert _launches_eval(plugin)
+        _cycle(plugin, CmdResult(255, "", "ssh: connect failed"), CmdResult(0, "4343\n", ""))
+        assert plugin.jobs.running_side("eval")["pid"] == 4343
+
+    async def test_a_finish_on_a_failed_probe_is_still_stored(self, plugin):
+        _launch_eval(plugin)
+        _poll_eval(plugin, _finished(), probe=CmdResult(255, "", "ssh: connect failed"))
+        state = json.loads(plugin.data.latest_metric("flake_eval_epoch").metadata)
+        assert state["target"] == TARGET
+
+    async def test_a_restarted_monitor_adopts_the_running_evaluation(self, plugin, make_plugin):
+        job = _launch_eval(plugin)
+        restarted = make_plugin(NixosUpgrade, BASE_CFG)
+        assert not _launches_eval(restarted)
+        _poll_eval(restarted, _finished())
+        assert restarted.jobs.recent(limit=1)[0]["id"] == job["id"]
+        assert restarted.jobs.running_side("eval") is None
+
+    async def test_the_evaluation_waits_while_a_main_job_runs(self, plugin):
+        _launch_eval(plugin)
+        await _launch(plugin, "switch")
+        _poll_once(plugin, _poll(5, None, True, "switching\n"))   # only the switch is polled
+        _poll_once(plugin, _poll(5, 0, False, "done\n"))
+        _poll_eval(plugin, _finished())
+        assert plugin.jobs.running_side("eval") is None
+
+    async def test_a_job_finishing_during_an_evaluation_evaluates_again_after(self, plugin):
+        _launch_eval(plugin)
+        await _launch(plugin, "update_flake")
+        _poll_once(plugin, _poll(5, 0, False, "done\n"))         # the flake moved under the evaluation
+        _poll_eval(plugin, _finished())
+        assert _launches_eval(plugin)
+
+    async def test_the_evaluation_is_polled_on_the_eval_agent(self, make_plugin):
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "eval_agent": "big-host", "configuration": "host"})
+        job = _launch_eval(p)
+        assert p.job_agent(job) == "big-host"
+        assert p.commands()[1].agent == "big-host"
+
+    async def test_a_running_evaluation_is_polled_every_job_poll(self, plugin, make_plugin):
+        assert plugin.next_cycle_in() is None
+        _launch_eval(plugin)
+        assert plugin.next_cycle_in() == 30
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "job_poll": "1m"})
+        assert p.next_cycle_in() == 60
+
+    async def test_evaluations_stay_out_of_the_job_panel(self, plugin):
+        _launch_eval(plugin)
+        await _launch(plugin, "switch")
+        excluded = plugin.UI_SPEC["job_panel"]["exclude_kinds"]
+        assert [j["kind"] for j in plugin.jobs.recent(exclude_kinds=excluded)] == ["switch"]
+
+    def test_the_script_splits_back_into_both_results(self, make_plugin, tmp_path):
+        import os
+        import subprocess
+        nix = tmp_path / "nix"
+        nix.write_text(
+            "#!/bin/sh\n"
+            'case "$*" in\n'
+            '  *"flake metadata"*) echo \'{"lastModified": 5}\'; echo "fetching" >&2 ;;\n'
+            f'  *eval*) echo "warning: dirty" >&2; printf {TARGET}; exit 0 ;;\n'
+            "esac\n")
+        nix.chmod(0o755)
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "nix_bin": str(nix), "nix_args": []})
+        env = {**os.environ, "HOME": str(tmp_path)}
+        run = subprocess.run(["sh", "-c", f'mkdir -p "{p.eval_workdir}" && {p._eval_command()}'],
+                             capture_output=True, text=True, env=env)
+        assert run.returncode == 0
+        from x_monitor.plugins.nixos_upgrade import _split_eval_output
+        parts = _split_eval_output(run.stdout, "missing")
+        assert parts["eval"] == CmdResult(0, TARGET, "warning: dirty")
+        assert parts["metadata"] == CmdResult(0, '{"lastModified": 5}', "fetching")
+
+    def test_a_command_the_run_never_reported_on_fails(self):
+        from x_monitor.plugins.nixos_upgrade import _split_eval_output
+        parts = _split_eval_output("@@x-monitor-eval eval stdout\n" + TARGET + "\n", "killed")
+        assert parts["eval"] == CmdResult(1, "", "killed")
+        assert parts["metadata"] == CmdResult(1, "", "killed")
 
 
 AUTO_CFG = {**BASE_CFG, "auto_switch": True, "auto_switch_after": "30m"}
@@ -716,9 +937,10 @@ class TestAutoSwitch:
     async def test_failed_evaluation_never_switches(self, make_plugin):
         p = make_plugin(NixosUpgrade, AUTO_CFG)
         _collect(p)
-        _age_drift(p, 7200)
         _rewind_eval(p, 7200)
         _collect(p, eval_result=CmdResult(1, "", "error: undefined variable"))
+        _age_drift(p, 7200)
+        _collect(p)
         assert p._auto_switch_due is None
 
     async def test_matching_closure_clears_the_drift(self, make_plugin):

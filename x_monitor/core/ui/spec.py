@@ -69,9 +69,10 @@ dialogs         ``{dialog_name: dialog spec}`` — opened by kind ``'dialog'`` b
                 row actions; see "Dialog specs".
 job_panel       ``{'widget' (default 'jobs'), 'title', 'run_label', 'run_icon',
                 'cancel_label', 'cancel_icon', 'enabled_if' (ENABLED_PREDICATES),
-                'disabled_text', 'run_action_id', 'history_limit'}`` — progress and
-                history for one long-running job, with run/cancel buttons only when
-                ``run_action_id`` is set (a header action with a ``job`` needs none);
+                'disabled_text', 'run_action_id', 'history_limit', 'exclude_kinds'}`` —
+                progress and history for one long-running job, with run/cancel buttons only
+                when ``run_action_id`` is set (a header action with a ``job`` needs none);
+                ``exclude_kinds`` leaves those job kinds out of the history;
                 ``disabled_text`` replaces the default notice shown while ``enabled_if``
                 is false.
 

@@ -27,7 +27,7 @@ import threading
 import time
 from concurrent.futures import Future
 from datetime import datetime, timedelta
-from typing import Optional, Any, Dict, List, Callable, TYPE_CHECKING
+from typing import Optional, Any, Dict, List, Callable, Sequence, TYPE_CHECKING
 from peewee import *
 
 log = logging.getLogger(__name__)
@@ -897,8 +897,10 @@ class DatabaseManager:
         plugin_id: Optional[str] = None,
         limit: int = 20,
         kind: Optional[str] = None,
+        exclude_kinds: Sequence[str] = (),
     ) -> List[JobDict]:
-        return self.store.recent_jobs(plugin_id=plugin_id, limit=limit, kind=kind)
+        return self.store.recent_jobs(plugin_id=plugin_id, limit=limit, kind=kind,
+                                      exclude_kinds=exclude_kinds)
 
     def running_jobs(self, plugin_id: Optional[str] = None) -> List[JobDict]:
         return self.store.running_jobs(plugin_id=plugin_id)

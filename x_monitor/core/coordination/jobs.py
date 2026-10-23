@@ -5,7 +5,7 @@ state, not a live coroutine, so everything here is DB reads and writes plus
 (for cancel) one ordinary SSH command on the host the job runs on."""
 
 import asyncio
-from typing import Awaitable, Callable, List, Optional
+from typing import Awaitable, Callable, List, Optional, Sequence
 
 
 # Prefix of the kind an action launched as a detached job is recorded under, followed by the action's id.
@@ -68,9 +68,9 @@ class JobsGateway:
         job = self.running()
         return job['id'] if job else None
 
-    def recent(self, limit: int = 20) -> list:
-        """Return the plugin's most recent job rows."""
-        return self._db.recent_jobs(plugin_id=self._plugin.id, limit=limit)
+    def recent(self, limit: int = 20, exclude_kinds: Sequence[str] = ()) -> list:
+        """Return the plugin's most recent job rows, leaving out any of the excluded kinds."""
+        return self._db.recent_jobs(plugin_id=self._plugin.id, limit=limit, exclude_kinds=exclude_kinds)
 
     async def log(self, job_id: int) -> list:
         """Return a job's whole output, read from disk once the job has finished."""
