@@ -106,9 +106,11 @@ class Blockurl(Plugin):
         """Block, check and unblock the reserved URL in that order, printing each step's outcome."""
         base = self.api_url.rstrip("/")
         body = json.dumps({"urls": [self.probe_url]})
+        # The key reaches curl on stdin, since every user on the host can read a command line in `ps`.
         call = (
+            'printf "X-API-Key: %s\\n" "$KEY" | '
             f"curl -sS -m {self.api_timeout} -X POST "
-            '-H "X-API-Key: $KEY" -H "Content-Type: application/json" '
+            '-H @- -H "Content-Type: application/json" '
             f"-d '{body}'"
         )
         return (
