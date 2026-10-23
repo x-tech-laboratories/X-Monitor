@@ -5,6 +5,9 @@ X-Monitor over a WebSocket, and holds that connection open. It needs no inbound 
 certificate of its own, and no firewall rule — it reuses the dashboard's port, so a host
 behind NAT works with no extra setup.
 
+Agents that keep monitoring their host while cut off from X-Monitor are planned in
+[offline-agents-plan.md](offline-agents-plan.md).
+
 Two things travel on that one connection:
 
 - **Commands** — the same shell command strings the SSH transport carried. Every monitor
