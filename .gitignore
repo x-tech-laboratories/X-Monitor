@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude Code per-user state
+.claude/settings.local.json
+.claude/worktrees/
