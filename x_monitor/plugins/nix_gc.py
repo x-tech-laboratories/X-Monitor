@@ -620,6 +620,7 @@ class NixGc(Plugin):
             },
             'tables': {
                 'profiles': {
+                    'title': 'PROFILES',
                     'row_key': 'path',
                     'rows_attr': '_profile_rows',
                     'columns': [

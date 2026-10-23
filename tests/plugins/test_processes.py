@@ -237,6 +237,11 @@ class TestProcessesCollection:
         assert _latest_status("test-procs-thresh") == "failed"
 
 
+class TestUiSpec:
+    def test_process_table_has_a_title(self, plugin):
+        assert plugin.UI_SPEC['tables']['table']['title'] == 'PROCESSES'
+
+
 class TestProcessesKillAction:
     async def test_kill_term_sends_correct_command(self, plugin):
         plan = plugin.plan_action('kill_term', pid=123)

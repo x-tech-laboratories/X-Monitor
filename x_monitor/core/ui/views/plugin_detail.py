@@ -5,7 +5,10 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from nicegui import ui
 from x_monitor.core.contracts import ActionButtonSpec, EngineLike
-from ..components import action_button, confirmed, notify_client, on_data_event, page_header, set_pressed, toggle_button
+from ..components import (
+    _outcome_notice, action_button, confirmed, notify_client, on_data_event, open_dialog_impl, page_header,
+    set_pressed, toggle_button,
+)
 from .notifications import render_mute_button
 
 
@@ -86,10 +89,13 @@ def _render_action(plugin: Any, action: ActionButtonSpec, client: Any):
         # A filled button is already running, so a second click would only be refused.
         if state() != 'normal':
             return
+        if action.get('kind') == 'dialog':
+            await open_dialog_impl(plugin, action['dialog'])
+            return
         if action.get('confirm') and not await confirmed(action['confirm']):
             return
-        success, _ = await plugin.run_action(action['action_id'])
-        notify_client(client, 'Action completed successfully' if success else 'Action failed',
+        success, content = await plugin.run_action(action['action_id'])
+        notify_client(client, _outcome_notice(action['name'], success, content),
                       type='positive' if success else 'negative')
 
     def sync():
