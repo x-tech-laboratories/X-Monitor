@@ -136,6 +136,9 @@ class _ReloadPlan:
 
 
 class XMonitorEngine:
+    # On an agent's engine, the agent's own id, whose commands run here as local processes.
+    local_agent: Optional[str] = None
+
     def __init__(self, config_path: str, db_path_override: Optional[str] = None,
                  handle_signals: bool = False):
         self.config_loader = XMonitorConfig(config_path)
@@ -194,24 +197,28 @@ class XMonitorEngine:
         # Monitors holding their first cycle after a restart because their saved result is still current.
         self._awaiting_due: Set[str] = set()
         try:
-            self.db = XMonitorDatabase(
-                self.db_path,
-                write_batch_seconds=self.config_loader.write_batch_seconds,
-                buffers=self.config_loader.buffer_sizes,
-                hydrate=False,
-            )
+            self.db = self._open_database(self.db_path)
         except OperationalError as e:
             log.critical(f"Failed to initialize database: {e}. Exiting.")
             sys.exit(1)
 
         self.exporters = ExporterEngine(self.db, self.config_loader.exporters)
-        self.connectors = ConnectorEngine()
+        self.connectors = ConnectorEngine(local_agent=self.local_agent)
         self.connectors.agents.configure(self.config_loader.agents)
         self.connectors.agents.set_event_sink(self._on_agent_event)
         self.connectors.agents.set_connect_sink(self._on_agent_connected)
         self.action_jobs = ActionJobs(self)
         self.notifications = NotificationEngine(
             self.db, self.config_loader.notifications, self.connectors.agents
+        )
+
+    def _open_database(self, path: str) -> XMonitorDatabase:
+        """The database this engine records into; an agent's engine opens one that also keeps an outbox."""
+        return XMonitorDatabase(
+            path,
+            write_batch_seconds=self.config_loader.write_batch_seconds,
+            buffers=self.config_loader.buffer_sizes,
+            hydrate=False,
         )
 
     def _wire_plugin(self, plugin: Plugin, plugin_cfg: Dict) -> None:
@@ -649,7 +656,7 @@ class XMonitorEngine:
         another agent's host when the plan names one."""
         if not plan.agent:
             return net
-        return ExecContext(conn=self.connectors.agents.require(plan.agent),
+        return ExecContext(conn=self.connectors.agent_connection(plan.agent),
                            collect_timeout=net.collect_timeout)
 
     def _react(self, plugin: Plugin, result: CollectResult) -> None:
