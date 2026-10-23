@@ -298,7 +298,8 @@ class Borg(Plugin):
         return args
 
     def default_archive_name(self) -> str:
-        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        """The prefix and the X-Monitor host's local time, matching the names borgmatic and Vorta give their archives."""
+        stamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         return f"{self.archive_prefix}-{stamp}"
 
     def commands(self) -> List[Command]:

@@ -532,6 +532,16 @@ class TestBackupCommand:
         assert name.startswith("nightly-")
         assert re.match(r"nightly-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$", name)
 
+    def test_archive_name_is_in_local_time(self, make_plugin, monkeypatch):
+        monkeypatch.setenv("TZ", "America/Jamaica")
+        time.tzset()
+        try:
+            stamp = make_plugin(Borg, {**BACKUP_CFG, "archive_prefix": "nightly"}).default_archive_name()[len("nightly-"):]
+            assert abs((datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S") - datetime.now()).total_seconds()) < 5
+        finally:
+            monkeypatch.undo()
+            time.tzset()
+
     def test_archive_prefix_defaults_to_monitor_name(self, make_plugin):
         p = make_plugin(Borg, BACKUP_CFG)
         assert p.default_archive_name().startswith("test-borg-")
