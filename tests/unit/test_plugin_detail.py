@@ -383,3 +383,18 @@ class TestJobPanel:
         await user.open('/')
         await user.should_see('REBUILD JOBS')
         assert not _all_buttons(user)
+
+
+class TestNotificationsButton:
+    async def test_comes_after_every_other_action(self, user: User):
+        notifications = SimpleNamespace(channels=['desk'], maintenance_for=lambda _id: None,
+                                        muted_by=lambda _id: None)
+        engine = SimpleNamespace(notifications=notifications)
+
+        @ui.page('/')
+        def _page():
+            render_plugin_detail(engine, lambda *_: None, _JobPlugin())
+
+        await user.open('/')
+        await user.should_see('Notifications')
+        assert [button.text for button in _all_buttons(user)] == ['Poll Now', 'Rebuild', 'Cancel', 'Notifications']

@@ -47,7 +47,7 @@ def _lede(plugin: Any) -> str:
 
 
 async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
-    """Renders the Poll Now button, the Notifications toggle and the plugin's declared action buttons."""
+    """Renders the Poll Now button, the plugin's declared action buttons and, last since every monitor has it, the Notifications toggle."""
     # A poll or action can outlast the view it was started from, so its notice goes through the client instead of the view's slot.
     client = actions_row.client
     with actions_row:
@@ -70,7 +70,6 @@ async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
             notify_client(client, f'{plugin.name} polled', type='positive')
 
         poll_button = action_button('Poll Now', on_click=poll_now, icon='refresh')
-        render_mute_button(engine, plugin)
 
         info = await plugin.present()
         actions = info.get('actions', [])
@@ -81,6 +80,7 @@ async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
                 _render_action(plugin, action, client)
         if getattr(plugin, 'jobs', None) is not None and any(action.get('job') for action in actions):
             _render_cancel(plugin, client)
+        render_mute_button(engine, plugin)
 
 
 def _render_action(plugin: Any, action: ActionButtonSpec, client: Any):
