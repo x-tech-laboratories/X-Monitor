@@ -748,6 +748,8 @@ What a host exposes to the network and whether any of it is known to be vulnerab
 
 The scan runs on the monitor's agent or SSH host and is pointed at `scan_host`, which is deliberately a different machine. The monitor is labelled with `scan_host`, since that is the host it is about, and a card names where the scan ran from. A host scanning itself goes over loopback, which its firewall trusts, so it reports every listening socket rather than what a peer can actually reach. Scan a host from somewhere else on the network, and pick the vantage point that matters — the LAN, or the VPN the host is reached through.
 
+The scan runs as a detached job on the scanning host, so restarting or redeploying X-Monitor never kills a scan in flight; the restarted monitor adopts the running job and keeps polling it there. A cycle with no job running launches the scan, and while it runs the monitor polls it every `job_poll` rather than every `interval`, keeping the previous snapshot and status on the dashboard. When it finishes, its whole XML output becomes the new snapshot. Each run, its progress and its output are listed under **Scan runs**.
+
 Each finding is graded, and the monitor takes the worst grade:
 
 - **Vulnerable** (`failed`): a script's vulns-library table with a `VULNERABLE`, `VULNERABLE (Exploitable)` or `VULNERABLE (DoS)` state, or a plain-text result that says `VULNERABLE` outright.
@@ -756,7 +758,7 @@ Each finding is graded, and the monitor takes the worst grade:
 
 The `vulners` script (part of the `vuln` category, and needs the scanning host to reach vulners.com) matches detected versions against a CVE database rather than testing anything, so its advisories are graded by CVSS score instead: `threshold_cvss` and above fails, `warning_cvss` and above warns, anything lower is noted. Version matching is loose — a distribution that backports fixes keeps the old version string — so set these to what you are willing to investigate.
 
-A host that does not answer on the `discovery_ports` is `unavailable` rather than clean, and so is a scan that overruns `timeout` or a scanning host with no `nmap`. Nothing here needs root: an unprivileged nmap uses connect scans and a TCP probe for discovery, which is all the `vuln` scripts need. `require_sudo` is there for a scan that wants SYN scanning or OS detection via `nmap_args`.
+A host that does not answer on the `discovery_ports` is `unavailable` rather than clean, and so is a scan that overruns `timeout`, one that could not start, or a scanning host with no `nmap`. Nothing here needs root: an unprivileged nmap uses connect scans and a TCP probe for discovery, which is all the `vuln` scripts need. `require_sudo` is there for a scan that wants SYN scanning or OS detection via `nmap_args`.
 
 | Option | Description |
 |--------|-------------|
@@ -772,12 +774,13 @@ A host that does not answer on the `discovery_ports` is `unavailable` rather tha
 | `max_findings` | Rows kept in the findings table; the counts are always complete (default: `200`) |
 | `require_sudo` | Prefix the scan with `sudo -n` (default: `false`) |
 | `nmap_bin` | Binary to run (default: `nmap`) |
-| `timeout` | Deadline for the whole scan (default: `20m`) |
+| `timeout` | Time a scan may take before it is killed (default: `20m`) |
+| `job_poll` | How often a running scan is polled, and how often nmap reports its progress (default: `30s`) |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
 
 **Metrics**: `vulnerable`, `suspected`, `noted`, `open_ports`, `scan_seconds`, `host_up` (1/0), `last_scan_epoch`
 
-**Status**: `failed` on any vulnerable finding; `warning` on a likely one (`likely_status`) or a `vulners` advisory at `warning_cvss`; `unavailable` when the host did not answer discovery, the scan did not finish in `timeout`, or nmap could not run.
+**Status**: `failed` on any vulnerable finding; `warning` on a likely one (`likely_status`) or a `vulners` advisory at `warning_cvss`; `unavailable` when the host did not answer discovery, the scan did not finish in `timeout`, it could not start, or nmap could not run.
 
 > A full `-sV --script vuln` sweep of the top 1000 ports takes a few minutes per host and probes every service it finds, so give it a long `interval` (daily is plenty) and a `timeout` to match. The scanning host needs `nmap` on the agent's PATH.
 

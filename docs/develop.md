@@ -435,8 +435,8 @@ SSH channel held open for hours. It is launched *detached on the target* with on
 to `<workdir>/exit`, and is then advanced by ordinary polling commands on the
 owning plugin's normal monitor cycle. A plugin that sets `job_poll_interval` is
 polled that often while one of its jobs runs (`Plugin.next_cycle_in`), without
-moving its regular schedule; `attic_push` launches its check this way from a
-scheduled cycle rather than from an action. The builders/parsers in `ssh_connector.py`
+moving its regular schedule; `attic_push` and `vuln_scan` launch their check and
+scan this way from a scheduled cycle rather than from an action. The builders/parsers in `ssh_connector.py`
 (`launch_command`/`parse_launch`, `poll_command`/`parse_poll`, `cancel_command`,
 `split_lines`) are pure — no runtime, no coroutine, no IO. One poll round-trip
 returns output size, exit code (empty if running), liveness (`kill -0`), and any
