@@ -68,10 +68,10 @@ class TestCollection:
         run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01", "01", "01"]), ""))
         assert _latest_status() == "warning"
 
-    async def test_failed_on_flood(self, make_plugin, run_cycle):
+    async def test_flood_is_only_a_warning(self, make_plugin, run_cycle):
         p = make_plugin(Connections, dict(CFG, warning=2, threshold=3))
-        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01", "01", "01", "01"]), ""))
-        assert _latest_status() == "failed"
+        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["06"] * 50), ""))
+        assert _latest_status() == "warning"
 
     async def test_unreadable_table_is_unavailable(self, plugin, run_cycle):
         run_cycle(plugin, lambda c: CmdResult(-1, "", "Agent 'h' is not connected"))
@@ -86,10 +86,10 @@ class TestCollection:
 class TestUiSpec:
     STATES = ['conn_established', 'conn_listen', 'conn_time_wait']
 
-    def test_the_total_card_keeps_its_thresholds(self, make_plugin):
+    def test_the_total_card_colours_only_the_warning(self, make_plugin):
         p = make_plugin(Connections, dict(CFG, warning=100, threshold=200))
         card = p.UI_SPEC['cards']['conn_total_card']
-        assert card['color'] == {'warning': 100.0, 'threshold': 200.0}
+        assert card['color'] == {'warning': 100.0, 'threshold': None}
 
     def test_the_states_share_one_bar(self, plugin):
         card = plugin.UI_SPEC['cards']['conn_states_card']
@@ -104,14 +104,7 @@ class TestUiSpec:
 
 
 class TestOptionalLimits:
-    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
-        p = make_plugin(Connections, dict(CFG, warning=2, threshold=None))
+    async def test_no_warning_limit_stays_online(self, make_plugin, run_cycle):
+        p = make_plugin(Connections, dict(CFG, warning=None))
         run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01"] * 50), ""))
-        assert _latest_status() == "warning"
-
-    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
-        p = make_plugin(Connections, dict(CFG, warning=None, threshold=3))
-        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01", "01"]), ""))
         assert _latest_status() == "online"
-        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01", "01", "01"]), ""))
-        assert _latest_status() == "failed"
