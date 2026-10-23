@@ -28,12 +28,14 @@ STARTING_PAGE = f"""<!doctype html>
          background: var(--surface-root); color: var(--text-body);
          font-family: var(--font-family-interface); font-size: var(--text-prose); line-height: var(--line-height-body); }}
   main {{ max-width: 28rem; text-align: center; }}
+  img {{ display: block; margin: 0 auto var(--space-5); }}
   h1 {{ font-size: var(--text-h2); font-weight: 600; color: var(--text-heading); margin: 0 0 var(--space-4); }}
   p {{ margin: 0; color: var(--text-secondary); }}
 </style>
 </head>
 <body>
 <main>
+<img src="/icon.svg" alt="" width="64" height="64">
 <h1>X-Monitor is starting</h1>
 <p>Loading saved history. This page reloads by itself.</p>
 </main>

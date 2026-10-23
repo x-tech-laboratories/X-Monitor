@@ -95,6 +95,10 @@ class TestStartingPage:
         assert response.headers['retry-after'] == '5'
         assert 'X-Monitor is starting' in response.text and 'http-equiv="refresh"' in response.text
 
+    def test_the_page_shows_the_logo(self, client):
+        http, _ = client
+        assert '<img src="/icon.svg"' in http.get('/').text
+
     @pytest.mark.parametrize('path', ['/api/summary', '/metrics'])
     def test_machines_get_json(self, client, path):
         http, _ = client
