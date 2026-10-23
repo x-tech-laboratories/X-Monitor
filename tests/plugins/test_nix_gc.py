@@ -3,9 +3,9 @@ import time
 
 import pytest
 
-from vigil.plugins.nix_gc import NixGc
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.nix_gc import NixGc
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -301,7 +301,7 @@ class TestProfiles:
 
 async def _launch(plugin, pid=4242):
     """Drive plan_action -> ActionPlan (launch) -> interpret_action, mirroring
-    VigilEngine.dispatch_action for a launched detached job."""
+    XMonitorEngine.dispatch_action for a launched detached job."""
     plan = plugin.plan_action("collect")
     if plan is None:
         return None
@@ -316,10 +316,10 @@ async def _launch(plugin, pid=4242):
 def _poll(size, exit_code, alive, out):
     """Build the raw stdout one poll_command produces on the target."""
     return CmdResult(0, (
-        f"===VIGIL_SIZE===\n{size}\n"
-        f"===VIGIL_EXIT===\n{exit_code if exit_code is not None else ''}\n"
-        f"===VIGIL_ALIVE===\n{1 if alive else 0}\n"
-        f"===VIGIL_OUT===\n{out}"
+        f"===XMONITOR_SIZE===\n{size}\n"
+        f"===XMONITOR_EXIT===\n{exit_code if exit_code is not None else ''}\n"
+        f"===XMONITOR_ALIVE===\n{1 if alive else 0}\n"
+        f"===XMONITOR_OUT===\n{out}"
     ), "")
 
 
@@ -427,6 +427,12 @@ class TestUiSpec:
         bound.add(plugin.UI_SPEC['chart']['metric'])
         assert bound <= recorded
 
+    def test_store_use_is_a_gauge_colored_by_the_thresholds(self, plugin):
+        store = plugin.UI_SPEC['cards']['store_card']
+        assert store['kind'] == 'gauge'
+        assert store['metric'] == 'store_used_pct'
+        assert store['color'] == {'warning': plugin.warning, 'threshold': plugin.threshold}
+
     def test_the_last_yield_card_reads_the_stored_record(self, plugin):
         _collect(plugin, _probe(freed="512.0 MiB", deleted=99))
         assert plugin._freed_text == "512 MB · 99 paths"
@@ -466,3 +472,21 @@ class TestManualRunIsTheLastCollection:
         _collect(plugin, _probe(last_gc=int(time.time()) - 86400))
         assert _latest_status() == "failed"
         assert _latest_metric("last_gc_success") == 0.0
+
+
+class TestOptionalStoreLimits:
+    async def test_warning_only_never_fails(self, make_plugin):
+        p = make_plugin(NixGc, {**BASE_CFG, "threshold": None})
+        _collect(p, _probe(size=100 * GB, used=100 * GB))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin):
+        p = make_plugin(NixGc, {**BASE_CFG, "warning": None})
+        _collect(p, _probe(size=100 * GB, used=89 * GB))
+        assert _latest_status() == "online"
+        _collect(p, _probe(size=100 * GB, used=95 * GB))
+        assert _latest_status() == "failed"
+
+    async def test_the_gauge_colours_by_the_limits_that_are_on(self, make_plugin):
+        p = make_plugin(NixGc, {**BASE_CFG, "warning": None})
+        assert p.UI_SPEC['cards']['store_card']['color'] == {'warning': None, 'threshold': 90}

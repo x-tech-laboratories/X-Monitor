@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from vigil.core.state import BufferSizes, StateStore
+from x_monitor.core.state import BufferSizes, StateStore
 
 
 @pytest.fixture
@@ -313,7 +313,7 @@ class TestJobs:
         assert len(store.recent_jobs(plugin_id="b", limit=99)) == 2
 
     def test_hydration_respects_the_job_cap(self):
-        from vigil.core.state.records import JobRecord
+        from x_monitor.core.state.records import JobRecord
 
         store = StateStore(BufferSizes(jobs_per_plugin=2))
         store.load_jobs(
@@ -336,7 +336,7 @@ class TestJobs:
         assert store.create_job("p", "h", "k", "cmd").id == 11
 
     def test_restored_ids_do_not_collide(self, store):
-        from vigil.core.state.records import JobRecord
+        from x_monitor.core.state.records import JobRecord
 
         store.load_jobs(
             [
@@ -429,7 +429,7 @@ class TestConcurrency:
 
 
 def _status(plugin_id, state):
-    from vigil.core.state.records import StatusRecord
+    from x_monitor.core.state.records import StatusRecord
 
     return StatusRecord(
         plugin_id=plugin_id, state=state, timestamp=datetime.now()

@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.connections import Connections
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.connections import Connections
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-connections", "id": "test-connections", "ssh_config": {"host": "test.host"}}
 
@@ -39,7 +39,7 @@ def plugin(make_plugin):
     return make_plugin(Connections, CFG)
 
 
-from vigil.plugins.connections import _parse_states
+from x_monitor.plugins.connections import _parse_states
 
 
 class TestParseStates:
@@ -81,3 +81,37 @@ class TestCollection:
         run_cycle(plugin, lambda c: CmdResult(0, _make_tcp([]), ""))
         assert _latest_metric("conn_total") == pytest.approx(0.0)
         assert _latest_status() == "online"
+
+
+class TestUiSpec:
+    STATES = ['conn_established', 'conn_listen', 'conn_time_wait']
+
+    def test_the_total_card_keeps_its_thresholds(self, make_plugin):
+        p = make_plugin(Connections, dict(CFG, warning=100, threshold=200))
+        card = p.UI_SPEC['cards']['conn_total_card']
+        assert card['color'] == {'warning': 100.0, 'threshold': 200.0}
+
+    def test_the_states_share_one_bar(self, plugin):
+        card = plugin.UI_SPEC['cards']['conn_states_card']
+        assert card['kind'] == 'share'
+        assert [p['metric'] for p in card['parts']] == self.STATES
+
+    def test_one_chart_stacks_the_states(self, plugin):
+        charts = plugin.UI_SPEC['charts']
+        assert list(charts) == ['conn_total_chart']
+        assert charts['conn_total_chart']['style'] == 'stack'
+        assert [s['metric'] for s in charts['conn_total_chart']['series']] == self.STATES
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Connections, dict(CFG, warning=2, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01"] * 50), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Connections, dict(CFG, warning=None, threshold=3))
+        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01", "01"]), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _make_tcp(["01", "01", "01"]), ""))
+        assert _latest_status() == "failed"

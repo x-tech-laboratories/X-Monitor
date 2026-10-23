@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.vms import Vms, _parse_row
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.vms import Vms, _parse_row
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 def _latest_status(pid="test-vms"):
@@ -108,7 +108,29 @@ class TestVmsActions:
         plan = p.plan_action("start:evil")
         assert plan.success is False
 
-    async def test_actions_list(self, make_plugin):
-        p = make_plugin(Vms, _cfg(expect_running=["web"]))
-        ids = {a["action_id"] for a in p.get_actions()}
-        assert ids == {"start:web", "shutdown:web"}
+    async def test_each_expected_vm_gets_a_running_switch(self, make_plugin):
+        p = make_plugin(Vms, _cfg(expect_running=["web", "db"]))
+        assert p.get_actions() == [
+            {"name": "db", "kind": "toggle", "metric": "vm_running_db", "icon": "computer",
+             "on_action_id": "start:db", "off_action_id": "shutdown:db"},
+            {"name": "web", "kind": "toggle", "metric": "vm_running_web", "icon": "computer",
+             "on_action_id": "start:web", "off_action_id": "shutdown:web"},
+        ]
+
+    async def test_running_metric_per_expected_vm(self, make_plugin, run_cycle):
+        p = make_plugin(Vms, _cfg(expect_running=["web", "db"]))
+        run_cycle(p, lambda c: CmdResult(0, _LIST, ""))
+        assert _latest_metric("vm_running_web") == 1.0
+        assert _latest_metric("vm_running_db") == 0.0
+        assert _latest_metric("vm_running_cache") is None
+
+
+class TestUiSpec:
+    async def test_running_and_stopped_vms_are_one_share(self, make_plugin):
+        spec = make_plugin(Vms, _cfg()).UI_SPEC
+        card = spec['cards']['running_card']
+        assert card['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in card['parts']] == [
+            ('vms_running', 'online'), ('vms_stopped', 'neutral')]
+        assert 'stopped_card' not in spec['cards']
+        assert ['vms'] in spec['layout']

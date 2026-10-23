@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.throughput import Throughput
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.throughput import Throughput
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-throughput", "id": "test-throughput", "ssh_config": {"host": "test.host"}}
 
@@ -53,7 +53,7 @@ def plugin(make_plugin):
     return make_plugin(Throughput, CFG)
 
 
-from vigil.plugins.throughput import _parse_net_dev, _busiest_interface, _format_rate
+from x_monitor.plugins.throughput import _parse_net_dev, _busiest_interface, _format_rate
 
 
 class TestParseNetDev:
@@ -128,3 +128,14 @@ class TestCollection:
         run_cycle(plugin, lambda c: CmdResult(0, _two_snapshots(
             {"lo": (0, 0), "veth0": (0, 0)}, {"lo": (0, 0), "veth0": (0, 0)}), ""))
         assert _latest_status() == "unavailable"
+
+
+class TestUiSpec:
+    def test_one_mirror_chart_draws_download_above_and_upload_below(self, plugin):
+        charts = plugin.UI_SPEC['charts']
+        assert list(charts) == ['rx_chart']
+        assert charts['rx_chart']['style'] == 'mirror'
+        assert [s['metric'] for s in charts['rx_chart']['series']] == ['rx_kbps', 'tx_kbps']
+
+    def test_the_interface_and_current_rates_stay_visible(self, plugin):
+        assert plugin.UI_SPEC['layout'][0] == ['host_card', 'iface_card', 'rx_card', 'tx_card']

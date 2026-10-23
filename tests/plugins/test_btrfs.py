@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.btrfs import Btrfs, _sanitize_mount
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.btrfs import Btrfs, _sanitize_mount
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-btrfs", "id": "test-btrfs", "ssh_config": {"host": "test.host"}}
 
@@ -167,3 +167,41 @@ class TestUiSpec:
 
     def test_an_error_count_shows_beside_the_percentage(self, plugin):
         assert '2 dev err' in plugin._item_text({'usage_pct': 41.7, 'errors': 2})
+
+    def test_filesystems_are_meters_ticked_at_the_warning_level(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['btrfs_filesystems']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_value'] == 'usage_pct'
+        assert repeat['bar_marker'] == plugin.warning
+        assert repeat['item_color_by'] == plugin._item_level
+
+    def test_healthy_and_degraded_filesystems_share_one_bar(self, plugin):
+        health = plugin.UI_SPEC['cards']['btrfs_degraded_card']
+        assert health['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in health['parts']] == [
+            ('filesystems_ok', 'online'), ('filesystems_degraded', 'failed')]
+
+    def test_the_count_cards_the_meters_replace_are_gone(self, plugin):
+        cards = plugin.UI_SPEC['cards']
+        assert not {'btrfs_ok_card', 'btrfs_usage_card'} & set(cards)
+        assert plugin.card_row() == ['btrfs_total_card', 'btrfs_degraded_card']
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Btrfs, dict(CFG, threshold=None))
+        _run(p, run_cycle, _probe({"/": _healthy(100)}))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Btrfs, dict(CFG, warning=None, unallocated_warning=None))
+        _run(p, run_cycle, _probe({"/": _healthy(89, unallocated=0)}))
+        assert _latest_status() == "online"
+        _run(p, run_cycle, _probe({"/": _healthy(90)}))
+        assert _latest_status() == "failed"
+
+    async def test_device_errors_still_fail_with_no_limits(self, make_plugin, run_cycle):
+        p = make_plugin(Btrfs, dict(CFG, warning=None, threshold=None))
+        size, used, unallocated, _ = _healthy(5)
+        _run(p, run_cycle, _probe({"/": (size, used, unallocated, {"read_io_errs": 1})}))
+        assert _latest_status() == "failed"

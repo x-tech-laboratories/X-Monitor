@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.load import Load
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.load import Load
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-load", "id": "test-load", "ssh_config": {"host": "test.host"}}
 
@@ -56,3 +56,35 @@ class TestCollection:
     async def test_unparseable_output_is_unavailable(self, plugin, run_cycle):
         run_cycle(plugin, lambda c: CmdResult(0, "LOAD:garbage\nCPUS:4\n", ""))
         assert _latest_status() == "unavailable"
+
+
+class TestUiSpec:
+    def test_the_1m_load_is_a_gauge_banded_by_the_thresholds(self, make_plugin):
+        p = make_plugin(Load, dict(CFG, warning=70, threshold=90))
+        cards = p.UI_SPEC['cards']
+        assert list(cards) == ['load_1m_card']
+        assert cards['load_1m_card']['kind'] == 'gauge'
+        assert cards['load_1m_card']['color'] == {'warning': 70.0, 'threshold': 90.0}
+
+    def test_one_chart_draws_all_three_averages_as_lines(self, plugin):
+        chart = plugin.UI_SPEC['charts']['load_chart']
+        assert chart['style'] == 'lines'
+        assert [s['metric'] for s in chart['series']] == ['load_pct_1m', 'load_pct_5m', 'load_pct_15m']
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Load, dict(CFG, warning=200))
+        run_cycle(p, lambda c: CmdResult(0, _loadavg(400.0, cpus=4), ""))
+        assert _latest_status() == "warning"
+        assert p.UI_SPEC['cards']['load_1m_card']['color'] == {'warning': 200.0, 'threshold': None}
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Load, dict(CFG, threshold=300))
+        run_cycle(p, lambda c: CmdResult(0, _loadavg(11.0, cpus=4), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _loadavg(12.0, cpus=4), ""))
+        assert _latest_status() == "failed"
+
+    def test_without_limits_the_gauge_has_no_bands(self, plugin):
+        assert 'color' not in plugin.UI_SPEC['cards']['load_1m_card']

@@ -1,6 +1,6 @@
 import pytest
 import yaml
-from vigil.core.settings.config_file import ConfigFileManager
+from x_monitor.core.settings.config_file import ConfigFileManager
 
 
 @pytest.fixture
@@ -81,18 +81,18 @@ class TestStructureWarnings:
 
 class TestDatabaseSettings:
     def test_returns_configured_path(self, write_yaml):
-        path = write_yaml({"database": {"path": "/data/vigil.db"}})
+        path = write_yaml({"database": {"path": "/data/x-monitor.db"}})
         cfg = ConfigFileManager(path)
-        assert cfg.database_settings["path"] == "/data/vigil.db"
+        assert cfg.database_settings["path"] == "/data/x-monitor.db"
 
-    def test_defaults_to_vigil_db_when_missing(self, write_yaml):
+    def test_defaults_to_x_monitor_db_when_missing(self, write_yaml):
         path = write_yaml({"plugins": []})
         cfg = ConfigFileManager(path)
-        assert cfg.database_settings["path"] == "vigil.db"
+        assert cfg.database_settings["path"] == "x-monitor.db"
 
     def test_defaults_when_file_missing(self, tmp_path):
         cfg = ConfigFileManager(str(tmp_path / "missing.yaml"))
-        assert cfg.database_settings["path"] == "vigil.db"
+        assert cfg.database_settings["path"] == "x-monitor.db"
 
 
 class TestPluginsProperty:
@@ -117,9 +117,9 @@ class TestPluginsProperty:
 
 class TestSSHDefaults:
     def test_returns_configured_defaults(self, write_yaml):
-        path = write_yaml({"ssh_defaults": {"username": "beatlink", "key_path": "/run/vigil.key"}})
+        path = write_yaml({"ssh_defaults": {"username": "beatlink", "key_path": "/run/x-monitor.key"}})
         cfg = ConfigFileManager(path)
-        assert cfg.ssh_defaults == {"username": "beatlink", "key_path": "/run/vigil.key"}
+        assert cfg.ssh_defaults == {"username": "beatlink", "key_path": "/run/x-monitor.key"}
 
     def test_empty_when_missing(self, write_yaml):
         path = write_yaml({"plugins": []})

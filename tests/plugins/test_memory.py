@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.memory import Memory
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.memory import Memory
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-memory", "id": "test-memory", "ssh_config": {"host": "test.host"}}
 
@@ -58,3 +58,29 @@ class TestCollection:
     async def test_incomplete_output_is_unavailable(self, plugin, run_cycle):
         run_cycle(plugin, lambda c: CmdResult(0, "MemTotal:  100 kB\n", ""))
         assert _latest_status() == "unavailable"
+
+
+class TestUiSpec:
+    def test_the_percent_card_is_a_gauge_banded_by_the_thresholds(self, make_plugin):
+        p = make_plugin(Memory, dict(CFG, warning=60, threshold=85))
+        card = p.UI_SPEC['cards']['mem_pct_card']
+        assert card['kind'] == 'gauge'
+        assert card['metric'] == 'memory_pct'
+        assert card['color'] == {'warning': 60.0, 'threshold': 85.0}
+
+    def test_the_used_card_sits_beside_the_gauge(self, plugin):
+        assert plugin.UI_SPEC['layout'][0] == ['host_card', 'mem_pct_card', 'mem_used_card']
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Memory, dict(CFG, warning=75, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _meminfo(0), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Memory, dict(CFG, warning=None, threshold=90))
+        run_cycle(p, lambda c: CmdResult(0, _meminfo(2_400_000), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _meminfo(400_000), ""))
+        assert _latest_status() == "failed"

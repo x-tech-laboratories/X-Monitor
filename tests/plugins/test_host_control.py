@@ -4,8 +4,8 @@ import subprocess
 
 import pytest
 
-from vigil.core.connectors.types import ActionPlan, CmdResult, CollectResult
-from vigil.plugins.host_control import (
+from x_monitor.core.connectors.types import ActionPlan, CmdResult, CollectResult
+from x_monitor.plugins.host_control import (
     HostControl, grub_menu_entries, parse_boot, parse_power,
 )
 
@@ -424,7 +424,7 @@ class TestPage:
         assert visible == ['reboot', 'power_profile']
 
     async def test_every_direct_button_confirms_with_the_host(self, make_plugin):
-        from vigil.core.ui.components import _substitute
+        from x_monitor.core.ui.components import _substitute
         plugin = _collected(make_plugin, allow=ACTIONS_ALL, identify_device='/dev/sda')
         spec = plugin.UI_SPEC
         for button in spec['buttons']['controls']:

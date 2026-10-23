@@ -1,6 +1,6 @@
 import pytest
-from vigil.core.database.database import DatabaseManager, db
-from vigil.core.exporters import prometheus, influxdb
+from x_monitor.core.database.database import DatabaseManager, db
+from x_monitor.core.exporters import prometheus, influxdb
 
 
 @pytest.fixture
@@ -50,11 +50,16 @@ class TestRecentEvents:
 class TestPrometheusExporter:
     def test_renders_status_and_metrics(self, mgr):
         text = prometheus.render(mgr)
-        assert 'vigil_up{monitor="cpu-mon",state="online"} 1.0' in text
-        assert 'vigil_up{monitor="mem-mon",state="warning"} 0.5' in text
-        assert 'vigil_metric{monitor="cpu-mon"' in text
+        assert 'x_monitor_up{monitor="cpu-mon",state="online"} 1.0' in text
+        assert 'x_monitor_up{monitor="mem-mon",state="warning"} 0.5' in text
+        assert 'x_monitor_metric{monitor="cpu-mon"' in text
         assert 'metric="cpu_pct"} 55.0' in text
         assert text.endswith('\n')
+
+    def test_info_sits_between_warning_and_online(self, mgr):
+        mgr.insert_status('sync-mon', 'info')
+        mgr.flush()
+        assert 'x_monitor_up{monitor="sync-mon",state="info"} 0.75' in prometheus.render(mgr)
 
     def test_sanitizes_and_escapes(self, mgr):
         mgr.insert_status('weird"id', 'failed')
@@ -67,8 +72,8 @@ class TestInfluxExporter:
     def test_line_protocol_payload(self, mgr):
         payload = influxdb.build_payload(mgr)
         lines = payload.splitlines()
-        assert any(l.startswith('vigil_metric,') and 'value=55.0' in l for l in lines)
-        assert any(l.startswith('vigil_up,') for l in lines)
+        assert any(l.startswith('x_monitor_metric,') and 'value=55.0' in l for l in lines)
+        assert any(l.startswith('x_monitor_up,') for l in lines)
         for l in lines:
             assert l.rsplit(' ', 1)[1].isdigit()
 

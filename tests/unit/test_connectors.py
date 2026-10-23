@@ -8,7 +8,7 @@ import dns.exception
 import dns.resolver
 import pytest
 
-from vigil.core.connectors.types import (
+from x_monitor.core.connectors.types import (
     Command, DnsQuery, HttpRequest, PingRequest,
 )
 
@@ -17,7 +17,7 @@ pytestmark = pytest.mark.asyncio
 
 class TestDnsConnector:
     async def test_custom_resolver_config_applied(self):
-        from vigil.core.connectors.dns_connector import DnsConnector
+        from x_monitor.core.connectors.dns_connector import DnsConnector
 
         captured = {}
 
@@ -46,7 +46,7 @@ class TestDnsConnector:
         assert captured['lifetime'] == 2
 
     async def test_default_resolver_is_system_configured(self):
-        from vigil.core.connectors.dns_connector import DnsConnector
+        from x_monitor.core.connectors.dns_connector import DnsConnector
 
         captured = {}
 
@@ -69,7 +69,7 @@ class TestDnsConnector:
         (dns.exception.Timeout, 'timeout'),
     ])
     async def test_dns_exceptions_mapped_to_kind(self, exc, kind):
-        from vigil.core.connectors.dns_connector import DnsConnector
+        from x_monitor.core.connectors.dns_connector import DnsConnector
 
         class FakeResolver:
             def __init__(self, configure=True):
@@ -84,7 +84,7 @@ class TestDnsConnector:
         assert result.kind == kind
 
     async def test_generic_dns_error_carries_message(self):
-        from vigil.core.connectors.dns_connector import DnsConnector
+        from x_monitor.core.connectors.dns_connector import DnsConnector
 
         class FakeResolver:
             def __init__(self, configure=True):
@@ -102,7 +102,7 @@ class TestDnsConnector:
 
 class TestHttpConnector:
     async def test_get_returns_status_and_text(self):
-        from vigil.core.connectors.http_connector import HttpConnector
+        from x_monitor.core.connectors.http_connector import HttpConnector
 
         conn = HttpConnector()
         resp = MagicMock(status_code=200, text='hello')
@@ -115,7 +115,7 @@ class TestHttpConnector:
 
     async def test_request_exception_becomes_error(self):
         import httpx as _httpx
-        from vigil.core.connectors.http_connector import HttpConnector
+        from x_monitor.core.connectors.http_connector import HttpConnector
 
         conn = HttpConnector()
         with patch.object(conn._client, 'request',
@@ -126,7 +126,7 @@ class TestHttpConnector:
         assert result.elapsed_ms == 0.0
 
     async def test_basic_auth_and_method_body_headers_forwarded(self):
-        from vigil.core.connectors.http_connector import HttpConnector
+        from x_monitor.core.connectors.http_connector import HttpConnector
 
         conn = HttpConnector()
         resp = MagicMock(status_code=207, text='<multistatus/>')
@@ -141,7 +141,7 @@ class TestHttpConnector:
         assert kwargs['content'] == '<propfind/>'
 
     async def test_elapsed_ms_measured_on_success(self):
-        from vigil.core.connectors.http_connector import HttpConnector
+        from x_monitor.core.connectors.http_connector import HttpConnector
 
         conn = HttpConnector()
         resp = MagicMock(status_code=200, text='ok')
@@ -150,7 +150,7 @@ class TestHttpConnector:
         assert result.elapsed_ms >= 0.0
 
     async def test_response_headers_returned_lower_cased(self):
-        from vigil.core.connectors.http_connector import HttpConnector
+        from x_monitor.core.connectors.http_connector import HttpConnector
         import httpx as _httpx
 
         conn = HttpConnector()
@@ -162,7 +162,7 @@ class TestHttpConnector:
 
     async def test_transport_error_has_no_headers(self):
         import httpx as _httpx
-        from vigil.core.connectors.http_connector import HttpConnector
+        from x_monitor.core.connectors.http_connector import HttpConnector
 
         conn = HttpConnector()
         with patch.object(conn._client, 'request',
@@ -173,7 +173,7 @@ class TestHttpConnector:
 
 class TestIcmpConnector:
     async def test_successful_ping(self):
-        from vigil.core.connectors.icmp_connector import IcmpConnector
+        from x_monitor.core.connectors.icmp_connector import IcmpConnector
 
         proc = MagicMock(returncode=0)
 
@@ -188,7 +188,7 @@ class TestIcmpConnector:
         assert 'time=5.2 ms' in result.stdout
 
     async def test_subprocess_exception_captured(self):
-        from vigil.core.connectors.icmp_connector import IcmpConnector
+        from x_monitor.core.connectors.icmp_connector import IcmpConnector
 
         with patch('asyncio.create_subprocess_exec', side_effect=OSError('ping missing')):
             result = await IcmpConnector().ping(PingRequest('host'))
@@ -198,7 +198,7 @@ class TestIcmpConnector:
 
 class TestConnectorEngineRouting:
     async def test_routes_command_to_ssh_network(self):
-        from vigil.core.connectors import ConnectorEngine, ExecContext
+        from x_monitor.core.connectors import ConnectorEngine, ExecContext
         from unittest.mock import AsyncMock
 
         engine = ConnectorEngine()
@@ -211,8 +211,8 @@ class TestConnectorEngineRouting:
         conn.execute.assert_awaited_once()
 
     async def test_routes_by_type(self):
-        from vigil.core.connectors import ConnectorEngine
-        from vigil.core.connectors.types import HttpResult, DnsResult, PingResult
+        from x_monitor.core.connectors import ConnectorEngine
+        from x_monitor.core.connectors.types import HttpResult, DnsResult, PingResult
         from unittest.mock import AsyncMock
 
         engine = ConnectorEngine()

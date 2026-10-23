@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.zfs import Zfs
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.zfs import Zfs
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-zfs", "id": "test-zfs", "ssh_config": {"host": "test.host"}}
 
@@ -38,7 +38,7 @@ def plugin(make_plugin):
     return make_plugin(Zfs, CFG)
 
 
-from vigil.plugins.zfs import _sanitize_pool
+from x_monitor.plugins.zfs import _sanitize_pool
 
 
 class TestSanitizePool:
@@ -104,3 +104,77 @@ class TestCollection:
 class TestUiSpec:
     def test_per_pool_repeat_card_is_its_own_row(self, plugin):
         assert ['zfs_pools'] in plugin.UI_SPEC['layout']
+
+    def test_pools_are_meters_ticked_at_the_warning_level(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['zfs_pools']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_marker'] == plugin.warning
+        assert repeat['item_color_by'] == plugin._item_level
+
+    def test_healthy_and_degraded_pools_share_one_bar(self, plugin):
+        health = plugin.UI_SPEC['cards']['zfs_degraded_card']
+        assert health['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in health['parts']] == [
+            ('pools_ok', 'online'), ('pools_degraded', 'failed')]
+
+    def test_the_count_cards_the_meters_replace_are_gone(self, plugin):
+        cards = plugin.UI_SPEC['cards']
+        assert not {'zfs_ok_card', 'zfs_usage_card'} & set(cards)
+        assert plugin.card_row() == ['zfs_total_card', 'zfs_degraded_card']
+
+
+class TestPoolTiles:
+    def test_each_pool_is_recorded_with_its_health_and_usage(self, plugin):
+        result = plugin.parse([CmdResult(0, _make_zpool(
+            {"tank": ("ONLINE", 78), "back-up": ("DEGRADED", 12)}), "")])
+        assert result.snapshot == [
+            {'label': 'tank', 'health': 'ONLINE', 'usage': 78.0},
+            {'label': 'back-up', 'health': 'DEGRADED', 'usage': 12.0},
+        ]
+
+    def test_no_pools_clears_the_tiles(self, plugin):
+        assert plugin.parse([CmdResult(0, "", "")]).snapshot == []
+
+    def test_the_tiles_are_their_own_row_above_the_meters(self, plugin):
+        layout = plugin.UI_SPEC['layout']
+        assert layout.index(['zfs_pool_tiles']) < layout.index(['zfs_pools'])
+
+    def test_the_tiles_repeat_over_the_snapshot(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['zfs_pool_tiles']['repeat']
+        assert repeat['source'] == 'snapshot'
+        assert repeat['container'] == 'tiles'
+
+    def test_the_caption_is_health_and_usage(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['zfs_pool_tiles']['repeat']
+        assert repeat['item_format_fn']({'health': 'ONLINE', 'usage': 78.0}) == 'ONLINE · 78%'
+
+    @pytest.mark.parametrize("health,usage,state", [
+        ("ONLINE", 10, 'online'), ("ONLINE", 85, 'warning'), ("ONLINE", 95, 'failed'),
+        ("DEGRADED", 10, 'failed'), ("FAULTED", 10, 'failed'), ("UNAVAIL", 10, 'failed'),
+    ])
+    def test_the_tile_color_follows_health_then_usage(self, plugin, health, usage, state):
+        repeat = plugin.UI_SPEC['cards']['zfs_pool_tiles']['repeat']
+        assert repeat['item_color_by']({'health': health, 'usage': float(usage)}) == state
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Zfs, dict(CFG, threshold=None))
+        _run(p, run_cycle, _make_zpool({"tank": ("ONLINE", 100)}))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Zfs, dict(CFG, warning=None))
+        _run(p, run_cycle, _make_zpool({"tank": ("ONLINE", 89)}))
+        assert _latest_status() == "online"
+        _run(p, run_cycle, _make_zpool({"tank": ("ONLINE", 90)}))
+        assert _latest_status() == "failed"
+
+    async def test_an_unhealthy_pool_still_fails_with_no_limits(self, make_plugin, run_cycle):
+        p = make_plugin(Zfs, dict(CFG, warning=None, threshold=None))
+        _run(p, run_cycle, _make_zpool({"tank": ("DEGRADED", 10)}))
+        assert _latest_status() == "failed"
+
+    async def test_the_meter_tick_falls_back_to_the_threshold(self, make_plugin):
+        p = make_plugin(Zfs, dict(CFG, warning=None))
+        assert p.UI_SPEC['cards']['zfs_pools']['repeat']['bar_marker'] == 90

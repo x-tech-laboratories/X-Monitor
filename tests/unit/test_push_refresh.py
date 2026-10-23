@@ -5,9 +5,9 @@ import asyncio
 
 import pytest
 
-from vigil.core.database.database import DatabaseManager, db
-from vigil.core.connectors.types import CollectResult
-from vigil.core.ui.model import COOLDOWN_SECONDS, _PageScheduler, _schedulers
+from x_monitor.core.database.database import DatabaseManager, db
+from x_monitor.core.connectors.types import CollectResult
+from x_monitor.core.ui.model import COOLDOWN_SECONDS, _PageScheduler, _schedulers
 
 
 @pytest.fixture

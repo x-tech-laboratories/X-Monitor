@@ -1,12 +1,12 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.filesystems import (
+from x_monitor.plugins.filesystems import (
     Filesystems, _parse_inodes, _parse_readonly, _SNAP,
 )
-from vigil.plugins.base.disk_usage import path_key as _sanitize
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.base.disk_usage import path_key as _sanitize
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {"name": "test-fs", "id": "test-fs", "warning": 80, "threshold": 90,
@@ -277,3 +277,41 @@ class TestDegradedOutput:
 class TestFilesystemsActions:
     async def test_on_action_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_filesystems_are_meters_ticked_at_the_warning_level(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['filesystems']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_value'] == 'used_pct'
+        assert repeat['bar_marker'] == plugin.warning
+        assert repeat['item_color_by'] == plugin._item_color
+
+    async def test_the_meters_make_the_worst_usage_card_redundant(self, plugin):
+        spec = plugin.UI_SPEC
+        assert 'worst_card' not in spec['cards']
+        assert 'worst_card' not in {cell for row in spec['layout'] for cell in row}
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Filesystems, dict(BASE_CFG, threshold=None, inode_threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _combined(
+            _df(("/", 100, 100, 100)), _df_inodes(("/", 100))), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Filesystems, dict(BASE_CFG, warning=None, inode_warning=None))
+        run_cycle(p, lambda c: CmdResult(0, _df(("/", 100, 89, 89)), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _df(("/", 100, 90, 90)), ""))
+        assert _latest_status() == "failed"
+
+    async def test_no_limits_stay_online(self, make_plugin, run_cycle):
+        p = make_plugin(Filesystems, dict(BASE_CFG, warning=None, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _df(("/", 100, 100, 100)), ""))
+        assert _latest_status() == "online"
+
+    async def test_the_meter_tick_falls_back_to_the_threshold(self, make_plugin):
+        p = make_plugin(Filesystems, dict(BASE_CFG, warning=None))
+        assert p.UI_SPEC['cards']['filesystems']['repeat']['bar_marker'] == 90

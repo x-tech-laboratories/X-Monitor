@@ -1,17 +1,17 @@
-# Vigil Configuration Sample
+# X-Monitor Configuration Sample
 #
 # This is a minimal example. A full deployment (the TechNet homelab) is defined
-# declaratively in NixOS via services.vigil — see that module for a complete,
+# declaratively in NixOS via services.x-monitor — see that module for a complete,
 # real-world plugin tree.
 #
-# Vigil applies an edit to this file while it runs: it notices the change within
+# X-Monitor applies an edit to this file while it runs: it notices the change within
 # a few seconds (or on SIGHUP, POST /api/config/reload, or the dashboard's System
 # menu), keeps unchanged monitors running, and refuses a file that does not load
 # whole. database, memory, auth and theme still take a restart; a reload says so.
 
 # Database settings
 database:
-  path: "vigil.db"
+  path: "x-monitor.db"
 
 # Log storage settings
 # Collected log lines (e.g. journald output) are stored persistently and
@@ -26,14 +26,14 @@ logging:
                               # disk footprint. 0 (default) disables.
   # cycle_timings: true       # Record cycle_collect/parse_seconds metrics per
                               # monitor; they double the metric row count, so
-                              # set false to shed them. vigil_self's cycle-time
+                              # set false to shed them. x_monitor_self's cycle-time
                               # table is kept in memory and works either way.
   # level: INFO               # Root log level at startup: DEBUG, INFO, WARNING,
                               # ERROR or CRITICAL. Change it while running from
                               # the dashboard's System menu, POST /api/log-levels,
                               # or SIGUSR1 (more verbose) / SIGUSR2 (quieter).
   # levels:                   # Per-logger levels; a logger is its module path.
-  #   vigil.core.connectors.ssh_connector: DEBUG
+  #   x_monitor.core.connectors.ssh_connector: DEBUG
 
 # In-memory state (optional).
 # Live state is held in Python objects and served to the UI from there; the
@@ -60,20 +60,20 @@ logging:
 #     interval: 30            # seconds between pushes
 #     # InfluxDB 2.x:
 #     org: "my-org"
-#     bucket: "vigil"
+#     bucket: "x-monitor"
 #     token: "my-api-token"
 #     # InfluxDB 1.x (use instead of org/bucket/token):
-#     # database: "vigil"
+#     # database: "x-monitor"
 #   # MQTT publishes on every change and announces each monitor to Home Assistant.
-#   # Needs the mqtt extra (pip install 'vigil[mqtt]'); the Nix package includes it.
+#   # Needs the mqtt extra (pip install 'x-monitor[mqtt]'); the Nix package includes it.
 #   mqtt:
 #     host: "mqtt.lan"
 #     port: 1883              # 8883 by default when tls is set
-#     username: "vigil"
+#     username: "x-monitor"
 #     password: "secret"      # or password_file: "/run/secrets/mqtt_password"
 #     # tls: true             # or a mapping: {ca_certs: /path/ca.pem, certfile: ..., keyfile: ..., insecure: false}
-#     # client_id: "vigil-myhost"
-#     base_topic: "vigil"     # <base>/<monitor>/status, <base>/<monitor>/<metric>, <base>/status
+#     # client_id: "x-monitor-myhost"
+#     base_topic: "x-monitor" # <base>/<monitor>/status, <base>/<monitor>/<metric>, <base>/status
 #     discovery_prefix: "homeassistant"
 #     discovery: true         # publish Home Assistant discovery configs
 #     retain: true
@@ -95,27 +95,27 @@ ssh_defaults:
 # auth:
 #   username: "admin"
 #   password: "change-me"                       # or password_file, below
-#   # password_file: "/run/secrets/vigil_password"
-#   # session_secret_file: "/run/secrets/vigil_session_key"  # fixed signing key,
+#   # password_file: "/run/secrets/x_monitor_password"
+#   # session_secret_file: "/run/secrets/x_monitor_session_key"  # fixed signing key,
 #   #                       so restarts do not sign everyone out; else generated
 #   # session_hours: 12     # How long a sign-in lasts
 #   # remember_days: 30     # How long "keep me signed in" lasts
 #   # One named token per client, sent as "Authorization: Bearer <token>".
-#   # Mint one with: vigil token new <name> --scope read|control|push
+#   # Mint one with: x-monitor token new <name> --scope read|control|push
 #   # tokens:
 #   #   - name: "prometheus"
 #   #     scope: read                  # GET /api/... and /metrics
-#   #     token_hash: "sha256:..."     # as printed by vigil token new
+#   #     token_hash: "sha256:..."     # as printed by x-monitor token new
 #   #   - name: "ops-laptop"
 #   #     scope: control               # read, plus poll now / actions / test notifications
-#   #     token_file: "/run/secrets/vigil_ops_token"
+#   #     token_file: "/run/secrets/x_monitor_ops_token"
 #   #   - name: "backup-jobs"
 #   #     scope: push                  # /api/push/{id}
 #   #     token_hash: "sha256:..."
 #   #     monitors: ["nightly-backup"] # omit for every push monitor
 
 # Theme — the dashboard is themed with Halon, whose token set lives in
-# vigil/core/ui/static/halon-tokens.css. Every field here is optional; each one
+# x_monitor/core/ui/static/halon-tokens.css. Every field here is optional; each one
 # overrides a single Halon token, in both the light and the dark scheme, so an
 # override that only suits one of them is yours to audit.
 theme:
@@ -132,19 +132,19 @@ theme:
 
 # Notifications (optional) — see docs/notifications.md.
 # notifications:
-#   base_url: "https://vigil.lan"   # the dashboard's address, for links to a monitor
+#   base_url: "https://x-monitor.lan"   # the dashboard's address, for links to a monitor
 #   channels:
 #     - id: laptop
 #       type: desktop               # shown by a notify-only agent in your desktop session
 #       agent: laptop-desktop
-#       icon: vigil                 # or an icon theme name, or an image path on that computer
+#       icon: x-monitor                 # or an icon theme name, or an image path on that computer
 #       urgency: {failed: critical, recovered: low}
 #     - id: phone
 #       type: ntfy                  # phone notifications through ntfy.sh or your own server
 #       topic_file: "/run/secrets/ntfy_topic"
 #     - id: home-assistant
 #       type: webhook               # JSON to any URL; `payload:` sends a template instead
-#       url_file: "/run/secrets/ha_vigil_webhook_url"
+#       url_file: "/run/secrets/ha_x_monitor_webhook_url"
 #   defaults:                       # every monitor's rule; a monitor's `notify:` overrides it
 #     on: [failed]                  # failed, warning, unavailable
 #     after: 1                      # problem cycles in a row before notifying
@@ -152,10 +152,10 @@ theme:
 #     recovery: true
 
 # Out-of-tree plugins (optional) — see docs/plugins.md#out-of-tree-plugins.
-# Directories searched, in order, for a plugin `type` Vigil does not ship, as
+# Directories searched, in order, for a plugin `type` X-Monitor does not ship, as
 # <type>.py or a <type>/ package. Relative paths start at this file's directory.
 # plugin_paths:
-#   - /etc/vigil/plugins
+#   - /etc/x-monitor/plugins
 #   - path: ./my-plugins
 #     override: true            # let its plugins replace built-ins of the same name
 
@@ -278,7 +278,7 @@ plugins:
         interval: 1h
         max_age: 1d
         repo: "/path/to/borg/repo"
-        # passphrase_command: "cat /etc/vigil/borg.pass"   # for encrypted repos
+        # passphrase_command: "cat /etc/x_monitor/borg.pass"   # for encrypted repos
         # require_sudo: true   # for a root-only repo; needs passwordless sudo
         #                      # for borg on the target host
         # collect_stats: true  # also run `borg info` for size/dedup metrics
@@ -298,7 +298,7 @@ plugins:
         # one_file_system: true                # don't cross mounts (default)
         # compression: "zstd"                  # or "lz4", "zstd,10", "none"
         # archive_prefix: "nightly"            # archives: "<prefix>-<UTC stamp>"
-        # cache_dir: "/var/cache/vigil-borg"   # persistent BORG_BASE_DIR; must be
+        # cache_dir: "/var/cache/x-monitor-borg"   # persistent BORG_BASE_DIR; must be
         #                                      # writable, else every backup is a
         #                                      # full re-read instead of incremental;
         #                                      # when set, monitoring polls reuse it

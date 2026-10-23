@@ -3,9 +3,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.ddns_updater import DdnsUpdater
-from vigil.core.connectors.types import IoActionPlan
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.ddns_updater import DdnsUpdater
+from x_monitor.core.connectors.types import IoActionPlan
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 def _latest_status(pid):
@@ -56,6 +56,15 @@ class TestDriftAndUpdate:
         push.assert_called_once_with("https://freedns.example/update?token=secret")
         assert _latest_status("test-ddns") == "online"
         assert _latest_metric("test-ddns", "in_sync") == pytest.approx(0.0)
+
+    async def test_first_drift_updates_soon_after_boot(self, make_plugin, run_io_cycle):
+        p = make_plugin(DdnsUpdater, _cfg())
+        with patch('x_monitor.plugins.ddns_updater.time.monotonic', return_value=10.0), \
+             patch.object(p, '_fetch_public_ip', return_value="5.6.7.8"), \
+             patch.object(p, '_resolve_public_record', return_value="1.2.3.4"), \
+             patch.object(p, '_push_update', return_value=(True, "Update accepted: good")) as push:
+            run_io_cycle(p)
+        push.assert_called_once()
 
     async def test_failed_update_sets_failed(self, make_plugin, run_io_cycle):
         p = make_plugin(DdnsUpdater, _cfg())
@@ -225,3 +234,11 @@ class TestForceUpdateAction:
         p = make_plugin(DdnsUpdater, _cfg())
         action_ids = [a['action_id'] for a in p.get_actions()]
         assert 'force_update' in action_ids
+
+
+class TestUiSpec:
+    async def test_sync_state_is_drawn_as_an_uptime_strip(self, make_plugin):
+        spec = make_plugin(DdnsUpdater, _cfg()).UI_SPEC
+        assert spec['cards']['sync_strip']['kind'] == 'strip'
+        assert spec['cards']['sync_strip']['metric'] == 'in_sync'
+        assert ['sync_strip'] in spec['layout']

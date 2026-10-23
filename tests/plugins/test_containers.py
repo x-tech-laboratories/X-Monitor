@@ -4,9 +4,9 @@ import time
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.containers import Containers
-from vigil.core.connectors.types import CmdResult, HttpResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.containers import Containers
+from x_monitor.core.connectors.types import CmdResult, HttpResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 def _latest_status(pid="test-ctr"):
@@ -118,9 +118,9 @@ HUB_CHALLENGE = 'Bearer realm="https://auth.docker.io/token",service="registry.d
 
 def _inventory(rows, images=(), digests=()):
     """Collection output in the inventory script's shape: ps rows, container images, image digests."""
-    out = _ps(*rows) + "@@vigil-images\n"
+    out = _ps(*rows) + "@@x-monitor-images\n"
     out += "".join(f"/{name}\t{image}\tsha256:{image_id}\n" for name, image, image_id in images)
-    out += "@@vigil-digests\n"
+    out += "@@x-monitor-digests\n"
     out += "".join(f"sha256:{image_id}\t{' '.join(entries)}\n" for image_id, entries in digests)
     return out
 
@@ -407,7 +407,7 @@ class TestContainersPrune:
         assert _latest_status() == "online"
 
     async def test_prune_button_confirms_what_it_deletes(self, make_plugin):
-        from vigil.core.ui.components import _substitute
+        from x_monitor.core.ui.components import _substitute
         p = make_plugin(Containers, _cfg(prune_volumes=True, prune_all_images=True))
         button = p.UI_SPEC['buttons']['tools'][0]
         assert button['id'] == 'prune' and button['color'] == 'negative'
@@ -417,7 +417,19 @@ class TestContainersPrune:
         assert ['tools'] in p.UI_SPEC['layout']
 
     async def test_default_confirm_names_dangling_images_only(self, make_plugin):
-        from vigil.core.ui.components import _substitute
+        from x_monitor.core.ui.components import _substitute
         p = make_plugin(Containers, _cfg())
         text = _substitute(p.UI_SPEC['buttons']['tools'][0]['confirm'], None, p)
         assert "dangling images" in text and "volume" not in text
+
+
+class TestUiSpec:
+    async def test_running_and_stopped_containers_are_one_share(self, make_plugin):
+        spec = make_plugin(Containers, _cfg()).UI_SPEC
+        card = spec['cards']['running_card']
+        assert card['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in card['parts']] == [
+            ('containers_running', 'online'), ('containers_stopped', 'warning')]
+        assert 'stopped_card' not in spec['cards']
+        assert all('stopped_card' not in row for row in spec['layout'])
+        assert ['containers'] in spec['layout']

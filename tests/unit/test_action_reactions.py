@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from vigil.plugins.base.plugin_base import Plugin
-from vigil.core.connectors.types import ActionPlan, CmdResult, Command, CollectResult
+from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors.types import ActionPlan, CmdResult, Command, CollectResult
 
 
 class _Probe(Plugin):
@@ -45,10 +45,10 @@ class _Probe(Plugin):
 
 @pytest.fixture
 def engine(tmp_path):
-    from vigil.__main__ import VigilEngine
+    from x_monitor.__main__ import XMonitorEngine
     cfg = tmp_path / "c.yaml"
     cfg.write_text("plugins: []\n")
-    return VigilEngine(str(cfg), db_path_override=str(tmp_path / "e.db"))
+    return XMonitorEngine(str(cfg), db_path_override=str(tmp_path / "e.db"))
 
 
 @pytest.fixture
@@ -124,15 +124,15 @@ class TestStatusReaction:
             await _settle(engine)
 
     async def test_uptime_wakes_a_host_that_went_down(self, engine, make_plugin):
-        from vigil.core.connectors.types import PingResult
-        from vigil.plugins.uptime import Uptime
+        from x_monitor.core.connectors.types import PingResult
+        from x_monitor.plugins.uptime import Uptime
         plugin = make_plugin(Uptime, {'name': 'nas', 'id': 'nas', 'target_host': 'host1',
                                       'mac': '00:11:22:33:44:55', 'wake_on_down': True})
         plugin.engine = engine
         engine._exec_contexts[plugin.id] = MagicMock()
         down = [PingResult(exception=None, returncode=1, stderr='timed out')]
         with patch.object(engine.connectors, 'dispatch', AsyncMock(return_value=down)), \
-                patch('vigil.plugins.uptime.send_magic_packet') as send:
+                patch('x_monitor.plugins.uptime.send_magic_packet') as send:
             await engine.run_cycle_now(plugin)
             await _settle(engine)
             await engine.run_cycle_now(plugin)

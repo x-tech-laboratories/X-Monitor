@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from vigil.core.connectors.types import HttpResult
-from vigil.plugins.containers.registry import (
+from x_monitor.core.connectors.types import HttpResult
+from x_monitor.plugins.containers.registry import (
     MANIFEST_ACCEPT, RegistryAuth, check_images, local_digests, parse_challenge,
     parse_reference, remote_digest,
 )

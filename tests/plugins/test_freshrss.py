@@ -3,9 +3,9 @@ import time
 
 import pytest
 
-from vigil.plugins.freshrss import Freshrss, _parse_response, _fever_api_key
-from vigil.core.connectors.types import HttpRequest, HttpResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.freshrss import Freshrss, _parse_response, _fever_api_key
+from x_monitor.core.connectors.types import HttpRequest, HttpResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -129,6 +129,13 @@ class TestFreshrssCollection:
         assert _latest_status() == "online"
         assert _latest_metric("refresh_age_hours") == pytest.approx(1.0, abs=0.01)
 
+    async def test_fresh_feeds_are_the_total_less_the_stale_ones(self, plugin, run_requests):
+        _respond(plugin, run_requests,
+                 feeds=[_feed("A", 1.0), _feed("B", 2.0), _feed("C", 60.0), _feed("D", 200.0)])
+        assert _latest_metric("feeds_total") == 4
+        assert _latest_metric("feeds_stale") == 2
+        assert _latest_metric("feeds_fresh") == 2
+
     async def test_auth_failure_sets_failed(self, plugin, run_requests):
         _respond(plugin, run_requests, auth=0)
         assert _latest_status() == "failed"
@@ -152,3 +159,39 @@ class TestFreshrssCollection:
 class TestFreshrssActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    def test_fresh_and_stale_feeds_are_one_share(self, plugin):
+        spec = plugin.UI_SPEC
+        card = spec['cards']['share_card']
+        assert card['kind'] == 'share'
+        assert [(part['metric'], part['color']) for part in card['parts']] == [
+            ('feeds_fresh', 'online'), ('feeds_stale', 'warning')]
+        assert 'share_card' in {cell for row in spec['layout'] for cell in row}
+
+    def test_existing_cards_and_chart_are_kept(self, plugin):
+        spec = plugin.UI_SPEC
+        assert {'refresh_card', 'feeds_card', 'stale_card'} <= set(spec['cards'])
+        assert spec['cards']['stale_card']['color'] == 'nonzero_warning'
+        assert spec['chart']['metric'] == 'refresh_age_hours'
+
+
+class TestOptionalLimits:
+    async def test_feed_warning_only_never_fails(self, make_plugin, run_requests):
+        p = make_plugin(Freshrss, {**BASE_CFG, "feed_stale_threshold": None})
+        _respond(p, run_requests, feeds=[_feed(hours_ago=1.0), _feed(hours_ago=500.0)])
+        assert _latest_status() == "warning"
+
+    async def test_feed_failure_only_never_warns(self, make_plugin, run_requests):
+        p = make_plugin(Freshrss, {**BASE_CFG, "feed_stale_warning": None})
+        _respond(p, run_requests, feeds=[_feed(hours_ago=1.0), _feed(hours_ago=60.0)])
+        assert _latest_status() == "online"
+        _respond(p, run_requests, feeds=[_feed(hours_ago=1.0), _feed(hours_ago=200.0)])
+        assert _latest_status() == "failed"
+
+    async def test_null_refresh_warning_never_warns(self, make_plugin, run_requests):
+        p = make_plugin(Freshrss, {**BASE_CFG, "refresh_stale_warning": None})
+        _respond(p, run_requests, feeds=[_feed(hours_ago=10.0)], refresh_hours_ago=10.0)
+        assert _latest_status() == "online"
+        assert p.UI_SPEC['cards']['refresh_card']['color'](10.0) == "online"

@@ -12,7 +12,7 @@ import pytest
 
 aiomqtt = pytest.importorskip('aiomqtt')
 
-from vigil.core.exporters.mqtt import MQTTExporter  # noqa: E402
+from x_monitor.core.exporters.mqtt import MQTTExporter  # noqa: E402
 
 
 def _mosquitto_binary():
@@ -106,30 +106,30 @@ def mgr(db_manager):
 
 async def test_publishes_discovery_state_and_changes(mgr, broker_port):
     exporter = MQTTExporter(mgr, {'host': '127.0.0.1', 'port': broker_port,
-                                  'base_topic': 'vigil', 'client_id': 'vigil-it'})
+                                  'base_topic': 'x-monitor', 'client_id': 'x-monitor-it'})
     exporter.coalesce = 0.05
     async with Watcher(broker_port) as watch:
         exporter.start()
         try:
-            assert await watch.wait_for('vigil/status') == 'online'
-            assert await watch.wait_for('vigil/cpu-mon/cpu_pct') == '42.5'
+            assert await watch.wait_for('x-monitor/status') == 'online'
+            assert await watch.wait_for('x-monitor/cpu-mon/cpu_pct') == '42.5'
             config = json.loads(await watch.wait_for(
-                'homeassistant/sensor/vigil_cpu-mon/cpu_pct/config'))
+                'homeassistant/sensor/x-monitor_cpu-mon/cpu_pct/config'))
             assert config['unit_of_measurement'] == '%'
             assert config['device']['name'] == 'server.lan'
             mgr.insert_status('cpu-mon', 'failed')
-            await watch.wait_for('vigil/cpu-mon/status', 'failed')
+            await watch.wait_for('x-monitor/cpu-mon/status', 'failed')
         finally:
             task = exporter._task
             exporter.stop()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        await watch.wait_for('vigil/status', 'offline')
+        await watch.wait_for('x-monitor/status', 'offline')
 
 
 async def test_state_is_retained_for_a_late_subscriber(mgr, broker_port):
     exporter = MQTTExporter(mgr, {'host': '127.0.0.1', 'port': broker_port,
-                                  'base_topic': 'late', 'client_id': 'vigil-late'})
+                                  'base_topic': 'late', 'client_id': 'x-monitor-late'})
     exporter.coalesce = 0
     exporter.start()
     try:
@@ -142,9 +142,9 @@ async def test_state_is_retained_for_a_late_subscriber(mgr, broker_port):
         exporter.stop()
 
 
-async def test_last_will_marks_vigil_offline_when_the_connection_dies(mgr, broker_port):
+async def test_last_will_marks_x_monitor_offline_when_the_connection_dies(mgr, broker_port):
     exporter = MQTTExporter(mgr, {'host': '127.0.0.1', 'port': broker_port,
-                                  'base_topic': 'lwt', 'client_id': 'vigil-lwt'})
+                                  'base_topic': 'lwt', 'client_id': 'x-monitor-lwt'})
     async with Watcher(broker_port) as watch:
         client = exporter._client()
         await client.__aenter__()

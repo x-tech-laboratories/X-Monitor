@@ -1,0 +1,169 @@
+"""Libvirt VM states via `virsh list --all` over SSH — sampled locally by the
+agent on agent-backed hosts — with a running toggle for each expected VM.
+Config: uri (the libvirt connection), expect_running, offline_warning. Any VM
+named in expect_running that is not running makes the status failed; VMs in
+other unexpected states are warning when offline_warning is on, while cleanly
+shut-off VMs count as benign. A missing virsh or an unreachable libvirt
+measured nothing, so both are unavailable."""
+
+from typing import Dict, Any, List, Optional, Union
+
+from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors.types import ActionPlan, CmdResult, Command, CollectResult
+
+_LIST_CMD = "virsh list --all"
+
+_RUNNING_STATES = {'running'}
+_BENIGN_STATES = {'shut off', 'shutoff'}
+
+_DEFAULT_LAYOUT = [
+    ['host_card', 'total_card', 'running_card'],
+    ['vms'],
+    ['events'],
+]
+
+
+def _running_metric(name: str) -> str:
+    """The metric that is 1 while the expected VM `name` runs, which its toggle shows."""
+    return f'vm_running_{name}'
+
+
+def _shquote(s: str) -> str:
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+def _parse_row(line: str):
+    stripped = line.strip()
+    if not stripped or stripped.startswith('---') or set(stripped) <= set('- '):
+        return None, None
+    parts = line.split()
+    if parts[:2] == ['Id', 'Name'] or (parts and parts[0] == 'Id'):
+        return None, None
+    if len(parts) < 3:
+        return None, None
+    name = parts[1]
+    state = ' '.join(parts[2:]).lower()
+    return name, state
+
+
+def _classify_vms(stdout: str):
+    """Split the virsh list rows into running, stopped (error-state), and benign (shut-off) name lists."""
+    running: List[str] = []
+    stopped: List[str] = []
+    benign: List[str] = []
+    for line in stdout.splitlines():
+        name, state = _parse_row(line)
+        if name is None:
+            continue
+        if state in _RUNNING_STATES:
+            running.append(name)
+        elif state in _BENIGN_STATES:
+            benign.append(name)
+        else:
+            stopped.append(name)
+    return running, stopped, benign
+
+
+class Vms(Plugin):
+    def __init__(self, name: str, config: Dict[str, Any]):
+        super().__init__(name, config)
+        self.uri = config.get('uri', 'qemu:///system')
+        self.expect_running = set(config.get('expect_running', []) or [])
+        self.offline_warning = bool(config.get('offline_warning', True))
+
+    def _virsh(self, subcmd: str) -> str:
+        return f"virsh -c {_shquote(self.uri)} {subcmd}"
+
+    SAMPLED = True
+
+    def commands(self) -> List[Command]:
+        return [Command(f"{self._virsh('list --all')} 2>&1")]
+
+    def parse(self, results: List[CmdResult]) -> CollectResult:
+        """Turns the `virsh list --all` output into a CollectResult with total/
+        running/stopped counts and a status where a missing expected VM is failed,
+        VMs in unexpected states are warning (when offline_warning), and a missing
+        virsh or unreachable libvirt is unavailable."""
+        ret, stdout, stderr = results[0].exit_code, results[0].stdout, results[0].stderr
+
+        combined = f"{stdout}\n{stderr}".lower()
+        if ret != 0 and ('command not found' in combined or 'not found' in combined):
+            return CollectResult.unavailable("virsh not installed on target")
+        if ret != 0 and 'failed to connect' in combined:
+            return CollectResult.unavailable(f"libvirt not reachable: {stderr}")
+        if ret != 0:
+            return CollectResult.unavailable(f"virsh list failed: {stderr}")
+
+        running, stopped, benign = _classify_vms(stdout)
+        total = len(running) + len(stopped) + len(benign)
+        metrics = {
+            'vms_total': float(total),
+            'vms_running': float(len(running)),
+            'vms_stopped': float(len(stopped) + len(benign)),
+            **{_running_metric(name): 1.0 if name in running else 0.0 for name in self.expect_running},
+        }
+
+        if total == 0:
+            return CollectResult(metrics=metrics, logs=[("No VMs defined", "INFO")], status='online')
+
+        running_set = set(running)
+        missing = sorted(self.expect_running - running_set)
+        if missing:
+            return CollectResult(
+                metrics=metrics,
+                logs=[(f"Expected VMs not running: {', '.join(missing)}", "ERROR")],
+                status='failed',
+            )
+
+        if self.offline_warning and stopped:
+            return CollectResult(
+                metrics=metrics,
+                logs=[(f"{len(running)} running, {len(stopped)} in error state: {', '.join(stopped)}", "WARNING")],
+                status='warning',
+            )
+
+        return CollectResult(
+            metrics=metrics,
+            logs=[(f"{len(running)} running, {len(benign)} shut off", "INFO")],
+            status='online',
+        )
+
+    def get_actions(self) -> List[Dict[str, str]]:
+        return [{'name': name, 'kind': 'toggle', 'metric': _running_metric(name), 'icon': 'computer',
+                 'on_action_id': f'start:{name}', 'off_action_id': f'shutdown:{name}'}
+                for name in sorted(self.expect_running)]
+
+    def plan_action(self, action_id: str, **kwargs) -> Optional[Union[ActionPlan, CollectResult]]:
+        if ':' not in action_id:
+            return None
+        verb, name = action_id.split(':', 1)
+        if name not in self.expect_running:
+            return CollectResult.failed(f"Refusing to {verb} unlisted VM {name!r}")
+        if verb == 'start':
+            subcmd = f"start {_shquote(name)}"
+        elif verb == 'shutdown':
+            subcmd = f"shutdown {_shquote(name)}"
+        else:
+            return None
+        return ActionPlan(self._virsh(subcmd))
+
+    def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
+        if result.exit_code != 0:
+            verb, name = action_id.split(':', 1)
+            return CollectResult.failed(f"{verb} of {name} failed: {result.stderr}")
+        return True
+
+    UI_SPEC = {
+        'layout': _DEFAULT_LAYOUT,
+        'cards': {
+            'total_card': {'metric': 'vms_total', 'title': 'VMS', 'format': 'int'},
+            'running_card': {
+                'kind': 'share', 'title': 'STATE', 'format': 'int',
+                'parts': [
+                    {'metric': 'vms_running', 'label': 'Running', 'color': 'online'},
+                    {'metric': 'vms_stopped', 'label': 'Stopped', 'color': 'neutral'},
+                ],
+            },
+        },
+        'events': True,
+    }

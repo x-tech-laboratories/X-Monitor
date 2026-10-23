@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from vigil.plugins.qbittorrent import (
+from x_monitor.plugins.qbittorrent import (
     Qbittorrent,
     _AUTH_FAILED,
     SCRIPT_SEP,
@@ -13,8 +13,8 @@ from vigil.plugins.qbittorrent import (
     _format_rate,
     _parse_response,
 )
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -320,6 +320,19 @@ class TestCollect:
         _respond(plugin, run_cycle, torrents=torrents)
         assert _latest_status() == "failed"
 
+    async def test_each_torrent_counts_in_exactly_one_state_bucket(self, plugin, run_cycle):
+        states = ["downloading", "forcedDL", "queuedDL", "uploading", "stalledUP", "queuedUP",
+                  "pausedDL", "stoppedUP", "stalledDL", "metaDL", "error", "missingFiles"]
+        _respond(plugin, run_cycle, torrents=[{"name": s, "state": s} for s in states])
+        counts = {bucket: _latest_metric(f"torrents_state_{bucket}")
+                  for bucket in ("downloading", "seeding", "paused", "stalled", "errored")}
+        assert counts == {"downloading": 3, "seeding": 2, "paused": 2, "stalled": 3, "errored": 2}
+        assert sum(counts.values()) == _latest_metric("torrents_total")
+
+    async def test_an_unlisted_state_counts_as_stalled(self, plugin, run_cycle):
+        _respond(plugin, run_cycle, torrents=[{"name": "partial"}, {"name": "m", "state": "moving"}])
+        assert _latest_metric("torrents_state_stalled") == 2
+
     async def test_auth_failure_is_reported_distinctly(self, plugin, run_cycle):
         result = run_cycle(plugin, lambda c: CmdResult(1, "", f"{_AUTH_FAILED}: Fails."))
         assert _latest_status() == "unavailable"
@@ -383,3 +396,47 @@ class TestActions:
             "recheck_errored", CmdResult(0, "HASHES:bbb|ccc", ""))
         assert outcome.success is True
         assert any("2" in m for m, _ in outcome.logs)
+
+
+class TestUiSpec:
+    def test_download_and_upload_share_one_mirror_chart(self, plugin):
+        chart = plugin.UI_SPEC['chart']
+        assert chart['style'] == 'mirror'
+        assert [s['metric'] for s in chart['series']] == ['dl_speed_bytes', 'up_speed_bytes']
+
+    def test_torrent_states_are_one_share(self, plugin):
+        spec = plugin.UI_SPEC
+        card = spec['cards']['share_card']
+        assert card['kind'] == 'share'
+        assert [part['metric'] for part in card['parts']] == [
+            'torrents_state_downloading', 'torrents_state_seeding', 'torrents_state_paused',
+            'torrents_state_stalled', 'torrents_state_errored']
+        assert 'share_card' in {cell for row in spec['layout'] for cell in row}
+
+    def test_existing_cards_are_kept(self, plugin):
+        assert {'connection_card', 'speed_card', 'torrents_card', 'stalled_card',
+                'errored_card'} <= set(plugin.UI_SPEC['cards'])
+
+
+class TestOptionalLimits:
+    async def test_stall_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Qbittorrent, {**BASE_CFG, "stalled_threshold": None})
+        _respond(p, run_cycle, torrents=_torrents(downloading=1, stalled=50))
+        assert _latest_status() == "warning"
+        assert p.UI_SPEC['cards']['stalled_card']['color'](50) == "warning"
+
+    async def test_stall_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Qbittorrent, {**BASE_CFG, "stalled_warning": None})
+        _respond(p, run_cycle, torrents=_torrents(downloading=1, stalled=5))
+        assert _latest_status() == "online"
+        _respond(p, run_cycle, torrents=_torrents(downloading=1, stalled=10))
+        assert _latest_status() == "failed"
+
+    async def test_null_error_threshold_never_fails_on_errored(self, make_plugin, run_cycle):
+        p = make_plugin(Qbittorrent, {**BASE_CFG, "error_threshold": None})
+        _respond(p, run_cycle, torrents=_torrents(downloading=1, errored=3))
+        assert _latest_status() == "online"
+
+    def test_count_limits_stay_whole_numbers(self, make_plugin):
+        p = make_plugin(Qbittorrent, {**BASE_CFG, "stalled_warning": 4.0})
+        assert p.stalled_warning == 4 and isinstance(p.stalled_warning, int)

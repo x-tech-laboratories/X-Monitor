@@ -5,8 +5,8 @@ import time
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from vigil.core.ui import auth as auth_module
-from vigil.core.ui.auth import COOKIE_NAME, build_config, issue_session, read_session, register_auth
+from x_monitor.core.ui import auth as auth_module
+from x_monitor.core.ui.auth import COOKIE_NAME, build_config, issue_session, read_session, register_auth
 
 HTML = {"Accept": "text/html,application/xhtml+xml"}
 CREDS = {"username": "admin", "password": "secret", "session_secret": "test-key"}
@@ -172,7 +172,7 @@ class TestSignIn:
 
     def test_an_offsite_next_target_falls_back_to_the_root(self):
         client = _client()
-        from vigil.core.ui.auth import encode_next
+        from x_monitor.core.ui.auth import encode_next
         form = {"username": "admin", "password": "secret", "csrf": _csrf(client),
                 "next": encode_next("//evil.example/")}
         assert client.post("/login", data=form).headers["location"] == "/"
@@ -329,11 +329,11 @@ class TestLoginPageTheme:
         assert '<html lang="en">' in client.get("/login").text
 
     def test_a_pinned_scheme_is_written_onto_the_document(self, monkeypatch):
-        from vigil.core.ui import theme
+        from x_monitor.core.ui import theme
         monkeypatch.setattr(theme, "_forced_scheme", "dark")
         assert '<html lang="en" data-theme="dark">' in _client().get("/login").text
 
     def test_configured_token_overrides_reach_the_page(self, monkeypatch):
-        from vigil.core.ui import theme
+        from x_monitor.core.ui import theme
         monkeypatch.setattr(theme, "_overrides", {"accent": "#ff00ff"})
         assert "--accent: #ff00ff;" in _client().get("/login").text

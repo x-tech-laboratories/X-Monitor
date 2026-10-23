@@ -1,15 +1,15 @@
 import pytest
 
-from vigil.plugins.http import HttpCheck, _body_mismatch
-from vigil.core.connectors.types import CmdResult, HttpRequest, HttpResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.http import HttpCheck, _body_mismatch
+from x_monitor.core.connectors.types import CmdResult, HttpRequest, HttpResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 FEED_CFG = {
     "name": "test-http",
     "id":   "test-http",
     "url": "http://calibre.test:8083/opds",
-    "username": "vigil",
+    "username": "x-monitor",
     "password": "hunter2",
     "expect": {"body_contains": "<feed", "body_contains_any": ["atom", "opds"]},
     "ssh_config": {"host": "test.host"},
@@ -22,7 +22,7 @@ DAV_CFG = {
     "method": "PROPFIND",
     "headers": {"Depth": "0", "Content-Type": "application/xml"},
     "body": '<?xml version="1.0"?><propfind xmlns="DAV:"/>',
-    "username": "vigil",
+    "username": "x-monitor",
     "password": "hunter2",
     "expect": {"status": 207},
     "ssh_config": {"host": "test.host"},
@@ -90,7 +90,7 @@ class TestRequests:
         assert isinstance(req, HttpRequest)
         assert req.method == "GET"
         assert req.url == "http://calibre.test:8083/opds"
-        assert req.auth == ("vigil", "hunter2")
+        assert req.auth == ("x-monitor", "hunter2")
 
     def test_method_headers_and_body_carried(self, make_plugin):
         req = make_plugin(HttpCheck, DAV_CFG).requests()[0]
@@ -106,7 +106,7 @@ class TestRequests:
     def test_password_command_resolved_at_construction(self, make_plugin):
         cfg = {**FEED_CFG, "password": None, "password_command": "echo s3cret"}
         p = make_plugin(HttpCheck, cfg)
-        assert p.requests()[0].auth == ("vigil", "s3cret")
+        assert p.requests()[0].auth == ("x-monitor", "s3cret")
 
     def test_ws_url_probes_with_websocat(self, ws_plugin):
         cmd = ws_plugin.commands()[0].text
@@ -174,3 +174,17 @@ class TestWsParsing:
 class TestActions:
     async def test_on_action_always_returns_none(self, feed_plugin):
         assert feed_plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    def test_an_http_probe_draws_an_uptime_strip_beside_its_latency_chart(self, feed_plugin):
+        spec = feed_plugin.UI_SPEC
+        assert spec['cards']['uptime_strip']['kind'] == 'strip'
+        assert spec['cards']['uptime_strip']['metric'] == 'probe_ok'
+        assert ['uptime_strip'] in spec['layout']
+        assert spec['chart']['metric'] == 'probe_latency_ms'
+
+    def test_a_websocket_probe_draws_an_uptime_strip(self, ws_plugin):
+        spec = ws_plugin.UI_SPEC
+        assert spec['cards']['uptime_strip']['metric'] == 'probe_ok'
+        assert ['uptime_strip'] in spec['layout']

@@ -2,7 +2,7 @@
 
 import asyncio
 
-from vigil_agent import desktop
+from x_monitor_agent import desktop
 
 
 class FakeDesktop:
@@ -82,10 +82,10 @@ async def _settle():
 
 
 class TestIcon:
-    def test_vigil_means_the_bundled_icon(self):
-        args = desktop.command('t', 'b', 'normal', None, 'vigil')
+    def test_x_monitor_means_the_bundled_icon(self):
+        args = desktop.command('t', 'b', 'normal', None, 'x-monitor')
         icon = next(a for a in args if a.startswith('--icon='))
-        assert icon.endswith('vigil_agent/icon.svg')
+        assert icon.endswith('x_monitor_agent/icon.svg')
         assert (desktop._ICON_FILE).is_file()
 
     def test_other_icons_pass_through(self):
@@ -105,7 +105,7 @@ class TestShow:
         fake.click(101)
         await task
         assert fake.calls == [
-            ['notify-send', '--app-name=Vigil', '--urgency=critical', '--print-id',
+            ['notify-send', '--app-name=X-Monitor', '--urgency=critical', '--print-id',
              '--action=default=Open', '--action=dismiss=Dismiss', '--wait', '--', 'Nas is failed', 'why'],
             ['xdg-open', 'https://v/monitor/nas'],
         ]
@@ -116,7 +116,7 @@ class TestShow:
         await _settle()
         fake.click(101, b'dismiss\n')
         await task
-        assert fake.calls == [['notify-send', '--app-name=Vigil', '--urgency=normal', '--print-id',
+        assert fake.calls == [['notify-send', '--app-name=X-Monitor', '--urgency=normal', '--print-id',
                                '--action=dismiss=Dismiss', '--wait', '--', '-t', 'b']]
 
     async def test_the_dismiss_button_closes_without_opening_the_link(self, monkeypatch):
@@ -202,14 +202,14 @@ class TestKeys:
 
 
 def test_the_agent_advertises_notify_and_dismiss():
-    from vigil_agent.client import CAPABILITIES
+    from x_monitor_agent.client import CAPABILITIES
     assert {'notify', 'dismiss'} <= set(CAPABILITIES)
 
 
 class TestNotifyOnly:
     async def test_commands_are_refused(self, monkeypatch):
-        from vigil_agent import executor, protocol as proto
-        from vigil_agent.client import AgentClient
+        from x_monitor_agent import executor, protocol as proto
+        from x_monitor_agent.client import AgentClient
 
         async def must_not_run(*args, **kwargs):
             raise AssertionError("a notify-only agent ran a command")
@@ -221,21 +221,28 @@ class TestNotifyOnly:
             async def send(self, raw):
                 sent.append(proto.decode(raw))
 
-        client = AgentClient('ws://v', 'desk', 't', notify_only=True)
+        client = AgentClient('ws://v', 'desk', None, notify_only=True)
         client._socket = Socket()
         await client._handle_exec({'t': proto.EXEC, 'id': 1, 'cmd': 'id'})
         assert sent[0]['rc'] == -1
         assert 'only shows notifications' in sent[0]['err']
 
     def test_the_setting_is_read_from_config_and_environment(self, tmp_path, monkeypatch):
-        from vigil_agent.config import AgentConfig
+        from x_monitor_agent.config import AgentConfig
 
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        key_file = tmp_path / "key"
+        key_file.write_bytes(Ed25519PrivateKey.generate().private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH,
+            serialization.NoEncryption()))
         config_file = tmp_path / "agent.yaml"
-        config_file.write_text("url: ws://v\nid: desk\ntoken: t\nnotify_only: true\n")
-        for var in ('VIGIL_AGENT_URL', 'VIGIL_AGENT_ID', 'VIGIL_AGENT_TOKEN',
-                    'VIGIL_AGENT_NOTIFY_ONLY'):
+        config_file.write_text(f"url: ws://v\nid: desk\nkey_file: {key_file}\nnotify_only: true\n")
+        for var in ('XMONITOR_AGENT_URL', 'XMONITOR_AGENT_ID', 'XMONITOR_AGENT_KEY_FILE',
+                    'XMONITOR_AGENT_NOTIFY_ONLY'):
             monkeypatch.delenv(var, raising=False)
         assert AgentConfig.load(str(config_file)).notify_only is True
 
-        monkeypatch.setenv('VIGIL_AGENT_NOTIFY_ONLY', 'false')
+        monkeypatch.setenv('XMONITOR_AGENT_NOTIFY_ONLY', 'false')
         assert AgentConfig.load(str(config_file)).notify_only is False

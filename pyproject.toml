@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vigil"
+name = "x-monitor"
 version = "0.1.0"
 description = "A lightweight, pluggable network and system monitor for Linux"
 readme = "README.md"
@@ -17,24 +17,26 @@ dependencies = [
     "PyYAML>=6.0.1",
     "peewee>=3.17.1",
     # The floor is the tested major: the UI touches private NiceGUI surface
-    # (see vigil/core/ui/nicegui_compat.py), so an unmanaged major bump is the
+    # (see x_monitor/core/ui/nicegui_compat.py), so an unmanaged major bump is the
     # likeliest way the dashboard breaks.
     "nicegui>=3.12,<4",
     "dnspython>=2.6.0",
-    # Native async SSH transport (see vigil/core/connectors/ssh_connector.py) —
+    # Native async SSH transport (see x_monitor/core/connectors/ssh_connector.py) —
     # replaces shelling out to the system `ssh` client with a persistent
     # asyncssh connection per host, removing the fork/exec cost and the
     # collector's old thread-pool/semaphore ceiling.
     "asyncssh>=2.14.0",
-    # The agent transport's client half (see vigil_agent/client.py). The
+    # The agent transport's client half (see x_monitor_agent/client.py). The
     # server side needs nothing extra: NiceGUI already brings FastAPI and
     # uvicorn, which serve the agent WebSocket on the dashboard's own port.
     "websockets>=12.0",
+    # Ed25519 keys the agent signs its handshake with (see x_monitor_agent/keys.py).
+    "cryptography>=3.0",
 ]
 
 [project.scripts]
-vigil = "vigil.__main__:main"
-vigil-agent = "vigil_agent.__main__:main"
+x-monitor = "x_monitor.__main__:main"
+x-monitor-agent = "x_monitor_agent.__main__:main"
 
 [project.optional-dependencies]
 # The apprise notification channel, which reaches most chat, push and SMS services.
@@ -76,8 +78,8 @@ markers = ["nicegui_main_file(path): the app entry point the nicegui user fixtur
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["vigil*", "vigil_agent*"]
+include = ["x_monitor*", "x_monitor_agent*"]
 
 [tool.setuptools.package-data]
-vigil = ["core/ui/static/*"]
-vigil_agent = ["icon.svg"]
+x_monitor = ["core/ui/static/*"]
+x_monitor_agent = ["icon.svg"]

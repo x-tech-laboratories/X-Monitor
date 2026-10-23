@@ -14,23 +14,23 @@ from fastapi.testclient import TestClient
 from nicegui import ui
 from nicegui.testing import User
 
-from vigil.core.coordination.engine import VigilEngine
-from vigil.core.database.database import db
-from vigil.core.settings.config_file import ConfigFileManager
-from vigil.core.settings.log_levels import LogLevels, normalize_level
-from vigil.core.ui.api import register_api
-from vigil.core.ui.views.system import open_log_levels_dialog
+from x_monitor.core.coordination.engine import XMonitorEngine
+from x_monitor.core.database.database import db
+from x_monitor.core.settings.config_file import ConfigFileManager
+from x_monitor.core.settings.log_levels import LogLevels, normalize_level
+from x_monitor.core.ui.api import register_api
+from x_monitor.core.ui.views.system import open_log_levels_dialog
 
 pytest_plugins = ['nicegui.testing.user_plugin']
 
-SSH = 'vigil.core.connectors.ssh_connector'
+SSH = 'x_monitor.core.connectors.ssh_connector'
 
 
 @pytest.fixture(autouse=True)
 def restore_levels():
     """Put the root and every logger a test touches back the way they were."""
     root = logging.getLogger().level
-    names = (SSH, 'vigil.plugins.cpu', 'vigil.test.other')
+    names = (SSH, 'x_monitor.plugins.cpu', 'x_monitor.test.other')
     before = {name: logging.getLogger(name).level for name in names}
     yield
     logging.getLogger().setLevel(root)
@@ -114,27 +114,27 @@ class TestConfigure:
         assert logging.getLogger().level == logging.INFO
 
     def test_a_logger_dropped_from_config_inherits_again(self, levels):
-        levels.configure(None, {SSH: 'DEBUG', 'vigil.plugins.cpu': 'ERROR'})
-        levels.configure(None, {'vigil.plugins.cpu': 'ERROR'})
+        levels.configure(None, {SSH: 'DEBUG', 'x_monitor.plugins.cpu': 'ERROR'})
+        levels.configure(None, {'x_monitor.plugins.cpu': 'ERROR'})
         assert logging.getLogger(SSH).level == logging.NOTSET
-        assert logging.getLogger('vigil.plugins.cpu').level == logging.ERROR
+        assert logging.getLogger('x_monitor.plugins.cpu').level == logging.ERROR
 
     def test_a_logger_set_by_hand_survives_a_config_that_never_named_it(self, levels):
-        levels.set_level('vigil.test.other', 'DEBUG')
+        levels.set_level('x_monitor.test.other', 'DEBUG')
         levels.configure(None, {SSH: 'DEBUG'})
         levels.configure(None, {})
-        assert logging.getLogger('vigil.test.other').level == logging.DEBUG
+        assert logging.getLogger('x_monitor.test.other').level == logging.DEBUG
 
     def test_a_bad_entry_is_reported_and_the_rest_apply(self, levels, caplog):
         with caplog.at_level(logging.WARNING):
-            levels.configure(None, {'vigil.test.other': 'LOUD', SSH: 'DEBUG'})
+            levels.configure(None, {'x_monitor.test.other': 'LOUD', SSH: 'DEBUG'})
         assert logging.getLogger(SSH).level == logging.DEBUG
         assert "unknown log level 'LOUD'" in caplog.text
 
-    def test_known_loggers_are_vigils(self):
+    def test_known_loggers_are_x_monitors(self):
         known = LogLevels.known_loggers()
         assert SSH in known
-        assert all(n == 'asyncssh' or n.startswith('vigil') for n in known)
+        assert all(n == 'asyncssh' or n.startswith('x_monitor') for n in known)
 
 
 class TestConfigFile:
@@ -164,8 +164,8 @@ def _engine(tmp_path, logging_cfg=None, **kwargs):
     cfg = tmp_path / 'config.yaml'
     cfg.write_text(yaml.dump({'database': {'path': str(tmp_path / 't.db')}, 'plugins': [],
                               'logging': logging_cfg or {}}))
-    with patch('vigil.core.connectors.engine.SSHConnection'):
-        return VigilEngine(str(cfg), **kwargs)
+    with patch('x_monitor.core.connectors.engine.SSHConnection'):
+        return XMonitorEngine(str(cfg), **kwargs)
 
 
 class TestEngine:

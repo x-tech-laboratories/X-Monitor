@@ -8,9 +8,9 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from vigil.__main__ import main, token_command
-from vigil.core.ui.auth import acting_client, register_auth
-from vigil.core.ui.tokens import (
+from x_monitor.__main__ import main, token_command
+from x_monitor.core.ui.auth import acting_client, register_auth
+from x_monitor.core.ui.tokens import (
     ApiToken, TokenRegistry, bearer_token, build_tokens, config_snippet, hash_token, new_token,
 )
 
@@ -117,7 +117,7 @@ class TestBuildTokens:
         {"name": "a", "scope": "read", "token_hash": "md5:" + "0" * 32},
         {"name": "a", "scope": "read"},
         {"name": "a", "scope": "read", "token": "short"},
-        {"name": "a", "scope": "read", "token_file": "/nonexistent/vigil-token"},
+        {"name": "a", "scope": "read", "token_file": "/nonexistent/x-monitor-token"},
         "not-a-mapping",
     ])
     def test_an_unusable_entry_is_skipped(self, entry):

@@ -1,5 +1,5 @@
 import pytest
-from vigil.plugins.base.plugin_helpers import parse_duration, format_duration, format_age
+from x_monitor.plugins.base.plugin_helpers import parse_duration, format_duration, format_age
 
 
 class TestParseDuration:

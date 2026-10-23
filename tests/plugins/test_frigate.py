@@ -1,11 +1,12 @@
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.frigate import Frigate, _parse_config, _parse_response
-from vigil.core.connectors.types import HttpRequest, HttpResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.frigate import Frigate, _parse_config, _parse_response
+from x_monitor.core.connectors.types import HttpRequest, HttpResult, IoActionPlan
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -275,3 +276,171 @@ class TestFrigateCollection:
 class TestFrigateActions:
     async def test_on_action_always_returns_none(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestRecordingsSyncActions:
+    """Frigate 0.18 made recordings reconciliation an on-demand job. Preview runs
+    it as a dry run; Sync runs it for real; both wait for the job's result."""
+
+    def _response(self, status_code, payload=None, text=""):
+        return MagicMock(status_code=status_code,
+                         json=MagicMock(return_value=payload or {}), text=text)
+
+    def _job(self, status, recordings=None, error_message=None):
+        results = {'recordings': recordings} if recordings is not None else None
+        return self._response(200, {'job': {'id': 'abc123', 'status': status,
+                                            'results': results,
+                                            'error_message': error_message}})
+
+    def _run(self, plugin, action_id, post, gets):
+        with patch('x_monitor.plugins.frigate.requests.post', return_value=post) as p_post, \
+             patch('x_monitor.plugins.frigate.requests.get', side_effect=gets), \
+             patch('x_monitor.plugins.frigate.time.sleep'):
+            outcome = plugin.interpret_action(action_id, plugin.plan_action(action_id).call())
+        return outcome, p_post
+
+    _QUEUED = {'job': {'id': 'abc123', 'status': 'queued'}}
+
+    async def test_both_actions_are_listed(self, plugin):
+        ids = [a['action_id'] for a in plugin.get_actions()]
+        assert ids == ['preview_recordings_sync', 'sync_recordings']
+
+    async def test_unknown_action_is_not_planned(self, plugin):
+        assert plugin.plan_action('anything') is None
+
+    async def test_plans_are_io_actions(self, plugin):
+        assert isinstance(plugin.plan_action('preview_recordings_sync'), IoActionPlan)
+        assert isinstance(plugin.plan_action('sync_recordings'), IoActionPlan)
+
+    async def test_preview_is_a_dry_run_and_reports_what_it_found(self, plugin):
+        rec = {'files_checked': 40, 'orphans_found': 3, 'orphans_deleted': 0, 'aborted': False}
+        outcome, post = self._run(plugin, 'preview_recordings_sync',
+                                  self._response(202, self._QUEUED),
+                                  [self._job('running'), self._job('success', rec)])
+        assert outcome.success is True
+        assert '3 orphaned recordings in 40 checked; nothing changed' in outcome.logs[0][0]
+        assert post.call_args[0][0] == "http://frigate.test:5000/api/media/sync"
+        assert post.call_args[1]['json'] == {'media_types': ['recordings'],
+                                             'dry_run': True, 'force': False}
+
+    async def test_sync_is_a_real_run_and_never_forced(self, plugin):
+        rec = {'files_checked': 40, 'orphans_found': 3, 'orphans_deleted': 3, 'aborted': False}
+        outcome, post = self._run(plugin, 'sync_recordings',
+                                  self._response(202, self._QUEUED),
+                                  [self._job('success', rec)])
+        assert outcome.success is True
+        assert 'removed 3 of 3' in outcome.logs[0][0]
+        assert post.call_args[1]['json'] == {'media_types': ['recordings'],
+                                             'dry_run': False, 'force': False}
+
+    async def test_safety_threshold_abort_fails(self, plugin):
+        rec = {'files_checked': 40, 'orphans_found': 39, 'orphans_deleted': 0, 'aborted': True}
+        outcome, _ = self._run(plugin, 'sync_recordings', self._response(202, self._QUEUED),
+                               [self._job('success', rec)])
+        assert outcome.success is False
+        assert 'safety threshold' in outcome.logs[0][0]
+
+    async def test_failed_job_fails_with_its_reason(self, plugin):
+        outcome, _ = self._run(plugin, 'sync_recordings', self._response(202, self._QUEUED),
+                               [self._job('failed', error_message='disk on fire')])
+        assert outcome.success is False
+        assert 'disk on fire' in outcome.logs[0][0]
+
+    async def test_job_already_running_is_not_a_fault(self, plugin):
+        outcome, _ = self._run(plugin, 'sync_recordings',
+                               self._response(409, {"error": "already running"}), [])
+        assert outcome.success is True
+        assert 'already running' in outcome.logs[0][0]
+
+    async def test_rejected_request_fails(self, plugin):
+        outcome, _ = self._run(plugin, 'sync_recordings', self._response(500, text="boom"), [])
+        assert outcome.success is False
+
+    async def test_job_outlasting_the_timeout_is_reported_not_failed(self, plugin):
+        plugin.sync_timeout = 0
+        outcome, _ = self._run(plugin, 'preview_recordings_sync',
+                               self._response(202, self._QUEUED), [])
+        assert outcome.success is True
+        assert 'still running' in outcome.logs[0][0]
+
+    async def test_unreachable_api_fails(self, plugin):
+        import requests as _requests
+        with patch('x_monitor.plugins.frigate.requests.post',
+                   side_effect=_requests.RequestException("boom")):
+            outcome = plugin.interpret_action(
+                'sync_recordings', plugin.plan_action('sync_recordings').call())
+        assert outcome.success is False
+
+    async def test_missing_api_url_fails(self, make_plugin):
+        p = make_plugin(Frigate, {"name": "f", "id": "f", "ssh_config": {"host": "h"}})
+        outcome = p.interpret_action(
+            'sync_recordings', p.plan_action('sync_recordings').call())
+        assert outcome.success is False
+
+
+class TestUiSpec:
+    async def test_armed_and_disarmed_cameras_are_one_share(self, plugin):
+        spec = plugin.UI_SPEC
+        card = spec['cards']['armed_card']
+        assert card['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in card['parts']] == [
+            ('cameras_armed', 'online'), ('cameras_disarmed', 'neutral')]
+        assert 'disarmed_card' not in spec['cards']
+        assert all('disarmed_card' not in row for row in spec['layout'])
+
+
+class TestCameraSnapshot:
+    async def test_each_watched_camera_is_one_item_with_its_fps_against_its_target(
+            self, plugin, run_requests):
+        run_requests(plugin, _responder(
+            stats=_stats(cameras={"front_door": _camera_stats(camera_fps=4.9),
+                                  "yard": _camera_stats(camera_fps=5.0)}),
+            config=_config(cameras={"front_door": _camera_config(fps=10),
+                                    "yard": _camera_config(fps=5)})))
+        items = plugin.data.latest_snapshot()
+        assert [item["label"] for item in items] == ["front_door", "yard"]
+        front_door = items[0]
+        assert front_door["fps"] == 4.9
+        assert front_door["target_fps"] == 10.0
+        assert front_door["fps_pct"] == pytest.approx(49.0)
+        assert front_door["state"] == "degraded"
+        assert items[1]["state"] == "healthy"
+
+    async def test_camera_without_a_configured_fps_is_measured_against_five(
+            self, plugin, run_requests):
+        run_requests(plugin, _responder(
+            config=_config(cameras={"front_door": {"enabled": True}})))
+        item = plugin.data.latest_snapshot()[0]
+        assert item["target_fps"] is None
+        assert item["fps_pct"] == pytest.approx(100.0)
+
+    async def test_unwatched_cameras_are_left_out(self, make_plugin, run_requests):
+        p = make_plugin(Frigate, {**BASE_CFG, "cameras": ["yard"]})
+        run_requests(p, _responder(
+            stats=_stats(cameras={"front_door": _camera_stats(), "yard": _camera_stats()}),
+            config=_config(cameras={"front_door": _camera_config(), "yard": _camera_config()})))
+        assert [item["label"] for item in p.data.latest_snapshot()] == ["yard"]
+
+
+class TestCameraBars:
+    async def test_camera_bars_meter_each_camera_against_its_target(self, plugin):
+        spec = plugin.UI_SPEC
+        repeat = spec['cards']['camera_bars']['repeat']
+        assert repeat['source'] == 'snapshot'
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_value'] == 'fps_pct'
+        assert repeat['bar_max'] == 100
+        assert repeat['bar_marker'] == pytest.approx(80.0)
+        assert any('camera_bars' in row for row in spec['layout'])
+
+    async def test_camera_value_reads_in_fps_and_disarmed_says_so(self, plugin):
+        format_item = plugin.UI_SPEC['cards']['camera_bars']['repeat']['item_format_fn']
+        assert format_item({"fps": 4.94, "state": "healthy"}) == "4.9 fps"
+        assert format_item({"fps": 0.0, "state": "disarmed"}) == "disarmed"
+
+    async def test_camera_color_warns_when_slow_and_fails_when_stalled(self, plugin):
+        color_item = plugin.UI_SPEC['cards']['camera_bars']['repeat']['item_color_by']
+        assert color_item({"state": "healthy"}) == "online"
+        assert color_item({"state": "degraded"}) == "warning"
+        assert color_item({"state": "stalled"}) == "failed"
+        assert color_item({"state": "disarmed"}) is None

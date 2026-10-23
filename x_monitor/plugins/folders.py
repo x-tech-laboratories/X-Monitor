@@ -1,0 +1,124 @@
+"""Sizes of configured folders, measured with one `du -sb` per folder over
+SSH (with a single folder that one command is agent-sampled; more than one
+keeps the poll, since only single-command plugins form a sample stream).
+Config: folders (list of {path, warning, threshold} with limits in GB) and
+timeout for each du. A folder at or above its own warning or threshold makes
+the status warning or failed; a du timeout, failure, or unparseable output
+means that folder went unmeasured, which reads as unavailable unless another
+folder measured worse."""
+
+from typing import Dict, Any, List
+from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors.types import CmdResult, CollectResult, Command, Status
+from x_monitor.plugins.base.plugin_helpers import format_bytes
+from x_monitor.plugins.base.disk_usage import du_command, parse_du, path_key
+
+
+_DEFAULT_LAYOUT = [
+    ['host_card', 'count_card'],
+    ['folders'],
+    ['events'],
+]
+
+
+class Folders(Plugin):
+    def __init__(self, name: str, config: Dict[str, Any]):
+        super().__init__(name, config)
+        self.folders = config.get('folders', []) or []
+        self.du_timeout = int(config.get('timeout', 60))
+
+        self._by_key = {path_key(f.get('path', '')): f for f in self.folders if f.get('path')}
+
+    def _level_for(self, gb: float, folder: Dict[str, Any]) -> str:
+        threshold = folder.get('threshold')
+        warning = folder.get('warning')
+        if threshold is not None and gb >= float(threshold):
+            return 'failed'
+        if warning is not None and gb >= float(warning):
+            return 'warning'
+        return 'online'
+
+    def _valid_folders(self) -> List[Dict[str, Any]]:
+        return [f for f in self.folders if f.get('path')]
+
+    SAMPLED = True
+
+    def commands(self) -> List[Command]:
+        return [
+            Command(du_command(folder['path'], self.du_timeout))
+            for folder in self._valid_folders()
+        ]
+
+    def parse(self, results: List[CmdResult]) -> CollectResult:
+        if not self.folders:
+            return CollectResult.unavailable("No folders configured")
+
+        folders = self._valid_folders()
+
+        worst_level = 'online'
+        worst_gb = 0.0
+        any_error = False
+        metrics: Dict[str, float] = {}
+        logs: List[tuple] = []
+
+        for folder, result in zip(folders, results):
+            path = folder['path']
+            size_bytes, error = parse_du(result, self.du_timeout)
+            if size_bytes is None:
+                logs.append((f"{path}: {error}", "ERROR"))
+                any_error = True
+                continue
+
+            gb = size_bytes / (1024 ** 3)
+            metrics[f'folder_{path_key(path)}_gb'] = gb
+            level = self._level_for(gb, folder)
+            worst_gb = max(worst_gb, gb)
+            if Status(level).severity > Status(worst_level).severity:
+                worst_level = level
+            logs.append((
+                f"{path}: {format_bytes(gb)}",
+                Status(level).log_level,
+            ))
+
+        metrics['worst_folder_gb'] = worst_gb
+
+        status = worst_level
+        if any_error and Status('unavailable').severity > Status(worst_level).severity:
+            status = 'unavailable'
+        return CollectResult(metrics=metrics, logs=logs, status=status)
+
+    def _item_color(self, item: Dict[str, Any]) -> str:
+        gb = item.get('value') or 0.0
+        folder = self._by_key.get(item.get('key', ''), {})
+        threshold = folder.get('threshold')
+        warning = folder.get('warning')
+        if threshold is not None and gb >= float(threshold):
+            return 'failed'
+        if warning is not None and gb >= float(warning):
+            return 'warning'
+        return 'online'
+
+    @property
+    def UI_SPEC(self):
+        return {
+            'layout': _DEFAULT_LAYOUT,
+            'cards': {
+                'count_card': {'title': 'FOLDERS', 'value': str(len(self.folders))},
+                'folders': {
+                    'title': 'SIZES',
+                    'repeat': {
+                        'source': 'metrics_prefix',
+                        'metrics_prefix': 'folder_', 'metrics_suffix': '_gb',
+                        'metrics_exclude': ['worst_folder_gb'],
+                        'item_format': 'bytes_gb',
+                        'item_color_by': self._item_color,
+                        'label_transform': 'slashes',
+                        'container': 'bars',
+                        'bar_max': 'largest',
+                        'empty_text': 'No folders configured',
+                    },
+                },
+            },
+            'events': True,
+        }
+

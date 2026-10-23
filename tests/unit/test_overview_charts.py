@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from vigil.core.ui.views.overview import (
+from x_monitor.core.ui.views.overview import (
     _build_chart_counts, _collect_leaf_monitors, _treemap_options, _treemap_tiles,
     _worst_status,
 )
@@ -18,7 +18,7 @@ class TestChartCounts:
         monitors = [_monitor('a', 'cpu'), _monitor('b', 'cpu'), _monitor('c', 'zfs')]
         statuses = {'a': 'online', 'b': 'failed', 'c': 'online'}
         status_counts, _ = _build_chart_counts(monitors, statuses)
-        assert status_counts == {'online': 2, 'failed': 1, 'warning': 0, 'unavailable': 0}
+        assert status_counts == {'online': 2, 'info': 0, 'failed': 1, 'warning': 0, 'unavailable': 0}
 
     def test_each_type_is_broken_down_by_status(self):
         monitors = [_monitor('a', 'cpu'), _monitor('b', 'cpu'), _monitor('c', 'zfs')]

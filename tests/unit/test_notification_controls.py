@@ -1,14 +1,15 @@
 """The dashboard's notification controls, rendered in a real NiceGUI client."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 from nicegui import ui
 from nicegui.testing import User
 
-from vigil.core.connectors.agent_connector import AgentRegistry
-from vigil.core.notifications import NotificationEngine
-from vigil.core.ui.views.notifications import open_notifications_dialog, render_mute_button
+from x_monitor.core.connectors.agent_connector import AgentRegistry
+from x_monitor.core.notifications import NotificationEngine
+from x_monitor.core.ui.views.notifications import open_notifications_dialog, render_mute_button
 
 pytest_plugins = ['nicegui.testing.user_plugin']
 pytestmark = pytest.mark.nicegui_main_file(None)
@@ -65,33 +66,62 @@ async def _started(notifications):
     notifications.start([notifications.group])
 
 
-class TestMuteButton:
-    async def test_toggles_the_monitors_mute(self, user: User, notifications, pages):
+def _button(user: User, label='Notifications'):
+    return next(iter(user.find(kind=ui.button, content=label).elements))
+
+
+def _pressed(button) -> bool:
+    return 'halon-button-active' in button.classes and button.props.get('aria-pressed') == 'true'
+
+
+async def _shows_pressed(user: User, pressed: bool) -> None:
+    """Waits for the re-rendered button to show the state, which lands a moment after the click."""
+    for _ in range(50):
+        if _pressed(_button(user)) == pressed:
+            return
+        await asyncio.sleep(0.01)
+    assert _pressed(_button(user)) == pressed
+
+
+class TestNotificationsToggle:
+    async def test_releasing_and_pressing_mutes_and_unmutes(self, user: User, notifications, pages):
         await _started(notifications)
         await user.open('/nas')
-        user.find('Mute').click()
+        await user.should_see('Notifications')
+        assert _pressed(_button(user))
+        user.find(kind=ui.button, content='Notifications').click()
+        await user.should_see('Nas muted')
         assert notifications.muted_by('nas') == 'nas'
-        await user.should_see('Unmute')
-        user.find('Unmute').click()
+        await _shows_pressed(user, False)
+        user.find(kind=ui.button, content='Notifications').click()
+        await user.should_see('Nas unmuted')
         assert notifications.muted_by('nas') is None
-        await user.should_see('Mute')
+        await _shows_pressed(user, True)
 
-    async def test_a_monitor_muted_by_its_group_says_so(self, user: User, notifications, pages):
+    async def test_a_muted_monitor_shows_it_released(self, user: User, notifications, pages):
+        await _started(notifications)
+        notifications.set_muted('nas', True)
+        await user.open('/nas')
+        await user.should_see('Notifications')
+        assert not _pressed(_button(user))
+
+    async def test_a_monitor_muted_by_its_group_says_so_and_cannot_be_pressed(self, user: User, notifications, pages):
         await _started(notifications)
         notifications.set_muted('storage', True)
         await user.open('/nas')
         await user.should_see('Muted by Storage')
+        assert not _button(user, 'Muted by Storage').enabled
 
     async def test_no_channels_means_no_button(self, user: User, notifications, pages):
         notifications.channels = {}
         await user.open('/nas')
-        await user.should_not_see('Mute')
+        await user.should_not_see('Notifications')
 
 
 class TestMaintenance:
     def _window(self, notifications, **extra):
         from datetime import datetime, timedelta
-        from vigil.core.notifications.maintenance import window
+        from x_monitor.core.notifications.maintenance import window
         now = datetime.now()
         notifications.windows = [window({'name': 'Upgrades', 'start': (now - timedelta(hours=1)).isoformat(),
                                          'end': (now + timedelta(hours=1)).isoformat(), **extra}),
@@ -103,7 +133,7 @@ class TestMaintenance:
         self._window(notifications)
         await user.open('/nas')
         await user.should_see('In maintenance: Upgrades')
-        await user.should_see('Mute')
+        await user.should_see('Notifications')
 
     async def test_the_dialog_lists_windows_and_which_are_active(self, user: User, notifications, pages):
         await _started(notifications)

@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
-from vigil.core.connectors.types import (
+from x_monitor.core.connectors.types import (
     CmdResult, CollectResult, DnsResult, HttpResult, PingResult, Status, unreachable,
 )
-from vigil.core.coordination.engine import _settle
+from x_monitor.core.coordination.engine import _settle
 
 
 @dataclass
@@ -15,6 +15,11 @@ class TestStatusLadder:
     def test_unavailable_ranks_between_online_and_warning(self):
         assert Status.worst(['online', 'unavailable']) == Status.UNAVAILABLE
         assert Status.worst(['unavailable', 'warning']) == Status.WARNING
+
+    def test_info_ranks_between_online_and_unavailable(self):
+        assert Status.worst(['online', 'info']) == Status.INFO
+        assert Status.worst(['info', 'unavailable']) == Status.UNAVAILABLE
+        assert Status.INFO.log_level == 'INFO'
 
     def test_the_old_offline_name_reads_as_unavailable(self):
         assert Status('offline') is Status.UNAVAILABLE

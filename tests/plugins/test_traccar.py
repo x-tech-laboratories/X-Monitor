@@ -3,9 +3,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from vigil.plugins.traccar import Traccar, _age_hours
-from vigil.core.connectors.types import HttpRequest, HttpResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.traccar import Traccar, _age_hours
+from x_monitor.core.connectors.types import HttpRequest, HttpResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 pytestmark = pytest.mark.asyncio
 
@@ -14,7 +14,7 @@ BASE_CFG = {
     "name": "test-traccar",
     "id":   "test-traccar",
     "api_url": "http://traccar.test:8082",
-    "username": "vigil",
+    "username": "x-monitor",
     "password": "hunter2",
     "stale_warning": 24,
     "stale_threshold": 72,
@@ -75,10 +75,10 @@ class TestRequests:
         assert len(reqs) == 1
         assert isinstance(reqs[0], HttpRequest)
         assert reqs[0].url == "http://traccar.test:8082/api/devices"
-        assert reqs[0].auth == ("vigil", "hunter2")
+        assert reqs[0].auth == ("x-monitor", "hunter2")
 
     def test_no_url_yields_no_requests(self, make_plugin):
-        p = make_plugin(Traccar, {"name": "t", "id": "t", "username": "vigil",
+        p = make_plugin(Traccar, {"name": "t", "id": "t", "username": "x-monitor",
                                   "ssh_config": {"host": "h"}})
         assert p.requests() == []
 
@@ -139,3 +139,65 @@ class TestTraccarCollection:
 class TestTraccarActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestDeviceSnapshot:
+    async def test_each_watched_device_is_one_item_with_its_age(self, plugin, run_requests):
+        _run(plugin, run_requests, [_device(name="Tablet", hours_ago=30.0),
+                                    _device(name="Phone", hours_ago=0.2),
+                                    _device(name="Old", hours_ago=900.0, disabled=True)])
+        items = plugin.data.latest_snapshot()
+        assert [item["label"] for item in items] == ["Phone", "Tablet"]
+        assert items[0]["age_hours"] == pytest.approx(0.2, abs=0.01)
+        assert items[0]["state"] == "online"
+        assert items[1]["state"] == "warning"
+
+    async def test_device_past_the_stale_threshold_or_never_reporting_is_failed(
+            self, plugin, run_requests):
+        _run(plugin, run_requests, [_device(name="Lost", hours_ago=100.0),
+                                    {"name": "NoFix", "disabled": False, "lastUpdate": None}])
+        items = {item["label"]: item for item in plugin.data.latest_snapshot()}
+        assert items["Lost"]["state"] == "failed"
+        assert items["NoFix"]["state"] == "failed"
+        assert items["NoFix"]["age_hours"] is None
+
+
+class TestDeviceBars:
+    async def test_device_bars_fill_to_twice_the_stale_threshold(self, plugin):
+        spec = plugin.UI_SPEC
+        repeat = spec['cards']['device_bars']['repeat']
+        assert repeat['source'] == 'snapshot'
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_value'] == 'age_hours'
+        assert repeat['bar_max'] == 144.0
+        assert repeat['bar_marker'] == 50.0
+        assert repeat['item_color_by']({"state": "warning"}) == "warning"
+        assert any('device_bars' in row for row in spec['layout'])
+
+    async def test_device_age_reads_in_minutes_then_hours(self, plugin):
+        format_item = plugin.UI_SPEC['cards']['device_bars']['repeat']['item_format_fn']
+        assert format_item({"age_hours": 0.2}) == "12 min"
+        assert format_item({"age_hours": 8.44}) == "8.4 h"
+        assert format_item({"age_hours": None}) == "never"
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_requests):
+        p = make_plugin(Traccar, {**BASE_CFG, "stale_threshold": None})
+        _run(p, run_requests, [_device(hours_ago=500.0)])
+        assert _latest_status() == "warning"
+        assert p.data.latest_snapshot()[0]["state"] == "warning"
+        assert p.UI_SPEC['cards']['device_bars']['repeat']['bar_max'] == 48.0
+
+    async def test_failure_only_never_warns(self, make_plugin, run_requests):
+        p = make_plugin(Traccar, {**BASE_CFG, "stale_warning": None})
+        _run(p, run_requests, [_device(hours_ago=30.0)])
+        assert _latest_status() == "online"
+        _run(p, run_requests, [_device(hours_ago=100.0)])
+        assert _latest_status() == "failed"
+
+    async def test_both_off_stays_online_and_bars_keep_a_scale(self, make_plugin, run_requests):
+        p = make_plugin(Traccar, {**BASE_CFG, "stale_warning": None, "stale_threshold": None})
+        _run(p, run_requests, [_device(hours_ago=500.0)])
+        assert _latest_status() == "online"
+        assert p.UI_SPEC['cards']['device_bars']['repeat']['bar_max'] == 168.0

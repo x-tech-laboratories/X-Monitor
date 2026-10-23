@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from vigil.core.ui.components import _substitute, form_options, form_values
+from x_monitor.core.ui.components import _substitute, form_options, form_values
 
 
 class TestFormOptions:

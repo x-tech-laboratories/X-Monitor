@@ -5,13 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from vigil.core.connectors.agent_connector import AgentConnection, AgentRegistry
-from vigil.core.notifications import NotificationEngine, build_channels, monitor_url
-from vigil.core.notifications.channels import DesktopChannel, Message
-from vigil.core.notifications.rules import (
+from x_monitor.core.connectors.agent_connector import AgentConnection, AgentRegistry
+from x_monitor.core.notifications import NotificationEngine, build_channels, monitor_url
+from x_monitor.core.notifications.channels import DesktopChannel, Message
+from x_monitor.core.notifications.rules import (
     FLAPPING, PROBLEM, RECOVERED, REMINDER, SETTLED, Alert, Rule, Tracker, resolve_rules,
 )
-from vigil_agent import protocol as proto
+from x_monitor_agent import protocol as proto
 
 
 def _plugin(plugin_id, children=(), type_='cpu', **config):
@@ -56,6 +56,14 @@ class TestResolveRules:
     def test_no_channels_means_no_rules(self):
         assert resolve_rules([_plugin('a')], {}, []) == {}
 
+    def test_a_group_passes_its_settings_only_to_what_it_defines_not_what_it_links(self):
+        cpu = _plugin('cpu')
+        host = _plugin('host', [cpu], type_='group', notify={'after': 2})
+        domain = _plugin('compute', [cpu], type_='group', notify=False)
+        domain.links = {'cpu': 'Host'}
+        rules = resolve_rules([host, domain], {}, ['desk'])
+        assert rules['cpu'].after == 2
+
 
 class TestTracker:
     def _tracker(self, **rule):
@@ -81,6 +89,15 @@ class TestTracker:
         t = self._tracker(on=frozenset({'failed', 'unavailable'}))
         assert t.observe('m', 'unavailable', 0) == Alert(PROBLEM, 'unavailable', 0)
         assert t.observe('m', 'online', 1) == Alert(RECOVERED, 'online', 0)
+
+    def test_info_ends_a_problem_like_online(self):
+        t = self._tracker()
+        assert t.observe('m', 'failed', 0) == Alert(PROBLEM, 'failed', 0)
+        assert t.observe('m', 'info', 1) == Alert(RECOVERED, 'info', 0)
+
+    def test_info_is_not_a_status_a_rule_can_notify_on(self):
+        rules = resolve_rules([_plugin('a', notify={'on': ['failed', 'info']})], {}, ['desk'])
+        assert rules['a'].on == frozenset({'failed'})
 
     def test_statuses_outside_on_are_ignored(self):
         t = self._tracker()
@@ -192,8 +209,8 @@ async def _drain():
 class TestEngine:
     @pytest.fixture
     def engine(self, db_manager, monkeypatch):
-        monkeypatch.setattr('vigil.core.notifications.RETRY_DELAYS', (0, 0))
-        eng = NotificationEngine(db_manager, {'base_url': 'https://vigil.lan/'}, AgentRegistry())
+        monkeypatch.setattr('x_monitor.core.notifications.RETRY_DELAYS', (0, 0))
+        eng = NotificationEngine(db_manager, {'base_url': 'https://x-monitor.lan/'}, AgentRegistry())
         eng.channels = {'desk': RecordingChannel()}
         yield eng
         eng.stop()
@@ -207,7 +224,7 @@ class TestEngine:
         [message] = engine.channels['desk'].sent
         assert message.title == 'Nas is failed'
         assert message.body == 'Pool tank is DEGRADED\nHost: host.lan'
-        assert message.url == 'https://vigil.lan/monitor/nas'
+        assert message.url == 'https://x-monitor.lan/monitor/nas'
         assert (message.monitor_name, message.host) == ('Nas', 'host.lan')
         assert message.timestamp > 0
         assert message.key == 'failed'
@@ -216,6 +233,14 @@ class TestEngine:
         await _drain()
         assert engine.channels['desk'].sent[-1].title == 'Nas recovered'
         assert engine.channels['desk'].sent[-1].key == 'recovered'
+
+    async def test_a_recovery_into_info_reads_as_recovered(self, engine, db_manager):
+        engine.start([_plugin('nas')])
+        db_manager.insert_status('nas', 'failed')
+        await _drain()
+        db_manager.insert_status('nas', 'info')
+        await _drain()
+        assert engine.channels['desk'].sent[-1].title == 'Nas recovered'
 
     async def test_a_status_held_before_restart_is_not_announced(self, engine, db_manager):
         db_manager.insert_status('nas', 'failed')
@@ -289,6 +314,17 @@ class TestEngine:
         assert self._titles(engine) == []
         assert [p.id for p in engine.muted_monitors()] == ['storage']
 
+    async def test_muting_a_group_mutes_what_it_only_links_to(self, engine, db_manager):
+        nas = _plugin('nas')
+        host = _plugin('host', [nas], type_='group')
+        storage = _plugin('storage', [nas], type_='group')
+        storage.links = {'nas': 'Host'}
+        engine.start([host, storage])
+        engine.set_muted('storage', True)
+        assert engine.muted_by('nas') == 'storage'
+        await self._set(db_manager, 'failed')
+        assert self._titles(engine) == []
+
     async def test_a_problem_held_before_restart_still_announces_its_recovery(
             self, engine, db_manager):
         db_manager.insert_status('nas', 'failed')
@@ -298,7 +334,7 @@ class TestEngine:
 
     def _window_now(self, engine, **extra):
         from datetime import datetime, timedelta
-        from vigil.core.notifications.maintenance import window
+        from x_monitor.core.notifications.maintenance import window
         now = datetime.now()
         engine.windows = [window({'name': 'Upgrades', 'start': (now - timedelta(hours=1)).isoformat(),
                                   'end': (now + timedelta(hours=1)).isoformat(), **extra})]
@@ -334,7 +370,7 @@ class TestEngine:
         assert self._titles(engine) == ['Web is failed']
 
     async def test_flapping_and_settling_messages(self, engine, db_manager):
-        from vigil.core.notifications.rules import Rule
+        from x_monitor.core.notifications.rules import Rule
         engine.start([_plugin('nas')])
         engine._tracker.rules['nas'] = Rule(('desk',), flap_changes=2, flap_window=3600)
         await self._set(db_manager, 'failed', 'online')
@@ -342,7 +378,7 @@ class TestEngine:
         assert 'holds steady for 1 Hour' in engine.channels['desk'].sent[-1].body
 
     async def test_notifications_arriving_together_go_as_one_digest(self, db_manager, monkeypatch):
-        monkeypatch.setattr('vigil.core.notifications.RETRY_DELAYS', (0, 0))
+        monkeypatch.setattr('x_monitor.core.notifications.RETRY_DELAYS', (0, 0))
         eng = NotificationEngine(db_manager, {'base_url': 'https://v', 'group_window': 1},
                                  AgentRegistry())
         eng.channels = {'desk': RecordingChannel()}
@@ -361,7 +397,7 @@ class TestEngine:
         await asyncio.sleep(1.1)
         [(messages, summary)] = batches
         assert [m.monitor_id for m in messages] == ['nas', 'web']
-        assert summary.title == 'Vigil: 2 failed'
+        assert summary.title == 'X-Monitor: 2 failed'
         assert summary.body == '• Nas is failed\n• Web is failed'
         assert summary.url == 'https://v'
         eng.stop()
@@ -395,7 +431,7 @@ class FakeSocket:
 
 def _registry(caps=('notify',)):
     registry = AgentRegistry()
-    registry.configure([{'id': 'desktop', 'token': 't'}])
+    registry.configure([{'id': 'desktop'}])
     socket = FakeSocket()
     registry.get('desktop').attach(socket, {'caps': list(caps)})
     return registry, socket
@@ -408,7 +444,7 @@ class TestDesktopChannel:
         await channel.send(Message('Nas is failed', 'why', 'failed', PROBLEM, 'nas', 'https://v/monitor/nas'))
         assert socket.sent == [{'t': 'notify', 'title': 'Nas is failed', 'body': 'why',
                                 'urgency': 'critical', 'url': 'https://v/monitor/nas',
-                                'icon': 'vigil', 'key': 'nas', 'timeout': 30}]
+                                'icon': 'x-monitor', 'key': 'nas', 'timeout': 30}]
 
     async def test_the_timeout_can_be_changed_or_turned_off(self):
         for setting, expected in (('2m', 120), (0, None)):
@@ -441,7 +477,7 @@ class TestDesktopChannel:
             ('dialog-warning', 'normal'), ('dialog-warning', 'low')]
 
     async def test_a_batch_becomes_one_group_notification_that_shrinks_and_closes(self):
-        from vigil.core.notifications.channels import digest
+        from x_monitor.core.notifications.channels import digest
         registry, socket = _registry(caps=('notify', 'dismiss'))
         channel = DesktopChannel('desk', {'agent': 'desktop'}, registry)
         failed = [Message(f'{n} is failed', 'b', 'failed', PROBLEM, n, None, n, '', 100.0)
@@ -449,21 +485,21 @@ class TestDesktopChannel:
         await channel.send_batch(failed, digest(failed, 'https://v'))
         [group] = socket.sent
         assert group['key'] == 'group:nas:100'
-        assert group['title'] == 'Vigil: 3 failed'
+        assert group['title'] == 'X-Monitor: 3 failed'
         assert group['url'] == 'https://v'
 
         await channel.send(Message('nas recovered', 'b', 'online', RECOVERED, 'nas'))
-        assert (socket.sent[-1]['key'], socket.sent[-1]['title']) == ('group:nas:100', 'Vigil: 2 failed')
+        assert (socket.sent[-1]['key'], socket.sent[-1]['title']) == ('group:nas:100', 'X-Monitor: 2 failed')
         await channel.send(Message('web is still failed', 'b', 'failed', REMINDER, 'web'))
         assert [(f['t'], f.get('title')) for f in socket.sent[-2:]] == [
-            ('notify', 'Vigil: 1 failed'), ('notify', 'web is still failed')]
+            ('notify', 'X-Monitor: 1 failed'), ('notify', 'web is still failed')]
         await channel.send(Message('dns recovered', 'b', 'online', RECOVERED, 'dns'))
         assert socket.sent[-1] == {'t': 'dismiss', 'key': 'group:nas:100'}
         await channel.send(Message('web recovered', 'b', 'online', RECOVERED, 'web'))
         assert socket.sent[-1] == {'t': 'dismiss', 'key': 'web'}
 
     async def test_a_batch_with_one_problem_shows_it_on_its_own(self):
-        from vigil.core.notifications.channels import digest
+        from x_monitor.core.notifications.channels import digest
         registry, socket = _registry(caps=('notify', 'dismiss'))
         channel = DesktopChannel('desk', {'agent': 'desktop'}, registry)
         batch = [Message('nas is failed', 'b', 'failed', PROBLEM, 'nas'),
@@ -504,7 +540,7 @@ class TestTestEndpoint:
     def _client(self, send_test):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from vigil.core.ui.api import register_api
+        from x_monitor.core.ui.api import register_api
 
         notifications = SimpleNamespace(channels={'desk': object()}, send_test=send_test)
         engine = SimpleNamespace(plugins=[], db=SimpleNamespace(), notifications=notifications)

@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.wifi import Wifi
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.wifi import Wifi
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-wifi", "id": "test-wifi", "ssh_config": {"host": "test.host"}}
 
@@ -42,7 +42,7 @@ def plugin(make_plugin):
     return make_plugin(Wifi, CFG)
 
 
-from vigil.plugins.wifi import _parse_wireless, _strongest_interface
+from x_monitor.plugins.wifi import _parse_wireless, _strongest_interface
 
 
 class TestParseWireless:
@@ -88,3 +88,29 @@ class TestCollection:
         run_cycle(plugin, lambda c: CmdResult(1, "", "cat: /proc/net/wireless: No such file"))
         assert _latest_status() == "unavailable"
         assert _latest_metric("link_quality") is None
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Wifi, dict(CFG, quality_threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _make_wireless({"wlan0": (0, -95)}), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Wifi, dict(CFG, quality_warning=None))
+        run_cycle(p, lambda c: CmdResult(0, _make_wireless({"wlan0": (30, -75)}), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _make_wireless({"wlan0": (20, -85)}), ""))
+        assert _latest_status() == "failed"
+
+    async def test_the_gauge_colour_follows_the_limits_that_are_on(self, make_plugin):
+        p = make_plugin(Wifi, dict(CFG, quality_warning=None, quality_threshold=None))
+        assert p._quality_color(0.0) == "online"
+
+
+class TestUiSpec:
+    def test_link_quality_is_a_gauge_with_the_floor_coloring(self, plugin):
+        card = plugin.UI_SPEC['cards']['quality_card']
+        assert card['kind'] == 'gauge'
+        assert card['max'] == 70.0
+        assert card['color'] == plugin._quality_color

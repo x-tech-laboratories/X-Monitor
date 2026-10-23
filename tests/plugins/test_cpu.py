@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.cpu import Cpu
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.cpu import Cpu
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-cpu", "id": "test-cpu", "ssh_config": {"host": "test.host"}}
 
@@ -112,10 +112,10 @@ class TestPerCore:
         assert _latest_status() == "failed"
         assert "busiest core 0 at 100%" in result.logs[0][0]
 
-    async def test_the_core_rule_needs_both_bounds(self, make_plugin, run_cycle):
+    async def test_a_core_failure_limit_alone_is_enough(self, make_plugin, run_cycle):
         p = make_plugin(Cpu, dict(CFG, core_threshold=99))
         run_cycle(p, lambda c: CmdResult(0, _proc_stat(idle_delta=900, cores=[0, 1000]), ""))
-        assert _latest_status() == "online"
+        assert _latest_status() == "failed"
 
     async def test_output_without_core_lines_still_reports_the_total(self, plugin, run_cycle):
         result = run_cycle(plugin, lambda c: CmdResult(0, _proc_stat(idle_delta=400), ""))
@@ -137,3 +137,28 @@ class TestUiSpec:
 
     def test_bars_color_by_the_overall_thresholds_otherwise(self, plugin):
         assert plugin._core_level({'value': 75.0}) == 'warning'
+
+    def test_the_cpu_card_is_a_gauge_banded_by_the_thresholds(self, make_plugin):
+        p = make_plugin(Cpu, dict(CFG, warning=60, threshold=85))
+        card = p.UI_SPEC['cards']['cpu_card']
+        assert card['kind'] == 'gauge'
+        assert card['metric'] == 'cpu_pct'
+        assert card['color'] == {'warning': 60.0, 'threshold': 85.0}
+
+    def test_the_history_chart_stays(self, plugin):
+        assert plugin.UI_SPEC['charts']['cpu_chart']['metric'] == 'cpu_pct'
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Cpu, dict(CFG, warning=70, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _proc_stat(idle_delta=0), ""))
+        assert _latest_status() == "warning"
+        assert p.UI_SPEC['cards']['cpu_card']['color'] == {'warning': 70.0, 'threshold': None}
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Cpu, dict(CFG, warning=None, threshold=85))
+        run_cycle(p, lambda c: CmdResult(0, _proc_stat(idle_delta=200), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _proc_stat(idle_delta=100), ""))
+        assert _latest_status() == "failed"

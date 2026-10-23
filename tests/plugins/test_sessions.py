@@ -2,12 +2,12 @@ import time
 
 import pytest
 
-from vigil.plugins.sessions import (
+from x_monitor.plugins.sessions import (
     Sessions, _probe_script, _source_allowed, parse_last, parse_loginctl, parse_who,
 )
-from vigil.plugins.base.plugin_helpers import SCRIPT_SEP
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.base.plugin_helpers import SCRIPT_SEP
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-sessions", "id": "test-sessions", "ssh_config": {"host": "test.host"}}
 

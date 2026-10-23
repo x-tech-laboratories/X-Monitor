@@ -3,9 +3,9 @@ import json
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.gpu import Gpu, _intel_gpu_top_sample
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.gpu import Gpu, _intel_gpu_top_sample
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-gpu", "id": "test-gpu", "ssh_config": {"host": "test.host"}}
 
@@ -366,3 +366,35 @@ class TestUiSpec:
 
     def test_a_card_chip_is_colored_by_its_own_level(self, plugin):
         assert plugin._item_level({"level": "warning"}) == "warning"
+
+    def test_utilization_and_vram_are_gauges_banded_by_their_thresholds(self, plugin):
+        cards = plugin.UI_SPEC['cards']
+        assert cards['gpu_util_card']['kind'] == 'gauge'
+        assert cards['gpu_util_card']['color'] == {'warning': 85.0, 'threshold': 95.0}
+        assert cards['gpu_mem_card']['kind'] == 'gauge'
+        assert cards['gpu_mem_card']['color'] == {'warning': 85.0, 'threshold': 95.0}
+
+    def test_each_gpu_is_a_meter_ticked_at_the_utilization_warning(self, make_plugin):
+        p = make_plugin(Gpu, dict(CFG, util_warning=70))
+        repeat = p.UI_SPEC['cards']['gpus']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_marker'] == 70.0
+        assert repeat['item_color_by'] == p._item_level
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Gpu, dict(CFG, util_threshold=None, mem_threshold=None, temp_threshold=None))
+        run_cycle(p, _ok(_pci(NVIDIA) + _nvidia(util=100.0, mem_used=8000, temp=120.0)))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Gpu, dict(CFG, util_warning=None, mem_warning=None, temp_warning=None))
+        run_cycle(p, _ok(_pci(NVIDIA) + _nvidia(util=94.0, mem_used=7500, temp=89.0)))
+        assert _latest_status() == "online"
+        run_cycle(p, _ok(_pci(NVIDIA) + _nvidia(temp=95.0)))
+        assert _latest_status() == "failed"
+
+    def test_without_a_utilization_warning_the_meters_have_no_tick(self, make_plugin):
+        p = make_plugin(Gpu, dict(CFG, util_warning=None))
+        assert p.UI_SPEC['cards']['gpus']['repeat']['bar_marker'] is None

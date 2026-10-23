@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.ports import Ports, _parse_results, _safe_metric_name, _build_probe_script
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.ports import Ports, _parse_results, _safe_metric_name, _build_probe_script
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -98,3 +98,27 @@ class TestPortsCollection:
 class TestPortsActions:
     async def test_on_action_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_every_check_gets_a_labeled_uptime_strip_in_one_panel(self, plugin):
+        assert plugin.UI_SPEC['cards']['strips'] == {
+            'kind': 'strip', 'title': 'AVAILABILITY',
+            'rows': [{'metric': 'ssh_up', 'label': 'SSH'}, {'metric': 'api_up', 'label': 'API'}],
+        }
+
+    async def test_the_strips_sit_above_the_latency_charts(self, plugin):
+        layout = plugin.UI_SPEC['layout']
+        assert layout == [
+            ['host_card', 'up_card', 'down_card'],
+            ['strips'],
+            ['chart_ssh'], ['chart_api'],
+            ['events'],
+        ]
+
+    async def test_no_checks_draws_no_strip_panel(self, make_plugin):
+        bare = make_plugin(Ports, {"checks": []})
+        assert 'strips' not in bare.UI_SPEC['cards']
+
+    async def test_the_reachable_and_down_counts_stay(self, plugin):
+        assert {'up_card', 'down_card'} <= set(plugin.UI_SPEC['cards'])

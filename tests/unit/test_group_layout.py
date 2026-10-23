@@ -1,8 +1,8 @@
 import pytest
 
-from vigil.core.ui.layout import CompositeLayout, resolve_rows
-from vigil.plugins.group import Group, spec_with_titles
-from vigil.plugins.uptime import Uptime
+from x_monitor.core.ui.layout import CompositeLayout, resolve_rows
+from x_monitor.plugins.group import Group, spec_with_titles
+from x_monitor.plugins.uptime import Uptime
 
 
 @pytest.fixture(autouse=True)
@@ -19,12 +19,12 @@ def client_slot(monkeypatch):
 @pytest.fixture
 def no_scheduler(monkeypatch):
     """Render without the change-bus scheduler, which needs a live client and loop."""
-    monkeypatch.setattr('vigil.core.ui.model.PluginPage.start', lambda self: None)
-    monkeypatch.setattr('vigil.core.ui.model.schedule_callback',
+    monkeypatch.setattr('x_monitor.core.ui.model.PluginPage.start', lambda self: None)
+    monkeypatch.setattr('x_monitor.core.ui.model.schedule_callback',
                         lambda callback, run_now=True: None)
 
 
-TITLE_CLASSES = ('halon-label', 'halon-title-section')
+TITLE_CLASSES = ('halon-label', 'halon-card-title', 'halon-title-section')
 
 
 def _labels(element, classes=None):

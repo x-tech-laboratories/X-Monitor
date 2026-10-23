@@ -1,7 +1,7 @@
-# The Vigil Agent
+# The X-Monitor Agent
 
-The Vigil agent is a small daemon that runs on a monitored host, dials **outward** to
-Vigil over a WebSocket, and holds that connection open. It needs no inbound port, no
+The X-Monitor agent is a small daemon that runs on a monitored host, dials **outward** to
+X-Monitor over a WebSocket, and holds that connection open. It needs no inbound port, no
 certificate of its own, and no firewall rule — it reuses the dashboard's port, so a host
 behind NAT works with no extra setup.
 
@@ -15,13 +15,20 @@ Two things travel on that one connection:
 
 ## Server config
 
-Declare each agent that may connect, then point monitors at it by id:
+Each agent has its own ed25519 key pair, with no passphrase:
+
+```bash
+ssh-keygen -t ed25519 -N "" -C web-01 -f web-01.key
+```
+
+`web-01.key` goes only to the monitored host, for example as a sops-nix secret. Declare each
+agent that may connect with the contents of `web-01.key.pub`, then point monitors at it by id:
 
 ```yaml
 agents:
   - id: "web-01"
-    token_file: "/run/secrets/vigil_agent_web01"   # or `token:` inline
-    host: "web-01.example.com"   # label only; Vigil never dials the agent
+    public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... web-01"
+    host: "web-01.example.com"   # label only; X-Monitor never dials the agent
 
 plugins:
   - name: "Web Servers"
@@ -38,11 +45,12 @@ plugins:
 | Field   | Description                                                                 |
 |---------|-----------------------------------------------------------------------------|
 | `id`    | Agent identity; a monitor's `agent:` key refers to this                      |
-| `token` | Shared secret the agent authenticates with, inline                            |
-| `token_file` | Path to a file holding that secret, read once at startup. Prefer this wherever `config.yaml` is generated — under Nix it lands world-readable in the store |
+| `public_key` | The agent's OpenSSH ed25519 public key, one line. It is not secret, so it can sit in a generated or world-readable `config.yaml` |
 | `host`  | Display label for the target. Optional — defaults to the id                  |
 
-An agent with neither `token` nor a readable `token_file` can never connect.
+On each connection X-Monitor sends the agent a fresh random nonce, and the agent signs it with its
+private key. X-Monitor holds no agent secrets. An agent without a valid `public_key` can never
+connect.
 
 `agent:` on a group is inherited by every monitor beneath it, so moving a whole host
 between transports is one line. A monitor with both `agent:` and `ssh_config:` uses the
@@ -51,31 +59,30 @@ agent; drop the `agent:` key to fall back to SSH.
 ## Installing the agent
 
 ```bash
-pip install vigil            # ships the `vigil-agent` command
+pip install x-monitor            # ships the `x-monitor-agent` command
 ```
 
 ```yaml
-# /etc/vigil-agent.yaml
-url: "ws://vigil.example.com:8080/api/agent/ws"   # wss:// behind TLS
+# /etc/x-monitor-agent.yaml
+url: "ws://x-monitor.example.com:8080/api/agent/ws"   # wss:// behind TLS
 id: "web-01"
-token_file: "/run/secrets/vigil_agent_token"      # or `token:` inline
+key_file: "/run/secrets/x_monitor_agent_key"
 ```
 
 | Field        | Description                                                          |
 |--------------|----------------------------------------------------------------------|
 | `url`        | The server's agent endpoint. `wss://` when the dashboard is behind TLS |
 | `id`         | Must match an `id` in the server's `agents:` list                     |
-| `token`      | The shared secret, inline                                             |
-| `token_file` | Path to a file holding the token, read at runtime. Prefer this: the secret stays with your secret manager and never enters a config file, a unit's environment, or a Nix store path |
+| `key_file`   | Path to the agent's unencrypted OpenSSH ed25519 private key (`ssh-keygen -t ed25519 -N ""`). Keep it with your secret manager, readable only by the agent's user |
 | `hostname`   | Hostname reported to the server. Defaults to the machine's own         |
 
 ```bash
-vigil-agent --config /etc/vigil-agent.yaml
+x-monitor-agent --config /etc/x-monitor-agent.yaml
 ```
 
-Every setting can come from the environment instead (`VIGIL_AGENT_URL`, `VIGIL_AGENT_ID`,
-`VIGIL_AGENT_TOKEN`, `VIGIL_AGENT_TOKEN_FILE`, `VIGIL_AGENT_HOSTNAME`), so a systemd unit or
-container can supply the token without writing it to disk.
+Every setting can come from the environment instead (`XMONITOR_AGENT_URL`, `XMONITOR_AGENT_ID`,
+`XMONITOR_AGENT_KEY_FILE`, `XMONITOR_AGENT_HOSTNAME`), so a systemd unit or container can run the
+agent without a config file.
 
 On NixOS the flake exports `nixosModules.agent` for the monitored host, alongside the
 existing `nixosModules.default` for the server. The agent module defaults to
@@ -83,17 +90,17 @@ existing `nixosModules.default` for the server. The agent module defaults to
 host never builds nicegui, peewee, dnspython or asyncssh to run one:
 
 ```nix
-services.vigil-agent = {
+services.x-monitor-agent = {
   enable = true;
-  url = "ws://vigil.example.com:8080/api/agent/ws";
+  url = "ws://x-monitor.example.com:8080/api/agent/ws";
   id = "web-01";
-  tokenFile = config.sops.secrets.vigil_agent_token.path;
+  keyFile = config.sops.secrets.x_monitor_agent_key.path;
   extraGroups = [ "systemd-journal" ];      # for journal streams and unit logs
   path = [ pkgs.smartmontools ];            # tools the monitors' commands invoke
 };
 ```
 
-The agent runs unprivileged as `vigil-agent`. Grant that user the same scoped `NOPASSWD`
+The agent runs unprivileged as `x-monitor-agent`. Grant that user the same scoped `NOPASSWD`
 sudo rules the SSH user had — a narrow grant per command is a better posture than running
 the agent as root.
 
@@ -104,7 +111,7 @@ by itself.
 
 ## Desktop notifications
 
-An agent running in your graphical session can show Vigil's notifications on your desktop. It runs
+An agent running in your graphical session can show X-Monitor's notifications on your desktop. It runs
 as a separate agent with `notify_only: true`, which refuses commands. See
 [notifications.md](notifications.md#desktop-notifications).
 
@@ -139,7 +146,7 @@ flips a monitor's state on its own.
 
 | | Agent | SSH |
 |---|---|---|
-| Software on target | `vigil-agent` | none |
+| Software on target | `x-monitor-agent` | none |
 | Concurrency per host | unbounded (frames on one socket) | capped by the target's `MaxSessions` |
 | Per-command cost | one local fork | SSH channel + fork |
 | Detection latency | immediate, for subscribed streams | one `interval` |

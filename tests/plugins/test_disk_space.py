@@ -1,10 +1,10 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.disk_space import DiskSpace
-from vigil.plugins.base.plugin_helpers import format_bytes
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.disk_space import DiskSpace
+from x_monitor.plugins.base.plugin_helpers import format_bytes
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -143,3 +143,50 @@ class TestDiskSpaceCollection:
 class TestDiskSpaceActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_usage_is_a_gauge_colored_by_the_threshold(self, plugin):
+        usage = plugin.UI_SPEC['cards']['usage_card']
+        assert usage['kind'] == 'gauge'
+        assert usage['metric'] == 'used_pct'
+        assert usage['color'] == {'warning': plugin.threshold, 'threshold': plugin.threshold}
+
+    async def test_path_available_and_total_cards_stay(self, plugin):
+        assert {'path_card', 'avail_card', 'total_card'} <= set(plugin.UI_SPEC['cards'])
+
+
+class TestOptionalLimits:
+    GB = 1024 ** 3
+
+    async def test_the_warning_is_off_by_default(self, plugin):
+        assert plugin.warning is None
+
+    async def test_a_warning_warns_before_the_threshold(self, make_plugin, run_cycle):
+        p = make_plugin(DiskSpace, dict(BASE_CFG, warning=80))
+        run_cycle(p, lambda c: CmdResult(0, _df_line(100 * self.GB, 85 * self.GB, 15 * self.GB, 85), ""))
+        assert _latest_status() == "warning"
+        run_cycle(p, lambda c: CmdResult(0, _df_line(100 * self.GB, 90 * self.GB, 10 * self.GB, 90), ""))
+        assert _latest_status() == "failed"
+
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(DiskSpace, dict(BASE_CFG, warning=80, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _df_line(100 * self.GB, 100 * self.GB, 0, 100), ""))
+        assert _latest_status() == "warning"
+
+    async def test_failure_only_never_warns(self, plugin, run_cycle):
+        run_cycle(plugin, lambda c: CmdResult(0, _df_line(100 * self.GB, 89 * self.GB, 11 * self.GB, 89), ""))
+        assert _latest_status() == "online"
+
+    async def test_no_limits_stay_online(self, make_plugin, run_cycle):
+        p = make_plugin(DiskSpace, dict(BASE_CFG, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _df_line(100 * self.GB, 100 * self.GB, 0, 100), ""))
+        assert _latest_status() == "online"
+
+    async def test_the_limits_card_names_each_level_that_is_on(self, make_plugin):
+        assert make_plugin(DiskSpace, dict(BASE_CFG, warning=80))._limits_label == 'warn 80% / fail 90%'
+        assert make_plugin(DiskSpace, dict(BASE_CFG, threshold=None))._limits_label == 'no limits'
+
+    async def test_the_gauge_colours_by_both_limits(self, make_plugin):
+        p = make_plugin(DiskSpace, dict(BASE_CFG, warning=80, threshold=None))
+        assert p.UI_SPEC['cards']['usage_card']['color'] == {'warning': 80, 'threshold': None}

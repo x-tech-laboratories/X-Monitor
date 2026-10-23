@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from vigil.core.connectors.wol import (
+from x_monitor.core.connectors.wol import (
     magic_packet, parse_mac, parse_password, remote_send_command, send_magic_packet,
 )
 

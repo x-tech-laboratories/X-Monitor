@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.temperature import Temperature
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.temperature import Temperature
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-temperature", "id": "test-temperature", "ssh_config": {"host": "test.host"}}
 
@@ -61,3 +61,41 @@ class TestCollection:
 class TestUiSpec:
     def test_zone_cards_get_their_own_row(self, plugin):
         assert ['sensors'] in plugin.UI_SPEC['layout']
+
+    def test_the_max_temperature_is_a_gauge_banded_by_the_thresholds(self, plugin):
+        card = plugin.UI_SPEC['cards']['temp_card']
+        assert card['kind'] == 'gauge'
+        assert card['max'] == 100.0
+        assert card['color'] == {'warning': 70.0, 'threshold': 80.0}
+
+    def test_a_threshold_above_100_raises_the_scale(self, make_plugin):
+        p = make_plugin(Temperature, dict(CFG, warning=100, threshold=120))
+        assert p.UI_SPEC['cards']['temp_card']['max'] == 120.0
+
+    def test_zones_are_meters_ticked_at_the_warning_level(self, plugin):
+        sensors = plugin.UI_SPEC['cards']['sensors']
+        assert sensors['title'] == 'THERMAL ZONES'
+        repeat = sensors['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_max'] == 100.0
+        assert repeat['bar_marker'] == pytest.approx(70.0)
+        assert repeat['item_color_by'] == plugin._item_level
+
+
+class TestOptionalLimits:
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Temperature, dict(CFG, warning=70, threshold=None))
+        run_cycle(p, lambda c: CmdResult(0, _sensors(150_000), ""))
+        assert _latest_status() == "warning"
+        assert p.UI_SPEC['cards']['temp_card']['max'] == 100.0
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Temperature, dict(CFG, warning=None, threshold=80))
+        run_cycle(p, lambda c: CmdResult(0, _sensors(79_000), ""))
+        assert _latest_status() == "online"
+        run_cycle(p, lambda c: CmdResult(0, _sensors(81_000), ""))
+        assert _latest_status() == "failed"
+
+    def test_without_a_warning_the_meters_have_no_tick(self, make_plugin):
+        p = make_plugin(Temperature, dict(CFG, warning=None))
+        assert p.UI_SPEC['cards']['sensors']['repeat']['bar_marker'] is None

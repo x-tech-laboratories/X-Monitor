@@ -4,12 +4,12 @@ import subprocess
 
 import pytest
 
-from vigil.plugins.package_updates import (
+from x_monitor.plugins.package_updates import (
     PackageUpdates, _probe_script, parse_apt, parse_dnf, parse_pacman,
 )
-from vigil.plugins.base.plugin_helpers import SCRIPT_SEP
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.base.plugin_helpers import SCRIPT_SEP
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-updates", "id": "test-updates", "ssh_config": {"host": "test.host"}}
 

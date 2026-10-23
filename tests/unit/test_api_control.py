@@ -7,9 +7,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from vigil.core.ui.api import register_api
-from vigil.core.ui.auth import register_auth
-from vigil.core.ui.tokens import build_tokens, hash_token
+from x_monitor.core.ui.api import register_api
+from x_monitor.core.ui.auth import register_auth
+from x_monitor.core.ui.tokens import build_tokens, hash_token
 
 CONTROL_TOKEN = "vgl_control-token-for-the-ops-box-0"
 PUSH_ALL = "vgl_push-token-for-every-monitor-00"

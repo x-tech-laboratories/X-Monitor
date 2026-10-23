@@ -1,8 +1,8 @@
 import pytest
 
-from vigil.plugins.reboot_required import RebootRequired, _parse_probe, _probe_script
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.reboot_required import RebootRequired, _parse_probe, _probe_script
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-reboot", "id": "test-reboot", "ssh_config": {"host": "test.host"}}
 

@@ -1,7 +1,7 @@
 
 import pytest
 
-from vigil.plugins.unbound import (
+from x_monitor.plugins.unbound import (
     Unbound,
     SCRIPT_SEP,
     _build_probe_script,
@@ -9,8 +9,8 @@ from vigil.plugins.unbound import (
     _resolved_ok,
     _split_response,
 )
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -186,3 +186,27 @@ class TestServfailThresholds:
 class TestUnboundActions:
     async def test_on_action_always_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
+
+
+class TestUiSpec:
+    def test_cache_hit_rate_is_a_gauge(self, plugin):
+        card = plugin.UI_SPEC['cards']['cache_card']
+        assert card['kind'] == 'gauge'
+        assert card['metric'] == 'cache_hit_rate_pct'
+
+    def test_the_servfail_chart_stays(self, plugin):
+        assert plugin.UI_SPEC['chart']['metric'] == 'servfail_rate_pct'
+
+
+class TestOptionalLimits:
+    async def test_servfail_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Unbound, {**BASE_CFG, "servfail_threshold": None})
+        _respond(p, run_cycle, _stats(total=1000, servfail=900))
+        assert _latest_status() == "warning"
+
+    async def test_servfail_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Unbound, {**BASE_CFG, "servfail_warning": None})
+        _respond(p, run_cycle, _stats(total=1000, servfail=80))
+        assert _latest_status() == "online"
+        _respond(p, run_cycle, _stats(total=1000, servfail=250))
+        assert _latest_status() == "failed"

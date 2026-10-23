@@ -1,14 +1,14 @@
 # Development Notes
 
-Architectural decisions and non-obvious rationale for Vigil, organized by topic.
+Architectural decisions and non-obvious rationale for X-Monitor, organized by topic.
 Code comments stay short (≤1 sentence); anything that needs more explanation
 lives here. This documents the architecture as it *is* — read it before changing
 the engine, the plugin contract, or the UI refresh model.
 
 ## Single process, one event loop
 
-Vigil runs as one OS process. `main()` (`vigil/__main__.py`) builds one
-`VigilEngine` (the Coordination Engine, `core/coordination/engine.py`), calls
+X-Monitor runs as one OS process. `main()` (`x_monitor/__main__.py`) builds one
+`XMonitorEngine` (the Coordination Engine, `core/coordination/engine.py`), calls
 `setup_modules()` to load plugins, then hands the engine to `init_gui()`
 (`core/ui/main_dashboard.py`). The per-monitor polling loop and the NiceGUI web
 dashboard share the same asyncio event loop and the same live `Plugin`
@@ -24,7 +24,7 @@ read path) and read exactly once, at startup, to restore the store.
 
 ## Engine model
 
-`core/` is organized as named engines the Coordination Engine (`VigilEngine`)
+`core/` is organized as named engines the Coordination Engine (`XMonitorEngine`)
 owns and wires together:
 
 - **Settings Engine** (`core/settings/`) — `ConfigFileManager` loads and types
@@ -49,7 +49,7 @@ owns and wires together:
 - **Exporter Engine** (`core/exporters/`) — Prometheus pull render, InfluxDB
   push task, and the MQTT / Home Assistant publisher.
 
-`EngineLike` (`core/contracts.py`) is the narrow slice of `VigilEngine` that the
+`EngineLike` (`core/contracts.py`) is the narrow slice of `XMonitorEngine` that the
 UI and plugins actually call, so those modules — and test doubles — depend on a
 small contract rather than the concrete class.
 
@@ -149,7 +149,14 @@ unchecked at the boundary (bad data fails at first use, not at load).
   transports share; `ExecContext.conn` is typed as this, so the invariant the
   transport swap rests on is checkable rather than duck-typed.
 - `ActionButtonSpec` — one entry in `Plugin.get_actions()`, the header action
-  buttons rendered regardless of `UI_SPEC`.
+  buttons rendered regardless of `UI_SPEC`. An entry with `kind: 'toggle'` is a
+  toggle button: it is pressed while the latest value of its `metric` is above
+  0.5, runs `on_action_id` or `off_action_id` when clicked, then polls so it
+  shows the state the target reports. An optional `icon` sets its glyph, and
+  an optional `confirm` text asks the user before the action runs. A
+  monitor's `actions` config adds its own entries after the plugin's, through
+  `Plugin.all_actions()`; the engine runs those before `plan_action` is asked
+  (`plugins/base/custom_actions.py`).
 
 Other typed boundaries: `core/ui/spec_types.py` (`UISpec` and its nested card /
 table / dialog / job-panel shapes that `generic_render` interprets),
@@ -193,7 +200,7 @@ never overlaps itself.
 `engine.cycle_timing(id)` reads back as last/average/max seconds plus SSH
 channel wait. It is memory only and always on; `logging.cycle_timings` governs
 only the `cycle_collect_seconds` / `cycle_parse_seconds` metric rows, which
-cost disk. `vigil_self` turns it into its slowest-first table and its "slow"
+cost disk. `x_monitor_self` turns it into its slowest-first table and its "slow"
 warning. The channel wait is measured without threading anything through the
 connector API: `_run_cycle` wraps its dispatch in `measure_channel_wait()`,
 which sets a `ContextVar`, and `SSHConnection.execute` reports how long it
@@ -295,7 +302,7 @@ survives a reload. The engine exposes it as `log_levels()`, `known_loggers()`
 and `set_log_level()`, which the REST route, the dashboard's System menu and the
 signal handlers all call.
 
-Every change is logged at WARNING on `vigil.log_levels`, a logger with its own
+Every change is logged at WARNING on `x_monitor.log_levels`, a logger with its own
 explicit WARNING level, so the record of who made logging quieter survives the
 change it describes. SIGUSR1 and SIGUSR2 step only the root level, one notch at
 a time, because a signal carries no argument. They and SIGHUP (a config reload)
@@ -306,7 +313,7 @@ process's signals.
 ## Agent transport
 
 `core/connectors/agent_connector.py` is the server half of the agent link; the
-daemon itself is the separate `vigil_agent` package.
+daemon itself is the separate `x_monitor_agent` package.
 
 The whole design rests on one decision: `AgentConnection.execute()` has the same
 signature and the same `(exit_code, stdout, stderr)` failure mapping as
@@ -334,7 +341,7 @@ analogue of `MaxSessions` and no semaphore. The agent dispatches each `exec`
 into its own task, so a 30-second `borg` check cannot delay a 1-second sample on
 the same connection.
 
-**Process groups.** `vigil_agent/executor.py` runs each command with
+**Process groups.** `x_monitor_agent/executor.py` runs each command with
 `start_new_session=True` and kills the whole process group on timeout. This
 closes a real gap in the SSH path, where killing the remote command left
 anything it had spawned running on the target.
@@ -343,7 +350,7 @@ anything it had spawned running on the target.
 plugin id; the engine registers them on the agent's connection and the endpoint
 sends the full set in the welcome frame (full set, never a delta, so a
 reconnecting agent converges without the server tracking what it knows). The
-agent runs one supervised coroutine per stream from `vigil_agent/watchers.py`
+agent runs one supervised coroutine per stream from `x_monitor_agent/watchers.py`
 and pushes an `event` frame the moment something happens. Two economies apply
 on the agent side: a generic sample stream carries `max_quiet` (five
 intervals), so unchanged results are suppressed but one frame always lands per
@@ -352,12 +359,12 @@ window — a quiet monitor keeps advancing and can never read as stale — and
 unit-filtered journal streams (plus one `--dmesg` follower), routing each line
 to its stream in Python, so N service monitors cost two processes rather than
 N+1.
-`VigilEngine._on_agent_event` routes it back by stream id to the plugin's pure
+`XMonitorEngine._on_agent_event` routes it back by stream id to the plugin's pure
 `parse_event()` and persists the result through the same batched
 `db.apply_result` the polling cycle uses — no IO on the event path.
 
 When an agent finishes its handshake the engine collects every monitor bound to
-it immediately (`_on_agent_connected`). Monitors start their schedule when Vigil
+it immediately (`_on_agent_connected`). Monitors start their schedule when X-Monitor
 does, but the agent takes a moment to dial in, so a monitor's first cycle
 normally runs before its transport exists and records a failure. For a 30s
 monitor that is invisible; for the hourly SMART and ZFS checks it meant an hour
@@ -373,10 +380,10 @@ Two conventions matter here:
 2. **A raising plugin must not take down the socket.** `_on_agent_event`
    catches, logs and continues, because it runs on the agent's receive task.
 
-**Protocol location.** `vigil_agent/protocol.py` is canonical and
-`vigil/core/connectors/agent_protocol.py` re-exports it. It lives in the agent
+**Protocol location.** `x_monitor_agent/protocol.py` is canonical and
+`x_monitor/core/connectors/agent_protocol.py` re-exports it. It lives in the agent
 package because the agent is the constrained side: a monitored host installs
-`vigil-agent` and must not pull in nicegui, peewee and dnspython to do it. One
+`x-monitor-agent` and must not pull in nicegui, peewee and dnspython to do it. One
 definition, not two copies to keep in step.
 
 ## SSH transport
@@ -400,7 +407,7 @@ verified against a real sshd:
    `_TofuClient.validate_host_public_key` fire, reproducing
    `StrictHostKeyChecking=accept-new`: trust and persist a host's key on first
    use, reject any later mismatch.
-3. **Per-host channel limits.** Vigil bounds its own per-host concurrency
+3. **Per-host channel limits.** X-Monitor bounds its own per-host concurrency
    (`_MAX_CONCURRENT_PER_HOST = 8`, a semaphore) below sshd's default
    `MaxSessions` of 10. This ceiling is intrinsic to SSH — a host with many
    monitors either raises `MaxSessions` or moves to the agent transport, which
@@ -418,7 +425,7 @@ owning plugin's normal monitor cycle. The builders/parsers in `ssh_connector.py`
 returns output size, exit code (empty if running), liveness (`kill -0`), and any
 output past the byte offset the last poll consumed (`Job.output_seq`).
 
-Because the job lives on the target it **survives a Vigil restart**:
+Because the job lives on the target it **survives a X-Monitor restart**:
 `reconcile_orphaned_jobs` only fails jobs with no `pid` (crashed before launch);
 any job with a pid is re-adopted by the owning plugin's next poll (pid alive →
 resume; pid/exit gone → finalize).
@@ -429,7 +436,7 @@ immediately, with the row persisted asynchronously under that same id. A
 `JobRecord` is the one mutable record type (successive polls advance `pid`,
 `progress`, `state`, `output_seq` in place); readers take a rendered dict via
 `as_dict()`, so a half-applied update is never observed. Note the durability
-edge this buys: if Vigil dies between launching a job and the next flush, the
+edge this buys: if X-Monitor dies between launching a job and the next flush, the
 job is lost from both memory and disk, and the detached process on the target
 has nothing left to re-adopt it.
 
@@ -646,7 +653,7 @@ non-retained birth message, and on the optional `interval`.
 
 *Why aiomqtt.* It is an asyncio client over paho-mqtt, so publishing lives on
 the single event loop with no thread of its own; it is an optional extra
-(`vigil[mqtt]`), imported only when `exporters.mqtt` is configured, and a
+(`x-monitor[mqtt]`), imported only when `exporters.mqtt` is configured, and a
 missing install is logged as an error naming the extra rather than stopping the
 engine.
 
@@ -659,13 +666,13 @@ handler publishes `offline` itself before leaving.
 `<base>_<target>`; per monitor an `enum` status sensor and a `problem` binary
 sensor sharing `<base>/<monitor>/status`; one sensor per metric whose
 device_class and unit come from the metric name's suffix (`metric_traits`).
-Every sensor is `state_class: measurement`, since Vigil's `_total` metrics are
+Every sensor is `state_class: measurement`, since X-Monitor's `_total` metrics are
 counts of things, not monotonic counters. A config is sent once per connection
 the first time its monitor or metric is published, so a new metric is
 announced before its first value. Ids pass through `slug()`, which lowercases
 and keeps `a-z 0-9 _ -`, making every id a single topic level and a valid Home
 Assistant object id; unique ids include the base topic so they stay stable
-across restarts and distinct between Vigil instances. Monitors removed from the
+across restarts and distinct between X-Monitor instances. Monitors removed from the
 config keep their retained discovery entries until deleted in Home Assistant.
 
 *Failure.* Any error inside a session — a refused connect, a failed publish, a
@@ -695,7 +702,7 @@ loop's job, not the publishing thread's.
 
 ## Bindings
 
-Vigil uses NiceGUI's reactive `.bind_*()` only for `render_status_card`'s label
+X-Monitor uses NiceGUI's reactive `.bind_*()` only for `render_status_card`'s label
 text (`label.text` is a real `BindableProperty` with an on-change push hook).
 Everything else — `ui.table.rows`, `ui.echart.options`, label colors — has no
 such hook (verified against NiceGUI's source), so it refreshes through the
@@ -728,7 +735,7 @@ routes and then the middleware, before the routes it protects — Starlette wrap
 the whole app regardless of registration order, but registering it early keeps
 intent obvious: everything that follows is gated.
 
-**Why a cookie and not Basic.** A Basic prompt is the browser's, not Vigil's:
+**Why a cookie and not Basic.** A Basic prompt is the browser's, not X-Monitor's:
 it cannot be styled, carries no sign-out, and re-sends the password on every
 request. The session cookie is a self-contained `v1.<payload>.<hmac>` token —
 username plus expiry, signed with `auth.session_secret` or a key generated at
@@ -768,7 +775,7 @@ request on its own: an unknown token is `401` and a known one outside its
 scope is `403`, rather than falling through to Basic or the login redirect.
 
 - **Why SHA-256 and not a password KDF.** Config holds only
-  `sha256:<hex>` of each token. `vigil token new` mints 256 bits from
+  `sha256:<hex>` of each token. `x-monitor token new` mints 256 bits from
   `secrets`, so there is nothing to guess from a dictionary and a leaked digest
   is as hard to reverse as the token is to guess; a slow KDF would add its cost
   to every scrape and API call for no gain. That argument needs a random token,
@@ -788,7 +795,7 @@ scope is `403`, rather than falling through to Basic or the login redirect.
   header, so they never land in a reverse proxy's access log the way the
   per-monitor path token does.
 - **The audit trail.** The gate stores who authenticated on
-  `request.state.vigil_client` (the account name, or `token '<name>'`), read
+  `request.state.x_monitor_client` (the account name, or `token '<name>'`), read
   through `auth.acting_client`. The control routes write it into the monitor's
   events ("Poll requested through the API by token 'ops'"), push heartbeats
   carry it through `record_push(source=...)`, and the gate logs every
@@ -799,8 +806,8 @@ scope is `403`, rather than falling through to Basic or the login redirect.
   `get_actions()` are reachable, called with no parameters, so an action that
   needs a dialog's input (borg restore, say) stays dashboard-only.
 - **Agents are not in this list.** Each `agents:` entry already has its own
-  token, checked by the agent endpoint against the id it claims, so an agent
-  scope here would be a second place to configure the same secret.
+  ed25519 public key, which the agent endpoint checks the login signature
+  against, so an agent scope here would be a second identity for the same host.
 - **Without an account.** Tokens only narrow what the gate lets through, so
   without `username`/`password` there is no gate and read or control tokens do
   nothing (a warning says so). Push tokens still work, since the push route
@@ -838,10 +845,23 @@ Two hazards are worth knowing before editing either sheet:
   literals are parsed out of the token sheet at import, so they are not a
   second copy of the palette.
 
+## The overview's fleet sections
+
+Above its charts the overview draws the fleet: a tile per root of the monitor tree, tinted
+by the worst state among its monitors and opening that group's page; reachability strips for every
+uptime, http, mosquitto, dns_record and push monitor, grouped by host; a meter per borg repository
+of the time since its newest archive, half full at its max age; a tile per NixOS deployment; and a
+bar per vulnerability scan. A section appears only when the fleet has monitors of its kind.
+
+`core/ui/views/fleet.py` builds each section with a pure function over monitors and readings,
+which is what its tests exercise, and redraws a section only when its rows changed. Everything it
+shows is read from the latest metrics and the in-memory metric history; nothing queries the
+status history on disk, so the strips cover the last 60 readings rather than a fixed time span.
+
 ## Overview charts: a donut for status, a treemap for type
 
 The overview's two cards look alike but carry different data, and only one of
-them suits a donut. Status has four fixed slices, so part-to-whole reads at a
+them suits a donut. Status has five fixed slices, so part-to-whole reads at a
 glance. Type does not: a modest config already declares ~25 monitor types, most
 of them once, which is the case a pie handles worst — two dozen near-identical
 slivers, a legend taller than the plot, and ECharts' nine-hue default palette
@@ -850,7 +870,7 @@ cycling, so the tenth type is painted the same blue as the first.
 The type card is a treemap instead. Tile area is the monitor count and the label
 inside each tile carries identity, which frees color to mean something: each
 tile takes the *worst* status among its monitors (`_worst_status`, severity
-`failed > warning > unavailable > online`), drawn from the four reserved status
+`failed > warning > unavailable > info > online`), drawn from the five reserved status
 tokens. So the chart costs no categorical palette at any type count, and one
 failed unit inside an otherwise healthy type is visible without opening it.
 Clicking a tile still filters the monitor table exactly as the donut slice did.
@@ -913,9 +933,28 @@ the child plugin has no idea it is being taken apart. Only a plugin with a
 `UI_SPEC` can be addressed this way; `systemd_service` and a nested group are
 referenced by a bare id and render whole.
 
+## Chart widgets
+
+A page of value cards says what a monitor reads now but not how it got there, and three cards
+for three related numbers read slower than one picture of them. So a spec can ask for a chart
+in place of a card: a gauge for one percentage, a share bar for parts of a whole, an uptime
+strip for a run of up/down checks, meters or status tiles for repeated items, and a history
+chart holding several series. `core/ui/charts.py` draws them; `spec.py`'s docstring lists the
+keys.
+
+Everything except the history chart is plain DOM painted with Halon's CSS variables: an inline
+SVG ring with round caps for the gauge, one rounded element per strip cell, flex children for the
+share bar. They follow the client's scheme with no repaint and send only what changed. The
+multi-series chart is ECharts like `history_chart`, so it repaints its literal colors through `theme.on_scheme_change`; `palette()['series']` gives it the three
+`--series-*` tokens, the first of which is the accent itself.
+
+Every widget prints its value next to its shape. A bar on its own track can be too faint to
+read (§3.6 of Halon's guide), and a printed number makes the shape reinforcement rather than
+the only carrier of the value.
+
 ## Plugin config & helpers
 
-A monitor's `type` is the module name under `vigil/plugins/`, and
+A monitor's `type` is the module name under `x_monitor/plugins/`, and
 `setup_modules()` loads the one concrete `Plugin` subclass that module *defines*
 — a class it merely imports (`SignalPlugin`, `Plugin`) is skipped, so a plugin
 module must define exactly one. Selecting by name instead would depend on
@@ -925,10 +964,10 @@ A plugin that outgrows one file becomes a package (`plugins/borg/`), and its cla
 
 **Out-of-tree plugins.** `PluginLoader` (`core/coordination/plugin_loader.py`)
 owns the type-to-class step for `setup_modules()`. A type that is not a module
-under `vigil.plugins` is looked up in the `plugin_paths` directories, in order,
+under `x_monitor.plugins` is looked up in the `plugin_paths` directories, in order,
 as `<type>.py` or a `<type>/` package, and imported with
-`importlib.util.spec_from_file_location` under `vigil_external.<type>` — its
-own namespace, so an external module can never replace a `vigil.*` module in
+`importlib.util.spec_from_file_location` under `x_monitor_external.<type>` — its
+own namespace, so an external module can never replace an `x_monitor.*` module in
 `sys.modules`, and a package's relative imports resolve inside it. The same
 one-concrete-subclass rule applies, since the loader and the built-in path
 share `_plugin_class`. A built-in name wins by default, because silently
@@ -946,7 +985,7 @@ otherwise always the transport's, so labels match what was collected.
 
 `plugins/base/plugin_helpers.py` holds `PluginConfigMixin` (the `id` / `target` /
 `interval` derivation every plugin needs, via `_init_config`) plus shared pure
-helpers (`parse_duration`, `format_duration`, `format_bytes`, `level_for`), split
+helpers (`parse_duration`, `format_duration`, `format_bytes`, `limit_from`, `level_for`), split
 out so they're reusable without dragging in the rest of `plugin_base.py`.
 `parse_duration` accepts plain numbers or strings like `'1w'`, `'7d'`,
 `'2h30m'`, `'30s'`, including compound forms like `'1d12h'`. `format_bytes` reads
@@ -1014,7 +1053,7 @@ environment). Plugin tests exercise the pure `commands()`/`parse()` or
 `requests()`/`parse_results()` directly through the `run_cycle` / `run_requests`
 / `run_io_cycle` fixtures in `tests/conftest.py`, which drive a plugin with a
 fake connector and apply the resulting `CollectResult` — mirroring
-`VigilEngine._run_cycle` without a real event loop. `_FakeEngine` stands in for
+`XMonitorEngine._run_cycle` without a real event loop. `_FakeEngine` stands in for
 the Coordination Engine, and `plugin.storage` is a thin test-only per-plugin
 adapter over `db.apply_result` (production has no such object).
 

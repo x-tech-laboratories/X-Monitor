@@ -9,10 +9,10 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
-from vigil.core.connectors.types import CollectResult
-from vigil.core.ui import spec
-from vigil.core.ui.theme import STATUS_COLORS
-from vigil.plugins.cpu import Cpu
+from x_monitor.core.connectors.types import CollectResult
+from x_monitor.core.ui import spec
+from x_monitor.core.ui.theme import STATUS_COLORS
+from x_monitor.plugins.cpu import Cpu
 
 # The user fixture only — nicegui.testing.plugin also pulls in its selenium Screen plugin.
 pytest_plugins = ['nicegui.testing.user_plugin']
@@ -35,11 +35,17 @@ def render_page(plugin):
     ticks it itself and nothing fires between assertions.
     """
     built = {}
+    # The CPU page draws a gauge, so a plain metric card with the plugin's own thresholds is declared here.
+    metric_card_spec = {
+        'layout': [['cpu_card']],
+        'cards': {'cpu_card': {'metric': 'cpu_pct', 'title': 'CPU', 'format': 'percent1',
+                               'color': {'warning': plugin.warning, 'threshold': plugin.threshold}}},
+    }
 
     @ui.page('/')
     def _page():
         from nicegui import context
-        built['page'] = spec.generic_render(plugin, start=False)
+        built['page'] = spec.generic_render(plugin, spec=metric_card_spec, start=False)
         built['client'] = context.client
 
     return built
@@ -88,6 +94,19 @@ class TestInlineThresholdColoring:
         built = await _ticked(user, render_page)
         assert STATUS_COLORS['warning'] in _cpu_label(built)._style['color']
 
+    async def test_a_reading_past_the_threshold_tints_the_card(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'cpu_pct': 97.5}, status='failed'))
+        built = await _ticked(user, render_page)
+        from x_monitor.core.ui.components import card_of
+        assert 'halon-card--failed' in card_of(_cpu_label(built))._classes
+
+    async def test_a_reading_under_the_warning_leaves_the_card_plain(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'cpu_pct': 12.0}, status='online'))
+        built = await _ticked(user, render_page)
+        from x_monitor.core.ui.components import card_of
+        classes = card_of(_cpu_label(built))._classes
+        assert 'halon-card--failed' not in classes and 'halon-card--warning' not in classes
+
     async def test_no_reading_leaves_the_card_uncolored(self, user: User, render_page):
         built = await _ticked(user, render_page)
         label = _cpu_label(built)
@@ -97,28 +116,43 @@ class TestInlineThresholdColoring:
 
 def _bar_fills(built: dict) -> list:
     """Every per-core bar's fill element, in render order."""
-    return [e for e in built['client'].elements.values() if 'halon-bar-fill' in e._classes]
+    return [e for e in built['client'].elements.values() if 'halon-meter-fill' in e._classes]
+
+
+@pytest.fixture
+def cores_page(plugin):
+    """Serve only the CPU page's per-core panel, as the plugin's own UI_SPEC declares it."""
+    built = {}
+    cores_spec = {'layout': [['cores']], 'cards': {'cores': plugin.UI_SPEC['cards']['cores']}}
+
+    @ui.page('/')
+    def _page():
+        from nicegui import context
+        built['page'] = spec.generic_render(plugin, spec=cores_spec, start=False)
+        built['client'] = context.client
+
+    return built
 
 
 class TestPerCoreBars:
-    async def test_each_core_gets_a_bar_filled_to_its_share(self, user: User, plugin, render_page):
+    async def test_each_core_gets_a_bar_filled_to_its_share(self, user: User, plugin, cores_page):
         plugin.storage.apply(CollectResult(
             metrics={'cpu_pct': 50.0}, status='online',
             snapshot=[{'label': '0', 'value': 20.0}, {'label': '1', 'value': 90.0}]))
-        built = await _ticked(user, render_page)
+        built = await _ticked(user, cores_page)
         assert [f._style['width'] for f in _bar_fills(built)] == ['20.0%', '90.0%']
 
-    async def test_a_busy_core_is_filled_with_the_failed_color(self, user: User, plugin, render_page):
+    async def test_a_busy_core_is_filled_with_the_failed_color(self, user: User, plugin, cores_page):
         plugin.storage.apply(CollectResult(
             metrics={'cpu_pct': 50.0}, status='online',
             snapshot=[{'label': '0', 'value': 10.0}, {'label': '1', 'value': 99.0}]))
-        built = await _ticked(user, render_page)
+        built = await _ticked(user, cores_page)
         idle, busy = _bar_fills(built)
-        assert STATUS_COLORS['online'] in idle._style['background-color']
-        assert STATUS_COLORS['failed'] in busy._style['background-color']
+        assert STATUS_COLORS['online'] in idle._style['background']
+        assert STATUS_COLORS['failed'] in busy._style['background']
 
-    async def test_no_snapshot_renders_no_bars(self, user: User, render_page):
-        built = await _ticked(user, render_page)
+    async def test_no_snapshot_renders_no_bars(self, user: User, cores_page):
+        built = await _ticked(user, cores_page)
         assert _bar_fills(built) == []
 
 
@@ -128,7 +162,7 @@ class TestFormInputs:
         from nicegui.elements.checkbox import Checkbox
         from nicegui.elements.input import Input
         from nicegui.elements.select import Select
-        from vigil.core.ui.components import _form_input
+        from x_monitor.core.ui.components import _form_input
         plugin = SimpleNamespace(entries={'0001': 'Linux', '0003': 'Windows'}, chosen='0003')
         built = {}
 
@@ -151,8 +185,8 @@ class TestHostControlPage:
     async def test_renders_its_cards_buttons_and_boot_table(self, user: User, make_plugin):
         from nicegui.elements.button import Button
         from nicegui.elements.table import Table
-        from vigil.core.connectors.types import CmdResult
-        from vigil.plugins.host_control import HostControl
+        from x_monitor.core.connectors.types import CmdResult
+        from x_monitor.plugins.host_control import HostControl
         control = make_plugin(HostControl, {"name": "host1 control", "id": "host1-control",
                                             "allow": ["reboot", "next_boot"],
                                             "ssh_config": {"host": "host1"}})
@@ -182,8 +216,8 @@ class TestHostControlPage:
 @pytest.fixture
 def self_page(make_plugin):
     """The self-monitor's page, whose timings table colors cells with a callable rule."""
-    from vigil.plugins.vigil_self import VigilSelfPlugin
-    plugin = make_plugin(VigilSelfPlugin, {"name": "vigil", "id": "vigil"})
+    from x_monitor.plugins.x_monitor_self import XMonitorSelfPlugin
+    plugin = make_plugin(XMonitorSelfPlugin, {"name": "x-monitor", "id": "x-monitor"})
     built = {'plugin': plugin}
 
     @ui.page('/self')
@@ -193,7 +227,7 @@ def self_page(make_plugin):
         built['client'] = context.client
 
     yield built
-    VigilSelfPlugin.engine = None
+    XMonitorSelfPlugin.engine = None
 
 
 class TestCallableCellColors:

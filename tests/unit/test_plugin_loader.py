@@ -1,4 +1,4 @@
-"""Resolving a monitor's type to its Plugin class, from Vigil's own plugins or from plugin_paths."""
+"""Resolving a monitor's type to its Plugin class, from X-Monitor's own plugins or from plugin_paths."""
 
 import logging
 import sys
@@ -8,12 +8,12 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from vigil.core.coordination.plugin_loader import PluginLoader, PluginPath, parse_plugin_paths
-from vigil.core.database.database import db
+from x_monitor.core.coordination.plugin_loader import PluginLoader, PluginPath, parse_plugin_paths
+from x_monitor.core.database.database import db
 
 PLUGIN = textwrap.dedent('''
-    from vigil.plugins.base.plugin_base import Plugin
-    from vigil.core.connectors.types import CollectResult
+    from x_monitor.plugins.base.plugin_base import Plugin
+    from x_monitor.core.connectors.types import CollectResult
 
     class {cls}(Plugin):
         MARK = {mark!r}
@@ -26,7 +26,7 @@ PLUGIN = textwrap.dedent('''
 @pytest.fixture(autouse=True)
 def forget_external_modules():
     yield
-    for name in [m for m in sys.modules if m == 'vigil_external' or m.startswith('vigil_external.')]:
+    for name in [m for m in sys.modules if m == 'x_monitor_external' or m.startswith('x_monitor_external.')]:
         del sys.modules[name]
     if not db.is_closed():
         db.close()
@@ -55,7 +55,7 @@ class TestExternal:
         _write(tmp_path, 'hello')
         cls = _loader(tmp_path).resolve('hello')
         assert cls.__name__ == 'Hello'
-        assert cls.__module__ == 'vigil_external.hello'
+        assert cls.__module__ == 'x_monitor_external.hello'
 
     def test_a_package_whose_class_lives_in_a_submodule(self, tmp_path):
         package = tmp_path / 'weather'
@@ -64,7 +64,7 @@ class TestExternal:
         (package / 'monitor.py').write_text(PLUGIN.format(cls='Weather', mark='pkg'))
         cls = _loader(tmp_path).resolve('weather')
         assert cls.__name__ == 'Weather'
-        assert cls.__module__ == 'vigil_external.weather.monitor'
+        assert cls.__module__ == 'x_monitor_external.weather.monitor'
 
     def test_the_first_directory_that_has_it_wins(self, tmp_path):
         _write(tmp_path / 'a', 'hello', mark='a')
@@ -84,7 +84,7 @@ class TestShadowing:
         with caplog.at_level(logging.WARNING):
             cls = _loader(tmp_path).resolve('cpu')
         assert cls.__name__ == 'Cpu'
-        assert 'shadowed by Vigil\'s built-in plugin' in caplog.text
+        assert 'shadowed by X-Monitor\'s built-in plugin' in caplog.text
         assert 'override: true' in caplog.text
 
     def test_override_lets_the_external_one_win(self, tmp_path, caplog):
@@ -92,7 +92,7 @@ class TestShadowing:
         with caplog.at_level(logging.WARNING):
             cls = _loader(tmp_path, override=True).resolve('cpu')
         assert cls.__name__ == 'MyCpu'
-        assert "overrides Vigil's built-in plugin" in caplog.text
+        assert "overrides X-Monitor's built-in plugin" in caplog.text
 
 
 class TestErrors:
@@ -124,7 +124,7 @@ class TestErrors:
         _write(tmp_path, 'broken', body='import no_such_module_anywhere\n')
         with pytest.raises(ValueError, match="failed to import: ModuleNotFoundError"):
             _loader(tmp_path).resolve('broken')
-        assert 'vigil_external.broken' not in sys.modules
+        assert 'x_monitor_external.broken' not in sys.modules
 
 
 class TestParsePaths:
@@ -149,7 +149,7 @@ class TestParsePaths:
 
 class TestEngine:
     def test_a_monitor_of_an_external_type_loads(self, tmp_path):
-        from vigil.core.coordination.engine import VigilEngine
+        from x_monitor.core.coordination.engine import XMonitorEngine
         _write(tmp_path / 'my-plugins', 'hello')
         cfg = tmp_path / 'config.yaml'
         cfg.write_text(yaml.dump({
@@ -158,7 +158,7 @@ class TestEngine:
             'plugins': [{'name': 'Hi', 'id': 'hi', 'type': 'hello', 'target_host': 'h'},
                         {'name': 'Gone', 'id': 'gone', 'type': 'nope'}],
         }))
-        with patch('vigil.core.connectors.engine.SSHConnection'):
-            engine = VigilEngine(str(cfg))
+        with patch('x_monitor.core.connectors.engine.SSHConnection'):
+            engine = XMonitorEngine(str(cfg))
             engine.setup_modules()
         assert [type(p).__name__ for p in engine.plugins] == ['Hello']

@@ -1,6 +1,6 @@
 # Notifications
 
-Vigil sends a notification when a monitor's status changes in a way you care about: it starts
+X-Monitor sends a notification when a monitor's status changes in a way you care about: it starts
 failing, it is still failing, or it recovers. Notifications go to **channels**. Each monitor
 follows a **rule** that sets which channels it uses and which changes count.
 
@@ -14,10 +14,10 @@ what is planned.
 ```yaml
 agents:
   - id: laptop-desktop
-    token_file: /run/secrets/vigil_agent_laptop_desktop
+    public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... laptop-desktop"
 
 notifications:
-  base_url: https://vigil.lan        # the dashboard's address, used to link to a monitor
+  base_url: https://x-monitor.lan        # the dashboard's address, used to link to a monitor
   channels:
     - id: laptop
       type: desktop
@@ -65,10 +65,13 @@ their notifications.
 once. An availability monitor (`uptime`, `http`) reports that host as failed, which gives one
 notification instead of one per monitor.
 
+`info` is never a problem: it marks a healthy monitor in a passing state, such as a folder still
+syncing. A monitor that moves from a problem to `info` has recovered.
+
 While it is off, `unavailable` is neutral. A monitor that turns unavailable during a problem has
 not recovered, and the problem carries on once it measures again.
 
-If Vigil restarts while a monitor has a problem, it is not announced again. Its recovery still
+If X-Monitor restarts while a monitor has a problem, it is not announced again. Its recovery still
 is.
 
 ## Flapping
@@ -88,9 +91,9 @@ notifications:
 ## Grouping
 
 When several notifications arrive close together, for example when a host goes down and takes
-its monitors with it, `group_window` sends them as one. Vigil waits that long after the first
+its monitors with it, `group_window` sends them as one. X-Monitor waits that long after the first
 notification, then sends everything that arrived meanwhile to each channel as one digest, such as
-"Vigil: 3 failed, 1 recovered" with a line per monitor. A notification that arrives alone is sent
+"X-Monitor: 3 failed, 1 recovered" with a line per monitor. A notification that arrives alone is sent
 as itself, only later by the window. It is off by default.
 
 ```yaml
@@ -103,9 +106,9 @@ monitor recovers and closes when the last one does.
 
 ## Muting
 
-The **Mute** button on a monitor's page stops its notifications until you unmute it, for example
-during maintenance. Muting a group mutes everything in it, and each monitor in the group says
-which group muted it. The bell icon in the dashboard's header lists everything that is muted,
+Releasing the **Notifications** toggle button on a monitor's page mutes it until you press it again, for
+example during maintenance. Muting a group mutes everything in it, and each monitor in the group
+shows a disabled button naming the group that muted it. The bell icon in the dashboard's header lists everything that is muted,
 with a button to unmute each one.
 
 A mute is saved, so it survives a restart. A failure that happens while a monitor is muted is not
@@ -115,7 +118,7 @@ still failing does not send a notification.
 ## Maintenance windows
 
 A maintenance window holds back problem notifications for chosen monitors at planned times, such
-as nightly upgrades or a one-off migration. Times are the Vigil server's local time.
+as nightly upgrades or a one-off migration. Times are the X-Monitor server's local time.
 
 ```yaml
 notifications:
@@ -146,7 +149,7 @@ Every monitor has its own dashboard address, `/monitor/<id>`, and the events fee
 
 ## Desktop notifications
 
-A `desktop` channel shows a notification on a computer that runs a Vigil agent. Clicking it opens
+A `desktop` channel shows a notification on a computer that runs a X-Monitor agent. Clicking it opens
 the monitor's page in the browser.
 
 Every notification has a **Dismiss** button beside **Open**, and closes itself after `timeout`
@@ -160,16 +163,16 @@ instead. A notification is still cleared if you mute the monitor after it appear
 `busctl` (part of systemd) to reach the desktop's notification service.
 
 The agent must run **inside your graphical session, as you**. Desktop notifications travel over
-your session's message bus, and a system service, such as the regular Vigil agent, cannot reach
-it. Run a second agent for this, with its own `id` and token, and set `notify_only: true`. That
+your session's message bus, and a system service, such as the regular X-Monitor agent, cannot reach
+it. Run a second agent for this, with its own `id` and key, and set `notify_only: true`. That
 agent shows notifications and refuses everything else, including commands. Without it, the server
 could run commands as you.
 
 ```yaml
-# ~/.config/vigil-agent-desktop.yaml
-url: wss://vigil.lan/api/agent/ws
+# ~/.config/x-monitor-agent-desktop.yaml
+url: wss://x-monitor.lan/api/agent/ws
 id: laptop-desktop
-token_file: /home/you/.config/vigil/desktop-token   # an absolute path
+key_file: /home/you/.config/x_monitor/desktop-key   # an absolute path
 notify_only: true
 ```
 
@@ -185,13 +188,13 @@ channels:
     agent: laptop-desktop
     dismiss_on_recovery: true        # the default: close the notification when the monitor recovers
     timeout: 30s                     # the default: close it after this long; 0 keeps it until dismissed
-    icon: vigil                      # the default: Vigil's own icon, shipped with the agent
+    icon: x-monitor                      # the default: X-Monitor's own icon, shipped with the agent
     urgency:                         # one value for everything, or per status as here
       failed: critical
       recovered: low
 ```
 
-`icon` is `vigil`, an icon name from the desktop's icon theme (such as `dialog-error`), or the path
+`icon` is `x-monitor`, an icon name from the desktop's icon theme (such as `dialog-error`), or the path
 of an image on that computer. `urgency` is `low`, `normal` or `critical`. Most desktops keep a
 critical notification on screen until you dismiss it.
 
@@ -210,19 +213,19 @@ Either setting can be one value for every notification, or a mapping by status: 
 On NixOS the agent module sets this up as a user service that starts with the graphical session:
 
 ```nix
-services.vigil-agent = {
-  url = "wss://vigil.lan/api/agent/ws";
+services.x-monitor-agent = {
+  url = "wss://x-monitor.lan/api/agent/ws";
   desktop = {
     enable = true;
     id = "laptop-desktop";
-    tokenFile = "/run/secrets/vigil_agent_laptop_desktop";  # readable by the desktop user
+    keyFile = "/run/secrets/x_monitor_agent_laptop_desktop";  # readable by the desktop user
   };
 };
 ```
 
-This works with or without `services.vigil-agent.enable`. A newly added user service does not
+This works with or without `services.x-monitor-agent.enable`. A newly added user service does not
 start in a session that is already running. Start it with
-`systemctl --user start vigil-agent-desktop`, or log in again.
+`systemctl --user start x-monitor-agent-desktop`, or log in again.
 
 ## Webhook
 
@@ -233,9 +236,9 @@ that accept incoming webhooks, and your own scripts.
 channels:
   - id: home-assistant
     type: webhook
-    url_file: /run/secrets/ha_vigil_webhook_url   # or `url:` inline
+    url_file: /run/secrets/ha_x_monitor_webhook_url   # or `url:` inline
     method: POST                                  # POST (default), PUT or PATCH
-    headers: {X-Source: vigil}
+    headers: {X-Source: x-monitor}
     bearer_token_file: /run/secrets/hook_token    # or `bearer_token:`; sent as "Authorization: Bearer ..."
 ```
 
@@ -248,7 +251,7 @@ With no `payload`, the request body is this JSON:
   "status": "failed",
   "kind": "problem",
   "monitor": {"id": "nas-zfs", "name": "NAS", "host": "nas.lan"},
-  "url": "https://vigil.lan/monitor/nas-zfs",
+  "url": "https://x-monitor.lan/monitor/nas-zfs",
   "timestamp": "2026-09-24T22:10:00-05:00"
 }
 ```
@@ -279,7 +282,7 @@ channels:
     url: https://ntfy.sh          # the default; or your own server
     topic_file: /run/secrets/ntfy_topic   # or `topic:`
     token_file: /run/secrets/ntfy_token   # optional access token, or `token:`
-    # username: vigil             # or a user and `password` / `password_file`
+    # username: x-monitor             # or a user and `password` / `password_file`
     priority: {failed: urgent}
     tags: {failed: "rotating_light,server"}
 ```
@@ -310,11 +313,11 @@ channels:
     host: smtp.example.com
     security: starttls           # starttls (default, port 587), tls (port 465) or none (port 25)
     # port: 587                  # only when the server uses another port
-    username: vigil@example.com
+    username: x-monitor@example.com
     password_file: /run/secrets/smtp_password   # or `password:`
-    from: vigil@example.com      # defaults to `username`
+    from: x-monitor@example.com      # defaults to `username`
     to: [me@example.com, oncall@example.com]    # or one address, or a comma-separated string
-    subject_prefix: "[Vigil] "   # optional
+    subject_prefix: "[X-Monitor] "   # optional
 ```
 
 ## Apprise
@@ -333,7 +336,7 @@ channels:
 ```
 
 Apprise URLs usually carry the service's token, so prefer `urls_file`. The channel needs the
-`apprise` Python package, which the Nix package includes; with pip, install `vigil[apprise]`. Apprise
+`apprise` Python package, which the Nix package includes; with pip, install `x-monitor[apprise]`. Apprise
 shows failures, warnings and recoveries with the service's own colors or icons where it has them.
 
 ## PagerDuty and Opsgenie
@@ -369,7 +372,7 @@ The bell icon in the dashboard's header lists every channel with a **Send test**
 script, use the API:
 
 ```bash
-curl -X POST -u admin https://vigil.lan/api/notifications/laptop/test
+curl -X POST -u admin https://x-monitor.lan/api/notifications/laptop/test
 ```
 
 This sends a test notification and returns `{"sent": true}`, or the error if it could not be

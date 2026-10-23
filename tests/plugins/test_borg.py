@@ -1,12 +1,17 @@
 import json
 import re
+import shutil
+import subprocess
 import time
 from datetime import datetime
 import pytest
 
-from vigil.plugins.borg import Borg, _frame_line
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.borg import Borg, _frame_line
+from x_monitor.plugins.borg.shell import (
+    _preflight_script, _skip_reason, _ssh_endpoint, _then_steps, _with_preflight, _wrap_job,
+)
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -184,7 +189,7 @@ class TestFailures:
     async def test_a_cache_lock_timeout_is_unavailable(self, plugin, run_cycle):
         _collect(plugin, run_cycle, CmdResult(
             2, "", "Failed to create/acquire the lock "
-                   "/var/cache/vigil-borg/.cache/borg/abc/lock.exclusive (timeout)."))
+                   "/var/cache/x-monitor-borg/.cache/borg/abc/lock.exclusive (timeout)."))
         assert _latest_status("test-borg") == "unavailable"
 
     async def test_missing_repo_config_is_failed(self, make_plugin, run_cycle):
@@ -220,14 +225,16 @@ class TestCommand:
         assert "--json" in cmd
         assert "ssh://borg@host/srv/repo" in cmd
 
-    def test_command_bypasses_lock(self, make_plugin):
+    def test_reads_honour_the_repo_lock(self, make_plugin):
         p = make_plugin(Borg, BASE_CFG)
-        assert "--bypass-lock" in p._list_command()
+        reads = [p._list_command(), p._info_command(), *(c for _, c in p._canary_calls("a1"))]
+        assert not any("--bypass-lock" in c for c in reads)
+        assert "--lock-wait 30" in p._list_command()
 
     def test_command_sets_writable_borg_base_dir(self, make_plugin):
         p = make_plugin(Borg, BASE_CFG)
-        assert 'BORG_BASE_DIR="$__vigil_poll_base"' in p._list_command()
-        assert "__vigil_poll_base=$(mktemp -d)" in p._poll_command()
+        assert 'BORG_BASE_DIR="$__x_monitor_poll_base"' in p._list_command()
+        assert "__x_monitor_poll_base=$(mktemp -d)" in p._poll_command()
 
     def test_passphrase_passed_as_env_not_argv(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "passphrase": "s3cret"})
@@ -281,10 +288,10 @@ class TestCommand:
         assert "--last 1" in p._list_command()
 
     def test_ssh_key_sets_borg_rsh(self, make_plugin):
-        p = make_plugin(Borg, {**BASE_CFG, "ssh_key": "/run/secrets/vigil_ssh_key"})
+        p = make_plugin(Borg, {**BASE_CFG, "ssh_key": "/run/secrets/x_monitor_ssh_key"})
         cmd = p._list_command()
         assert "BORG_RSH=" in cmd
-        assert "/run/secrets/vigil_ssh_key" in cmd
+        assert "/run/secrets/x_monitor_ssh_key" in cmd
         assert "IdentitiesOnly=yes" in cmd
         assert "BatchMode=yes" in cmd
 
@@ -306,7 +313,7 @@ class TestCommand:
         assert "BORG_RSH=" not in make_plugin(Borg, BASE_CFG)._list_command()
 
     def test_borg_defaults_to_a_longer_timeout(self, make_plugin):
-        from vigil.core.connectors.ssh_connector import COLLECT_TIMEOUT
+        from x_monitor.core.connectors.ssh_connector import COLLECT_TIMEOUT
         p = make_plugin(Borg, BASE_CFG)
         assert p.timeout == Borg.DEFAULT_TIMEOUT
         assert p.timeout > COLLECT_TIMEOUT
@@ -399,7 +406,7 @@ class TestLockHints:
     async def test_a_cache_lock_points_at_the_shared_cache_dir(self, plugin, run_cycle):
         result = _collect(plugin, run_cycle, CmdResult(
             2, "", "Failed to create/acquire the lock "
-                   "/var/cache/vigil-borg/.cache/borg/abc123/lock.exclusive (timeout)."))
+                   "/var/cache/x-monitor-borg/.cache/borg/abc123/lock.exclusive (timeout)."))
         messages = " | ".join(m for m, _ in result.logs)
         assert "chunks cache" in messages
         assert "cache_dir" in messages
@@ -413,14 +420,14 @@ class TestPollDeadline:
 
     def test_a_sudo_poll_is_bounded_by_a_root_side_timeout(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "require_sudo": True, "timeout": "30m"})
-        assert 'timeout -k 5 "$(__vigil_poll_left)"' in p._list_command()
-        assert 'timeout -k 5 "$(__vigil_poll_left)"' in p._info_command()
+        assert 'timeout -k 5 "$(__x_monitor_poll_left)"' in p._list_command()
+        assert 'timeout -k 5 "$(__x_monitor_poll_left)"' in p._info_command()
 
     def test_one_deadline_covers_the_whole_poll(self, make_plugin):
         # Given the full timeout each, two calls run in sequence could together outlast the monitor's interval
         cmd = make_plugin(Borg, {**BASE_CFG, "timeout": "30m"})._poll_command()
         assert cmd.count("+ 1800 ))") == 1
-        assert cmd.count('timeout -k 5 "$(__vigil_poll_left)"') == 2
+        assert cmd.count('timeout -k 5 "$(__x_monitor_poll_left)"') == 2
 
     def test_the_deadline_sits_after_sudo_so_root_owns_it(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "require_sudo": True, "timeout": "30m"})
@@ -523,7 +530,7 @@ class TestBackupCommand:
 
     def test_backup_uses_persistent_cache_dir(self, make_plugin):
         cmd = make_plugin(Borg, BACKUP_CFG)._backup_command()
-        assert "BORG_BASE_DIR=/var/cache/vigil-borg" in cmd
+        assert "BORG_BASE_DIR=/var/cache/x-monitor-borg" in cmd
         assert "mktemp" not in cmd
 
     def test_cache_dir_configurable(self, make_plugin):
@@ -538,7 +545,7 @@ class TestBackupCommand:
         cmd = make_plugin(Borg, {**BASE_CFG, "cache_dir": "/srv/borgcache"})._poll_command()
         assert "$(mktemp -d)" in cmd
         assert "BORG_BASE_DIR=/srv/borgcache" in cmd
-        assert 'BORG_BASE_DIR="$__vigil_poll_base"' not in cmd
+        assert 'BORG_BASE_DIR="$__x_monitor_poll_base"' not in cmd
 
     def test_configured_cache_dir_applies_to_polls(self, make_plugin):
         p = make_plugin(Borg, {**BASE_CFG, "cache_dir": "/srv/borgcache"})
@@ -589,10 +596,10 @@ class TestBackupCommand:
 def _poll(size, exit_code, alive, out):
     """Build the raw stdout one poll_command produces on the target."""
     return CmdResult(0, (
-        f"===VIGIL_SIZE===\n{size}\n"
-        f"===VIGIL_EXIT===\n{exit_code if exit_code is not None else ''}\n"
-        f"===VIGIL_ALIVE===\n{1 if alive else 0}\n"
-        f"===VIGIL_OUT===\n{out}"
+        f"===XMONITOR_SIZE===\n{size}\n"
+        f"===XMONITOR_EXIT===\n{exit_code if exit_code is not None else ''}\n"
+        f"===XMONITOR_ALIVE===\n{1 if alive else 0}\n"
+        f"===XMONITOR_OUT===\n{out}"
     ), "")
 
 
@@ -603,7 +610,7 @@ def backup_plugin(make_plugin):
 
 async def _launch(plugin, action_id="run_backup", pid=4242):
     """Drive plan_action -> ActionPlan (launch) -> interpret_action, mirroring
-    VigilEngine.dispatch_action for a launched detached job. Fakes the launch
+    XMonitorEngine.dispatch_action for a launched detached job. Fakes the launch
     command's stdout as the remote pid."""
     plan = plugin.plan_action(action_id)
     if plan is None:
@@ -809,7 +816,7 @@ class TestRepoStats:
 
 class TestEventLogging:
     async def test_messages_land_where_the_ui_reads_them(self, plugin, run_cycle, db_manager):
-        from vigil.core.database.database import Event, LogLine
+        from x_monitor.core.database.database import Event, LogLine
         _collect(plugin, run_cycle, CmdResult(0, _list_json(int(time.time()) - 60), ""))
         db_manager.flush()
 
@@ -868,7 +875,7 @@ class TestArchiveCache:
         assert "original" not in archives[0]
 
 
-CANARY_CFG = {**BASE_CFG, "canary_path": "/Storage/System/.vigil-canary", "collect_stats": False}
+CANARY_CFG = {**BASE_CFG, "canary_path": "/Storage/System/.x-monitor-canary", "collect_stats": False}
 
 
 def _cycle_with(plugin, run_cycle, **extra):
@@ -890,12 +897,12 @@ class TestRestoreCanary:
         cmd = p.commands()[0].text
         assert p._poll_calls == ['list', 'canary', 'canary_live']
         assert "extract --stdout" in cmd
-        assert "host-2024 Storage/System/.vigil-canary" in cmd.replace("'", "")
+        assert "host-2024 Storage/System/.x-monitor-canary" in cmd.replace("'", "")
 
     async def test_the_live_canary_is_read_without_sudo_first(self, make_plugin, run_cycle, tmp_path):
         import subprocess
-        from vigil.plugins.borg.shell import _split_poll
-        canary = tmp_path / ".vigil-canary"
+        from x_monitor.plugins.borg.shell import _split_poll
+        canary = tmp_path / ".x-monitor-canary"
         canary.write_text("token")
         p = make_plugin(Borg, {**CANARY_CFG, "canary_path": str(canary), "require_sudo": True})
         _cycle_with(p, run_cycle)
@@ -1062,7 +1069,7 @@ LISTING = "\n".join([
 def _run_filter(member: str, lines: str, tmp_path) -> str:
     """Runs the children filter the browse command uses over a borg listing, in a real shell."""
     import subprocess
-    from vigil.plugins.borg.parsing import _children_filter
+    from x_monitor.plugins.borg.parsing import _children_filter
     listing = tmp_path / "listing"
     listing.write_text(lines + "\n")
     return subprocess.run(["sh", "-c", f"{_children_filter(member)} {listing}"],
@@ -1114,7 +1121,7 @@ class TestBrowse:
         assert outcome.success is True and "3 entries" in outcome.metadata['content']
 
     async def test_a_real_item_beats_a_made_up_folder(self):
-        from vigil.plugins.borg.parsing import _parse_listing
+        from x_monitor.plugins.borg.parsing import _parse_listing
         entries = _parse_listing("d\t\t\tx/etc\nd\t0\t2026-09-20T10:00:00\tx/etc")
         assert len(entries) == 1 and entries[0]['mtime'] == "2026-09-20 10:00"
 
@@ -1323,3 +1330,183 @@ class TestDiff:
         out = "added       1.20 kB etc/new\nremoved     0 B etc/old"
         content = p.interpret_action("diff_archive", _framed(p, CmdResult(0, out, "")), archive="b2").metadata['content']
         assert content.startswith("Changes from b1 to b2: 2") and "etc/new" in content
+
+
+def _sh(script: str) -> subprocess.CompletedProcess:
+    """Runs generated job shell for real, so its control flow is tested rather than its spelling."""
+    return subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30)
+
+
+class TestJobPreflight:
+    async def test_an_ssh_repo_probes_its_servers_ssh_banner_first(self, make_plugin):
+        cmd = make_plugin(Borg, BACKUP_CFG).plan_action("run_backup").command
+        assert "/dev/tcp/host/22" in cmd and cmd.index("/dev/tcp/host/22") < cmd.index("setsid")
+
+    async def test_the_probe_uses_the_urls_port(self, make_plugin):
+        cmd = make_plugin(Borg, {**BACKUP_CFG, "repo": "ssh://borg@far.example:2222/srv/repo"}).plan_action("run_backup").command
+        assert "/dev/tcp/far.example/2222" in cmd
+
+    @pytest.mark.parametrize("cfg", [{"repo": "/srv/local"}, {"skip_when_unreachable": False}])
+    async def test_a_local_repo_or_a_disabled_probe_launches_directly(self, make_plugin, cfg):
+        cmd = make_plugin(Borg, {**BACKUP_CFG, **cfg}).plan_action("run_backup").command
+        assert "/dev/tcp" not in cmd
+
+    async def test_a_running_unit_is_tested_for(self, make_plugin):
+        cmd = make_plugin(Borg, {**BACKUP_CFG, "skip_while_active": ["borg-check.service"]}).plan_action("check_repo").command
+        assert "systemctl is-active --quiet borg-check.service" in cmd
+
+    async def test_a_skipped_launch_records_no_job_and_is_not_a_failure(self, make_plugin):
+        p = make_plugin(Borg, BACKUP_CFG)
+        p.plan_action("run_backup")
+        outcome = p.interpret_action("run_backup", CmdResult(0, "__XMONITOR_SKIP__ host:22 is not answering SSH\n", ""))
+        assert outcome.success is True and outcome.status is None
+        assert p.jobs.running() is None
+        assert outcome.metadata['content'] == "Backup skipped: host:22 is not answering SSH"
+
+    def test_a_closed_port_skips_and_never_launches(self):
+        script = _with_preflight(_preflight_script(("127.0.0.1", 1), []), "echo launched")
+        out = _sh(script).stdout
+        assert "launched" not in out and _skip_reason(out) == "127.0.0.1:1 is not answering SSH"
+
+    def test_an_inactive_unit_lets_the_job_launch(self):
+        script = _with_preflight(_preflight_script(None, ["x-monitor-no-such-unit.service"]), "echo launched")
+        assert _sh(script).stdout.strip() == "launched"
+
+    def test_a_host_the_shell_could_misread_is_not_probed(self):
+        assert _ssh_endpoint("ssh://borg@$(reboot)/srv") is None
+
+
+CHAIN_CFG = {**BACKUP_CFG, "keep_daily": 7, "prune_after_backup": True, "compact_after_backup": True}
+
+
+class TestBackupChain:
+    async def test_a_backup_alone_by_default(self, make_plugin):
+        cmd = make_plugin(Borg, {**BACKUP_CFG, "keep_daily": 7}).plan_action("run_backup").command
+        assert " prune " not in cmd and " compact " not in cmd
+
+    async def test_prune_then_compact_follow_the_create(self, make_plugin):
+        cmd = _unquoted(make_plugin(Borg, CHAIN_CFG).plan_action("run_backup"))
+        assert cmd.index("create") < cmd.index("prune --list --stats") < cmd.index("compact --progress")
+        assert "--keep-daily 7" in cmd
+
+    async def test_a_dry_run_never_prunes(self, make_plugin):
+        cmd = make_plugin(Borg, CHAIN_CFG).plan_action("dry_run_backup").command
+        assert " prune " not in cmd and " compact " not in cmd
+
+    def test_pruning_after_a_backup_needs_a_retention_policy(self, make_plugin):
+        with pytest.raises(ValueError, match="keep_"):
+            make_plugin(Borg, {**BACKUP_CFG, "prune_after_backup": True})
+
+    @pytest.mark.parametrize("first, ran, status", [(0, True, 0), (1, True, 1), (2, False, 2)])
+    def test_steps_run_only_after_success_or_a_warning(self, first, ran, status):
+        result = _sh(_then_steps(f"(exit {first})", [("Pruning", "echo pruned")]))
+        assert ("pruned" in result.stdout) is ran and result.returncode == status
+
+    def test_a_failing_step_fails_the_job_and_stops_the_rest(self):
+        result = _sh(_then_steps("true", [("Pruning", "(exit 2)"), ("Compacting", "echo compacted")]))
+        assert result.returncode == 2 and "compacted" not in result.stdout
+
+    def test_each_step_becomes_the_progress(self):
+        assert Borg._progress_from_lines(["==> Compacting"]) == "Compacting"
+
+
+class TestJobWrappers:
+    async def test_no_wrappers_by_default(self, make_plugin):
+        cmd = make_plugin(Borg, BACKUP_CFG).plan_action("run_backup").command
+        assert "nice" not in cmd and "flock" not in cmd and "systemd-inhibit" not in cmd
+
+    async def test_lock_then_inhibitor_then_priority_wrap_the_whole_job(self, make_plugin):
+        cfg = {**CHAIN_CFG, "job_lock": "/run/lock/x-monitor-borg", "inhibit_sleep": True,
+               "job_nice": 19, "job_io_idle": True}
+        cmd = _unquoted(make_plugin(Borg, cfg).plan_action("run_backup"))
+        order = ["flock /run/lock/x-monitor-borg systemd-inhibit", "--what=sleep:shutdown",
+                 "nice -n 19 ionice -c 3 sh -c", "create", "compact --progress"]
+        assert [cmd.index(part) for part in order] == sorted(cmd.index(part) for part in order)
+
+    async def test_polls_are_never_wrapped(self, make_plugin):
+        p = make_plugin(Borg, {**BACKUP_CFG, "job_nice": 19, "job_lock": "/run/lock/x"})
+        p.commands()
+        assert "nice" not in p._poll_command() and "flock" not in p._poll_command()
+
+    def test_the_wrapped_job_keeps_its_exit_status(self, tmp_path):
+        if not shutil.which("flock"):
+            pytest.skip("flock is not installed")
+        lock = str(tmp_path / "job.lock")
+        result = _sh(_wrap_job("echo ran; (exit 3)", ["flock", lock, "nice", "-n", "19"], lock))
+        assert result.stdout.strip() == "ran" and result.returncode == 3
+
+
+TRACKED_CFG = {**BASE_CFG, "repo": "/srv/local", "collect_stats": False,
+               "check_kinds": {"repository": "8d", "extract": "32d"}}
+
+
+def _finish_job(plugin, action_id, exit_code, **kwargs):
+    plugin.plan_action(action_id, **kwargs)
+    plugin.storage.apply(plugin.interpret_action(action_id, CmdResult(0, "91\n", "")))
+    _poll_once(plugin, _poll(5, exit_code, False, ""))
+
+
+class TestCheckKinds:
+    @pytest.mark.parametrize("kind, option, job", [
+        ("repository", "--repository-only", "check-repository"),
+        ("archives", "--archives-only", "check-archives"),
+        ("data", "--verify-data", "check-data"),
+    ])
+    async def test_each_kind_runs_its_own_check(self, make_plugin, kind, option, job):
+        p = make_plugin(Borg, BASE_CFG)
+        assert option in p.plan_action("check_repo", kind=kind).command
+        p.storage.apply(p.interpret_action("check_repo", CmdResult(0, "91\n", "")))
+        assert p.jobs.running()['kind'] == job
+
+    async def test_an_extract_check_dry_runs_the_newest_archive(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, BASE_CFG)
+        _listed(p, run_cycle, "b2", "b1")
+        cmd = _unquoted(p.plan_action("check_repo", kind="extract"))
+        assert "extract --dry-run" in cmd and "::b2" in cmd
+
+    async def test_an_extract_check_needs_a_listed_archive(self, make_plugin):
+        assert make_plugin(Borg, BASE_CFG).plan_action("check_repo", kind="extract").success is False
+
+    async def test_an_unknown_kind_is_refused(self, make_plugin):
+        assert make_plugin(Borg, BASE_CFG).plan_action("check_repo", kind="everything").success is False
+
+    def test_an_unknown_tracked_kind_is_a_config_error(self, make_plugin):
+        with pytest.raises(ValueError, match="check_kinds"):
+            make_plugin(Borg, {**BASE_CFG, "check_kinds": {"weekly": "8d"}})
+
+    async def test_a_finished_check_renews_what_it_covered(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, {**TRACKED_CFG, "check_kinds": {"repository": "8d"}})
+        _finish_job(p, "check_repo", 0, kind="data")
+        assert _latest_metric("test-borg", "checks_ok") == 1.0
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_status("test-borg") == "online"
+
+    async def test_a_kind_never_run_fails_the_monitor(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, TRACKED_CFG)
+        _finish_job(p, "check_repo", 0, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_metric("test-borg", "checks_ok") == 0.0
+        assert _latest_status("test-borg") == "failed"
+
+    async def test_a_failed_check_fails_until_one_succeeds(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, {**TRACKED_CFG, "check_kinds": {"repository": "8d"}})
+        _finish_job(p, "check_repo", 2, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_status("test-borg") == "failed"
+        _finish_job(p, "check_repo", 0, kind="repository")
+        p.commands()
+        _cycle_with(p, run_cycle)
+        assert _latest_status("test-borg") == "online"
+
+    async def test_units_and_kinds_are_judged_together(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, {**CHECK_CFG, "check_kinds": {"extract": "32d"}})
+        p.commands()
+        _cycle_with(p, run_cycle, checks=_checks_out(ok=int(time.time()) - 3600))
+        assert _latest_status("test-borg") == "failed"
+        _finish_job(p, "check_repo", 0, kind="extract")
+        p.commands()
+        _cycle_with(p, run_cycle, checks=_checks_out(ok=int(time.time()) - 3600))
+        assert _latest_status("test-borg") == "online"

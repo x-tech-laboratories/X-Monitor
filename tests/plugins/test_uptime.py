@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.uptime import Uptime
-from vigil.core.connectors.types import PingResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.uptime import Uptime
+from x_monitor.core.connectors.types import PingResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 UPTIME_CFG = {
@@ -100,30 +100,30 @@ def _waker(make_plugin, **extra):
 
 
 class TestWake:
-    async def test_sends_from_the_vigil_server_by_default(self, make_plugin):
+    async def test_sends_from_the_x_monitor_server_by_default(self, make_plugin):
         from unittest.mock import patch
-        from vigil.core.connectors.types import IoActionPlan
-        from vigil.core.connectors.wol import magic_packet
+        from x_monitor.core.connectors.types import IoActionPlan
+        from x_monitor.core.connectors.wol import magic_packet
         plugin = _waker(make_plugin)
         plan = plugin.plan_action('wake')
         assert isinstance(plan, IoActionPlan)
-        with patch('vigil.plugins.uptime.send_magic_packet') as send:
+        with patch('x_monitor.plugins.uptime.send_magic_packet') as send:
             assert plan.call() is None
         send.assert_called_once_with(magic_packet(MAC), '255.255.255.255', 9)
 
     async def test_broadcast_port_and_password_are_configurable(self, make_plugin):
         from unittest.mock import patch
-        from vigil.core.connectors.wol import magic_packet
+        from x_monitor.core.connectors.wol import magic_packet
         plugin = _waker(make_plugin, wol_broadcast='192.168.1.255', wol_port=7,
                         wol_password='01:02:03:04:05:06')
-        with patch('vigil.plugins.uptime.send_magic_packet') as send:
+        with patch('x_monitor.plugins.uptime.send_magic_packet') as send:
             plugin.plan_action('wake').call()
         send.assert_called_once_with(magic_packet(MAC, '01:02:03:04:05:06'), '192.168.1.255', 7)
 
     async def test_a_refused_send_is_reported(self, make_plugin):
         from unittest.mock import patch
         plugin = _waker(make_plugin)
-        with patch('vigil.plugins.uptime.send_magic_packet', side_effect=OSError('Network is unreachable')):
+        with patch('x_monitor.plugins.uptime.send_magic_packet', side_effect=OSError('Network is unreachable')):
             error = plugin.plan_action('wake').call()
         outcome = plugin.interpret_action('wake', error)
         assert outcome.success is False
@@ -141,7 +141,7 @@ class TestWake:
         assert 'not a MAC address' in outcome.logs[0][0]
 
     async def test_wake_via_another_monitor(self, make_plugin):
-        from vigil.core.connectors.types import ActionPlan
+        from x_monitor.core.connectors.types import ActionPlan
         plan = _waker(make_plugin, wake_via='host1-ssh', wol_broadcast='10.0.2.255').plan_action('wake')
         assert isinstance(plan, ActionPlan)
         assert plan.via == 'host1-ssh'
@@ -158,7 +158,7 @@ class TestWake:
         assert 'bad wake_command' in outcome.logs[0][0]
 
     async def test_remote_outcomes(self, make_plugin):
-        from vigil.core.connectors.types import CmdResult
+        from x_monitor.core.connectors.types import CmdResult
         plugin = _waker(make_plugin, wake_via='host1-ssh')
         ok = plugin.interpret_action('wake', CmdResult(0, '', ''))
         assert ok.success is True and 'from monitor host1-ssh' in ok.logs[0][0]
@@ -166,7 +166,7 @@ class TestWake:
         assert failed.success is False and 'needs python3 or socat' in failed.logs[0][0]
 
     async def test_button_confirms_with_the_host(self, make_plugin):
-        from vigil.core.ui.components import _substitute
+        from x_monitor.core.ui.components import _substitute
         plugin = _waker(make_plugin)
         spec = plugin.UI_SPEC
         assert ['wake'] in spec['layout']
@@ -209,3 +209,14 @@ class TestWakeOnDown:
     async def test_confirm_mentions_the_automatic_wake(self, make_plugin):
         plugin = _waker(make_plugin, wake_on_down=True)
         assert 'every 10 Minutes, up to 3 times' in plugin.UI_SPEC['buttons']['wake'][0]['confirm']
+
+class TestUiSpec:
+    async def test_the_up_metric_is_drawn_as_an_uptime_strip(self, plugin):
+        spec = plugin.UI_SPEC
+        assert spec['cards']['uptime_strip'] == {'kind': 'strip', 'metric': 'up', 'title': 'AVAILABILITY'}
+        assert ['uptime_strip'] in spec['layout']
+
+    async def test_the_status_card_and_latency_chart_stay(self, plugin):
+        spec = plugin.UI_SPEC
+        assert spec['cards']['status_card']['metric'] == 'up'
+        assert spec['chart']['metric'] == 'latency_ms'

@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.disk_io import DiskIo
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.disk_io import DiskIo
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-disk_io", "id": "test-disk_io", "ssh_config": {"host": "test.host"}}
 
@@ -44,7 +44,7 @@ def plugin(make_plugin):
     return make_plugin(DiskIo, CFG)
 
 
-from vigil.plugins.disk_io import (
+from x_monitor.plugins.disk_io import (
     _parse_diskstats, _is_physical, _auto_detect_device, _format_rate,
     _is_device_path, _resolve_device_path,
 )
@@ -153,3 +153,14 @@ class TestCollection:
     async def test_ssh_failure_is_unavailable(self, plugin, run_cycle):
         _run(plugin, run_cycle, "", code=-1, stderr="err")
         assert _latest_status() == "unavailable"
+
+
+class TestUiSpec:
+    def test_one_chart_draws_read_and_write_as_lines(self, plugin):
+        charts = plugin.UI_SPEC['charts']
+        assert list(charts) == ['read_chart']
+        assert charts['read_chart']['style'] == 'lines'
+        assert [s['metric'] for s in charts['read_chart']['series']] == ['read_kbps', 'write_kbps']
+
+    def test_the_device_and_current_rates_stay_visible(self, plugin):
+        assert plugin.UI_SPEC['layout'][0] == ['host_card', 'io_device_card', 'read_card', 'write_card']

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- A speedometer cut out of the X-Tech hexagon, leaving the same margin as the X in the X-Tech icon. -->
+  <title>X-Monitor</title>
+  <mask id="cut">
+    <rect width="64" height="64" fill="#fff"/>
+    <g fill="none" stroke="#000" stroke-width="4.92" stroke-linecap="round">
+      <path d="M22.082 40.322A12.946 12.946 0 1 1 41.918 40.322"/>
+    </g>
+    <path d="M32 32L36.577 26.545" stroke="#000" stroke-width="3.625" stroke-linecap="round"/>
+    <circle cx="32" cy="32" r="2.848" fill="#000"/>
+  </mask>
+  <path fill="#0088ff" mask="url(#cut)" d="M63 32 47.5 58.847 16.5 58.847 1 32 16.5 5.153 47.5 5.153Z"/>
+</svg>

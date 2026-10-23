@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.folders import Folders
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.folders import Folders
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 _GB = 1024 ** 3
 
@@ -102,3 +102,17 @@ class TestFoldersActions:
     async def test_on_action_returns_false(self, make_plugin):
         p = make_plugin(Folders, _cfg(folders=[{"path": "/x"}]))
         assert p.plan_action("anything") is None
+
+
+class TestUiSpec:
+    async def test_folders_are_meters_filled_against_the_largest_folder_at_each_refresh(self, make_plugin):
+        p = make_plugin(Folders, _cfg(folders=[{"path": "/a"}, {"path": "/b"}]))
+        repeat = p.UI_SPEC['cards']['folders']['repeat']
+        assert repeat['container'] == 'bars'
+        assert repeat['bar_max'] == 'largest'
+        assert repeat['item_color_by'] == p._item_color
+
+    async def test_the_meters_make_the_largest_card_redundant(self, make_plugin):
+        spec = make_plugin(Folders, _cfg(folders=[{"path": "/a"}])).UI_SPEC
+        assert 'worst_card' not in spec['cards']
+        assert 'worst_card' not in {cell for row in spec['layout'] for cell in row}

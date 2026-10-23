@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from vigil.plugins.pihole import (
+from x_monitor.plugins.pihole import (
     Pihole,
     SCRIPT_SEP,
     _build_blocking_script,
@@ -13,8 +13,8 @@ from vigil.plugins.pihole import (
     _parse_response,
     _rate_is_checked,
 )
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 
 BASE_CFG = {
@@ -271,6 +271,33 @@ class TestBlockRateDisabled:
         assert _latest_status() == "failed"
 
 
+class TestOptionalBlockRateLimits:
+    def test_a_null_limit_counts_as_off_for_the_predicate(self):
+        assert _rate_is_checked(5, None)
+        assert _rate_is_checked(None, 1)
+        assert not _rate_is_checked(None, None)
+        assert not _rate_is_checked(0, None)
+
+    async def test_warning_only_never_fails(self, make_plugin, run_cycle):
+        p = make_plugin(Pihole, dict(BASE_CFG, block_rate_threshold=None))
+        _respond(p, run_cycle, _summary(total=10000, blocked=0, percent=0.0))
+        assert _latest_status() == "warning"
+        assert p._block_rate_color(0.0) == "warning"
+
+    async def test_failure_only_never_warns(self, make_plugin, run_cycle):
+        p = make_plugin(Pihole, dict(BASE_CFG, block_rate_warning=None))
+        _respond(p, run_cycle, _summary(total=10000, blocked=300, percent=3.0))
+        assert _latest_status() == "online"
+        _respond(p, run_cycle, _summary(total=10000, blocked=20, percent=0.2))
+        assert _latest_status() == "failed"
+
+    async def test_both_null_stops_the_rate_being_judged(self, make_plugin, run_cycle):
+        p = make_plugin(Pihole, dict(BASE_CFG, block_rate_warning=None, block_rate_threshold=None))
+        _respond(p, run_cycle, _summary(total=10000, blocked=0, percent=0.0))
+        assert _latest_status() == "online"
+        assert p._block_rate_color(0.0) is None
+
+
 class TestBuildBlockingScript:
     def test_posts_to_blocking_endpoint(self):
         script = _build_blocking_script(
@@ -307,13 +334,25 @@ class TestBuildGravityScript:
 
 
 class TestPiholeActions:
-    def test_exposes_expected_actions(self, plugin):
-        ids = {a["action_id"] for a in plugin.get_actions()}
-        assert ids == {"enable_blocking", "update_gravity"}
+    def test_exposes_a_blocking_switch_and_gravity_update(self, plugin):
+        assert plugin.get_actions() == [
+            {"name": "Blocking", "kind": "toggle", "metric": "blocking_enabled", "icon": "shield",
+             "on_action_id": "enable_blocking", "off_action_id": "disable_blocking"},
+            {"name": "Update Gravity", "action_id": "update_gravity",
+             "variant": "secondary", "icon": "refresh"},
+        ]
 
-    def test_disable_blocking_is_not_offered(self, plugin):
-        blob = json.dumps(plugin.get_actions()).lower()
-        assert "disable" not in blob
+    async def test_disable_blocking_success(self, plugin):
+        plan = plugin.plan_action("disable_blocking")
+        assert '"blocking": false' in plan.command
+        outcome = plugin.interpret_action("disable_blocking", CmdResult(0, "", ""))
+        assert outcome.success is True
+        assert outcome.logs == [("Blocking disabled", "INFO")]
+
+    async def test_disable_blocking_failure(self, plugin):
+        outcome = plugin.interpret_action("disable_blocking", CmdResult(1, "", "connection refused"))
+        assert outcome.success is False
+        assert "disable" in outcome.logs[0][0]
 
     async def test_unknown_action_returns_false(self, plugin):
         assert plugin.plan_action("anything") is None
@@ -342,3 +381,20 @@ class TestPiholeActions:
     async def test_update_gravity_uses_gravity_timeout(self, plugin):
         plan = plugin.plan_action("update_gravity")
         assert plan.timeout == plugin.gravity_timeout
+
+
+class TestUiSpec:
+    def test_block_rate_is_a_gauge_keeping_its_threshold_colour(self, plugin):
+        card = plugin.UI_SPEC['cards']['block_rate_card']
+        assert card['kind'] == 'gauge'
+        assert card['metric'] == 'block_rate_pct'
+        assert card['color'](0.4) == 'failed'
+
+    def test_queries_are_a_share_of_blocked_forwarded_and_cached(self, plugin):
+        card = plugin.UI_SPEC['cards']['queries_card']
+        assert card['kind'] == 'share'
+        assert [p['metric'] for p in card['parts']] == [
+            'queries_blocked', 'queries_forwarded', 'queries_cached']
+
+    def test_the_block_rate_history_chart_stays(self, plugin):
+        assert plugin.UI_SPEC['chart']['metric'] == 'block_rate_pct'

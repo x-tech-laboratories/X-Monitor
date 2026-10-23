@@ -1,5 +1,5 @@
-from vigil.core.connectors.types import CmdResult
-from vigil.plugins.base.disk_usage import (
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.plugins.base.disk_usage import (
     PSEUDO_FS_TYPES, df_command, du_command, parse_df, parse_du, path_key,
 )
 

@@ -1,8 +1,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from vigil.core.connectors import ssh_connector as ssh_module
-from vigil.core.connectors.ssh_connector import SSHConnection, _TofuClient
+from x_monitor.core.connectors import ssh_connector as ssh_module
+from x_monitor.core.connectors.ssh_connector import SSHConnection, _TofuClient
 
 
 def _completed_process(exit_status=0, stdout="", stderr=""):

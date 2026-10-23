@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
-from vigil.core.connectors.ssh_connector import SSHConnection, measure_channel_wait
-from vigil.core.connectors.types import CmdResult, CollectResult, Command
-from vigil.core.coordination.cycle_stats import CycleStats
-from vigil.core.coordination.engine import VigilEngine
-from vigil.core.database.database import db
+from x_monitor.core.connectors.ssh_connector import SSHConnection, measure_channel_wait
+from x_monitor.core.connectors.types import CmdResult, CollectResult, Command
+from x_monitor.core.coordination.cycle_stats import CycleStats
+from x_monitor.core.coordination.engine import XMonitorEngine
+from x_monitor.core.database.database import db
 from tests.unit.test_ssh_transport import _mock_conn_and_proc
 
 
@@ -111,8 +111,8 @@ class _Probe:
 def _engine(tmp_path):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(yaml.dump({"database": {"path": str(tmp_path / "t.db")}, "plugins": []}))
-    with patch("vigil.core.connectors.engine.SSHConnection"):
-        return VigilEngine(str(cfg))
+    with patch("x_monitor.core.connectors.engine.SSHConnection"):
+        return XMonitorEngine(str(cfg))
 
 
 class TestEngineRecordsCycles:

@@ -5,11 +5,11 @@ import dns.resolver
 import dns.rrset
 import pytest
 
-from vigil.core.connectors.types import DnsQuery, DnsResult
-from vigil.plugins.base.dns_lookup import (
+from x_monitor.core.connectors.types import DnsQuery, DnsResult
+from x_monitor.plugins.base.dns_lookup import (
     answer_values, failure_message, record_type, resolve_now,
 )
-from vigil.plugins.ddns_updater import DdnsUpdater
+from x_monitor.plugins.ddns_updater import DdnsUpdater
 
 
 def _rrset(rtype, *values):
@@ -102,14 +102,14 @@ class TestDdnsReadsTheRecordLikeDnsRecord:
 
     def test_txt_value_matches(self):
         answer = _rrset('TXT', '"v=spf1 " "-all"')
-        with patch('vigil.plugins.ddns_updater.resolve_now', return_value=DnsResult(kind='ok', answer=answer)):
+        with patch('x_monitor.plugins.ddns_updater.resolve_now', return_value=DnsResult(kind='ok', answer=answer)):
             assert self._plugin('TXT')._resolve_public_record() == answer_values('TXT', answer)[0]
 
     def test_failed_lookup_is_none(self):
-        with patch('vigil.plugins.ddns_updater.resolve_now', return_value=DnsResult(kind='nxdomain')):
+        with patch('x_monitor.plugins.ddns_updater.resolve_now', return_value=DnsResult(kind='nxdomain')):
             assert self._plugin('A')._resolve_public_record() is None
 
     def test_query_uses_the_configured_resolver(self):
-        with patch('vigil.plugins.ddns_updater.resolve_now', return_value=DnsResult(kind='nxdomain')) as resolve:
+        with patch('x_monitor.plugins.ddns_updater.resolve_now', return_value=DnsResult(kind='nxdomain')) as resolve:
             self._plugin('aaaa')._resolve_public_record()
         assert resolve.call_args.args[0] == DnsQuery('example.com', 'AAAA', resolver='8.8.8.8', timeout=10.0)

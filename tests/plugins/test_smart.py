@@ -1,9 +1,9 @@
 import pytest
 
 pytestmark = pytest.mark.asyncio
-from vigil.plugins.smart import Smart
-from vigil.core.connectors.types import CmdResult
-from vigil.core.database.database import db, StatusHistory, Metric
+from x_monitor.plugins.smart import Smart
+from x_monitor.core.connectors.types import CmdResult
+from x_monitor.core.database.database import db, StatusHistory, Metric
 
 CFG = {"name": "test-smart", "id": "test-smart", "ssh_config": {"host": "test.host"}}
 
@@ -33,7 +33,7 @@ def plugin(make_plugin):
     return make_plugin(Smart, CFG)
 
 
-from vigil.plugins.smart import _SMART_SCRIPT
+from x_monitor.plugins.smart import _SMART_SCRIPT
 
 
 class TestCollection:
@@ -107,3 +107,74 @@ class TestNonPhysicalDevices:
 
     def test_skips_alone_look_like_no_disks(self, plugin):
         assert plugin.parse([CmdResult(0, "SKIP /dev/zram0\nSKIP /dev/zd0", "")]).status == 'unavailable'
+
+
+class TestUiSpec:
+    async def test_healthy_failed_and_unreadable_disks_share_one_bar(self, plugin):
+        health = plugin.UI_SPEC['cards']['smart_failed_card']
+        assert health['kind'] == 'share'
+        assert [(p['metric'], p['color']) for p in health['parts']] == [
+            ('disks_ok', 'online'), ('disks_failed', 'failed'), ('disks_unknown', 'neutral')]
+
+    async def test_the_share_replaces_the_healthy_count_card(self, plugin):
+        assert set(plugin.UI_SPEC['cards']) == {
+            'smart_total_card', 'smart_failed_card', 'smart_disk_tiles'}
+
+
+class TestDiskTiles:
+    def test_each_disk_is_recorded_with_its_verdict_and_readings(self, plugin):
+        result = plugin.parse([CmdResult(0, (
+            "PASS /dev/sda temp=34 hours=12345\n"
+            "FAIL /dev/sdb temp=51\n"
+            "UNKNOWN /dev/sdc Permission denied\n"
+            "SKIP /dev/zd0\n"), "")])
+        assert result.snapshot == [
+            {'label': 'sda', 'health': 'PASSED', 'temperature': 34.0, 'power_on_hours': 12345.0},
+            {'label': 'sdb', 'health': 'FAILED', 'temperature': 51.0, 'power_on_hours': None},
+            {'label': 'sdc', 'health': 'unknown', 'temperature': None, 'power_on_hours': None},
+        ]
+
+    def test_the_old_output_shape_still_parses(self, plugin):
+        result = plugin.parse([CmdResult(0, "PASS /dev/sda\nFAIL /dev/sdb", "")])
+        assert result.metrics['disks_ok'] == 1
+        assert result.snapshot == [
+            {'label': 'sda', 'health': 'PASSED', 'temperature': None, 'power_on_hours': None},
+            {'label': 'sdb', 'health': 'FAILED', 'temperature': None, 'power_on_hours': None},
+        ]
+
+    def test_an_unreadable_reading_is_left_out(self, plugin):
+        result = plugin.parse([CmdResult(0, "PASS /dev/sda temp=hot hours=", "")])
+        assert result.snapshot[0]['temperature'] is None
+        assert result.snapshot[0]['power_on_hours'] is None
+
+    def test_no_disks_clears_the_tiles(self, plugin):
+        assert plugin.parse([CmdResult(0, "SKIP /dev/zd0", "")]).snapshot == []
+
+    def test_the_script_reads_attributes_in_the_same_smartctl_call(self):
+        assert "smartctl -H -A" in _SMART_SCRIPT
+        assert "temp=" in _SMART_SCRIPT and "hours=" in _SMART_SCRIPT
+
+    def test_the_tiles_are_their_own_row(self, plugin):
+        assert ['smart_disk_tiles'] in plugin.UI_SPEC['layout']
+        assert plugin.card_row() == ['smart_total_card', 'smart_failed_card']
+
+    def test_the_tiles_repeat_over_the_snapshot(self, plugin):
+        repeat = plugin.UI_SPEC['cards']['smart_disk_tiles']['repeat']
+        assert repeat['source'] == 'snapshot'
+        assert repeat['container'] == 'tiles'
+
+    @pytest.mark.parametrize("item,caption", [
+        ({'health': 'PASSED', 'temperature': 34.0, 'power_on_hours': 12345.0},
+         'PASSED · 34°C · 12,345 h'),
+        ({'health': 'FAILED', 'temperature': 51.0, 'power_on_hours': None}, 'FAILED · 51°C'),
+        ({'health': 'unknown', 'temperature': None, 'power_on_hours': None}, 'unknown'),
+    ])
+    def test_the_caption_adds_the_readings_it_has(self, plugin, item, caption):
+        repeat = plugin.UI_SPEC['cards']['smart_disk_tiles']['repeat']
+        assert repeat['item_format_fn'](item) == caption
+
+    @pytest.mark.parametrize("health,color", [
+        ('PASSED', 'online'), ('FAILED', 'failed'), ('unknown', 'unavailable')])
+    def test_the_tile_color_follows_the_verdict(self, plugin, health, color):
+        repeat = plugin.UI_SPEC['cards']['smart_disk_tiles']['repeat']
+        assert repeat['item_color_by']({'health': health}) == color
