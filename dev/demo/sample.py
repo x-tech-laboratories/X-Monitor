@@ -304,9 +304,14 @@ SAMPLES: Dict[str, Callable[[Any, int, int], Any]] = {
     'disk_space': disk_space, 'filesystems': filesystems, 'zfs': zfs, 'smart': smart,
     'uptime': uptime, 'http': http, 'ports': ports, 'pihole': pihole, 'unbound': unbound,
     'containers': containers, 'syncthing': syncthing, 'borg': borg, 'nixos_upgrade': nixos_upgrade, 'vuln_scan': vuln_scan,
+}
+
+# Types whose sample runs the monitor's own parser on canned output, so each needs a real plugin.
+PARSED_SAMPLES: Dict[str, Callable[[Any, int, int], CollectResult]] = {
     'package_updates': package_updates, 'reboot_required': reboot_required, 'interfaces': interfaces,
     'sessions': sessions, 'host_control': host_control,
 }
+SAMPLES.update(PARSED_SAMPLES)
 
 
 # ============================================================================
