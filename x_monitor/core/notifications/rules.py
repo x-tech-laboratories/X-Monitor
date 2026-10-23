@@ -12,7 +12,7 @@ from typing import Any, Deque, Dict, FrozenSet, Iterable, List, Mapping, Optiona
 import logging
 
 from x_monitor.core.connectors.types import Status
-from x_monitor.core.coordination.monitor_graph import is_link
+from x_monitor.core.coordination.monitor_graph import is_link, restates_children
 from x_monitor.plugins.base.plugin_helpers import parse_duration
 
 log = logging.getLogger(__name__)
@@ -105,8 +105,8 @@ def resolve_rules(roots: Iterable[Any], defaults: Mapping[str, Any],
 
     A group's `notify:` settings pass down to everything defined beneath it,
     not to monitors it only links to, so each monitor has one rule however many
-    places show it. A group never notifies for itself, because its status only
-    repeats its children's.
+    places show it. A plain group never notifies for itself, because its status
+    only repeats its children's; any other monitor with children still does.
     """
     rules: Dict[str, Rule] = {}
 
@@ -114,8 +114,7 @@ def resolve_rules(roots: Iterable[Any], defaults: Mapping[str, Any],
         for plugin in plugins:
             config = getattr(plugin, 'config', None) or {}
             settings = _merge(inherited, config.get('notify'))
-            is_group = bool(plugin.children) or config.get('type') == 'group'
-            if not is_group:
+            if not restates_children(plugin):
                 rule = _rule(settings, channel_ids, f"monitor {plugin.id!r}")
                 if rule is not None:
                     rules[plugin.id] = rule

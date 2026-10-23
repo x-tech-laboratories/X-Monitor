@@ -74,6 +74,13 @@ class Status(str, Enum):
                 worst = candidate
         return worst
 
+    @classmethod
+    def best(cls, statuses: Iterable[str]) -> "Status":
+        """The least severe of the given statuses, defaulting to online; an
+        unrecognised value ranks as unavailable."""
+        found = [cls.of(value) for value in statuses]
+        return min(found, key=lambda s: s.severity) if found else cls.ONLINE
+
 
 _SEVERITY = {Status.ONLINE: 0, Status.INFO: 1, Status.UNAVAILABLE: 2, Status.WARNING: 3,
              Status.FAILED: 4}

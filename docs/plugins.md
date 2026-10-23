@@ -121,6 +121,7 @@ All plugin types share these common fields:
 | `interval` | Polling frequency in seconds (default: 60)                         |
 | `schedule` | Actions to run on a cron schedule — see [Scheduled actions](#scheduled-actions) (default: none) |
 | `actions` | Your own command buttons on the monitor's page — see [Custom actions](#custom-actions) (default: none) |
+| `children` | Monitors nested under this one, of any type, or links to monitors defined elsewhere. They show as cards under the monitor's own page, and **Poll Now** polls them first. Only a `group` takes its status from them; any other monitor keeps its own status and notifications (default: none) |
 
 ### Warning and failure limits
 
@@ -1845,15 +1846,37 @@ The page lists every monitor's last, average and longest cycle over its last 20 
 ---
 
 ### `group`
-A logical container for other monitors. Aggregates the worst-case status of all descendants, and renders them one of two ways: as **collapsible cards**, one per child, or — when the group declares a `layout:` — as a **composite layout** built out of individual widgets pulled from its children.
+A logical container for other monitors. Folds its children's statuses into its own, by default taking the worst, and renders them one of two ways: as **collapsible cards**, one per child, or — when the group declares a `layout:` — as a **composite layout** built out of individual widgets pulled from its children.
 
 | Option          | Description                                                                                     |
 |-----------------|-------------------------------------------------------------------------------------------------|
 | `children`      | A list of nested plugin definitions, or links (`ref: <id>`, optional `name`) to monitors defined elsewhere — see [Links](../README.md#links) |
+| `aggregate`     | How the group's status comes from its children's (default: `worst`) — see below                 |
 | `layout`        | Rows of widget references. Present ⇒ composite layout; absent ⇒ collapsible cards.               |
 | `grid_min_width`| Card mode only: minimum width of a child card before it wraps (default: `"320px"`)               |
 
 Groups can be nested to arbitrary depth. **Poll Now** on a group polls every descendant first, then re-aggregates from their fresh statuses.
+
+A child with no status yet counts as `unavailable`. The `aggregate` rules are:
+
+| Value           | Group status                                                                                    |
+|-----------------|-------------------------------------------------------------------------------------------------|
+| `worst`         | The most severe child status. The group only repeats its children, so it never notifies and is left out of monitor counts |
+| `best`          | The least severe child status: online while any child is online. Suits redundant services        |
+| `{quorum: n}`   | Online while at least `n` children are online or info; otherwise the worst of the unhealthy children, with a log line saying how many are healthy |
+
+A `best` or `quorum` group's verdict is news of its own, so it notifies like any other monitor and is counted in the overview. To be told only when redundancy is lost, give the group a `notify:` of its own and its children `notify: false`. Links (`ref:`) can be held by a quorum group too, but they keep the notification rule of the place they are defined.
+
+```yaml
+- name: "DNS"
+  type: "group"
+  aggregate: {quorum: 2}
+  notify: {on: [failed, warning]}
+  children:
+    - {name: "DNS Heimdall", type: "dns_record", domain: "example.org", resolver: "10.0.0.2", notify: false}
+    - {name: "DNS Odin",     type: "dns_record", domain: "example.org", resolver: "10.0.0.3", notify: false}
+    - {name: "DNS Thor",     type: "dns_record", domain: "example.org", resolver: "10.0.0.4", notify: false}
+```
 
 #### Card mode (default)
 

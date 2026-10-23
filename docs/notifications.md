@@ -58,8 +58,9 @@ off. A child can turn itself back on with its own mapping.
 | `recovery` | `true`           | Also notify when the monitor stops having a problem |
 | `flapping` | off              | `{changes: 4, within: 1h}`: a monitor whose problem starts or ends that many times within that window is flapping. See [Flapping](#flapping) |
 
-A group never notifies for itself. Its status only repeats its children's, so it would duplicate
-their notifications.
+A plain group never notifies for itself. Its status only repeats its children's, so it would
+duplicate their notifications. A group with `aggregate: best` or `{quorum: n}` does notify, since
+its verdict is its own, and so does any other monitor that has children.
 
 `unavailable` is off by default. When a host goes down, every monitor on it turns unavailable at
 once. An availability monitor (`uptime`, `http`) reports that host as failed, which gives one

@@ -9,8 +9,8 @@ COLORS = {'online': 'green', 'warning': 'amber', 'failed': 'red', 'unavailable':
 
 
 def _monitor(mid: str, mtype: str, children=()):
-    return SimpleNamespace(id=mid, name=mid, target='host',
-                           config={'type': mtype}, children=list(children))
+    return SimpleNamespace(id=mid, name=mid, target='host', config={'type': mtype},
+                           children=list(children), restates_children=mtype == 'group')
 
 
 class TestChartCounts:
@@ -101,6 +101,10 @@ class TestLeafMonitors:
         tree = [_monitor('g', 'group', children=[_monitor('a', 'cpu')])]
         _, type_counts = _build_chart_counts(_collect_leaf_monitors(tree), {'a': 'online'})
         assert 'group' not in type_counts
+
+    def test_a_monitor_with_children_of_its_own_is_listed_with_them(self):
+        tree = [_monitor('h', 'http', children=[_monitor('a', 'cpu')])]
+        assert [m.id for m in _collect_leaf_monitors(tree)] == ['h', 'a']
 
 
 class TestTreemapOptions:

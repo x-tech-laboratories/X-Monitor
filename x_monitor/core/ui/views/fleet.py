@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from nicegui import ui
 
-from x_monitor.core.coordination.monitor_graph import iter_monitors
+from x_monitor.core.coordination.monitor_graph import iter_monitors, restates_children
 from x_monitor.plugins.base.plugin_helpers import format_age
 
 from .. import charts
@@ -52,7 +52,7 @@ def monitor_type(monitor: Any) -> str:
 
 
 def leaves_with_paths(root: Any) -> List[Tuple[Any, List[str]]]:
-    """Every leaf monitor under a root once each, with the names of the groups between them."""
+    """Every monitor under a root once each, leaving out plain groups, with the names of the parents between them."""
     found, seen = [], set()
 
     def walk(node, path):
@@ -60,15 +60,13 @@ def leaves_with_paths(root: Any) -> List[Tuple[Any, List[str]]]:
             if id(child) in seen:
                 continue
             seen.add(id(child))
-            if child.children:
-                walk(child, path + [child.name])
-            else:
+            if not restates_children(child):
                 found.append((child, path))
+            walk(child, path + [child.name])
 
-    if root.children:
-        walk(root, [])
-    else:
+    if not restates_children(root):
         found.append((root, []))
+    walk(root, [])
     return found
 
 
