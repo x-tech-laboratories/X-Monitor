@@ -12,12 +12,11 @@ import subprocess
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import dns.exception
-import dns.resolver
 import requests
 
 from x_monitor.plugins.base.plugin_base import Plugin
-from x_monitor.core.connectors.types import CollectResult, IoActionPlan
+from x_monitor.core.connectors.types import CollectResult, DnsQuery, IoActionPlan
+from x_monitor.plugins.base.dns_lookup import answer_values, record_type, resolve_now
 from x_monitor.plugins.base.plugin_helpers import format_age
 
 _IP_ECHO_SERVICES = (
@@ -41,7 +40,7 @@ class DdnsUpdater(Plugin):
         self._domain_file = config.get('domain_file')
         self._domain_command = config.get('domain_command')
         self._domain_error = None
-        self.record_type = str(config.get('record_type', 'A')).upper()
+        self.record_type = record_type(config.get('record_type'))
         self.resolver_addr = config.get('resolver', '8.8.8.8')
         self.timeout = float(config.get('timeout', 10))
         self.min_interval = float(config.get('min_interval', 300))
@@ -105,15 +104,17 @@ class DdnsUpdater(Plugin):
         return None
 
     def _resolve_public_record(self) -> Optional[str]:
-        resolver = dns.resolver.Resolver(configure=False)
-        resolver.nameservers = [self.resolver_addr]
-        resolver.timeout = self.timeout
-        resolver.lifetime = self.timeout
-        try:
-            answer = resolver.resolve(self.domain, self.record_type)
-            return str(next(iter(answer))).rstrip('.')
-        except dns.exception.DNSException:
+        """The record's first value as dns_record would report it, or None when the lookup fails."""
+        result = resolve_now(DnsQuery(
+            domain=self.domain,
+            record_type=self.record_type,
+            resolver=self.resolver_addr,
+            timeout=self.timeout,
+        ))
+        if result.kind != 'ok':
             return None
+        values = answer_values(self.record_type, result.answer)
+        return values[0] if values else None
 
     def _push_update(self, update_url: str) -> Tuple[bool, str]:
         """Returns (ok, log_message)."""

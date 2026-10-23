@@ -10,13 +10,13 @@ pytest_plugins = ['nicegui.testing.user_plugin']
 # Every single-signal monitor, as the config's `type` names it.
 SIGNALS = [
     'cpu', 'memory', 'load', 'temperature', 'interrupts', 'gpu', 'oom',
-    'throughput', 'connections', 'wifi', 'power',
+    'throughput', 'connections', 'wifi', 'power', 'reboot_required', 'package_updates', 'interfaces', 'sessions',
     'smart', 'zfs', 'btrfs', 'md', 'disk_io',
 ]
 
 
 def _plugin_class(signal: str) -> type:
-    from x_monitor.core.coordination.engine import _plugin_class as resolve
+    from x_monitor.core.coordination.plugin_loader import _plugin_class as resolve
     path = f'x_monitor.plugins.{signal}'
     return resolve(importlib.import_module(path), path)
 

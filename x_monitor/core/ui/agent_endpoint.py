@@ -19,6 +19,8 @@ from x_monitor.core.connectors import agent_protocol as proto
 from x_monitor.core.connectors.agent_connector import AgentRegistry
 from x_monitor_agent import keys
 
+log = logging.getLogger(__name__)
+
 
 def register_agent_endpoint(app: Any, registry: AgentRegistry) -> None:
     """Mount the /api/agent/ws websocket that agents connect to."""
@@ -40,7 +42,7 @@ def register_agent_endpoint(app: Any, registry: AgentRegistry) -> None:
             public_key = registry.public_key_for(agent_id)
             signature = str(hello.get('sig') or '')
             if not agent_id or not keys.verify(public_key, agent_id, nonce, signature):
-                logging.warning(
+                log.warning(
                     f"agent endpoint: rejected connection claiming id {agent_id!r} "
                     f"from {websocket.client.host if websocket.client else 'unknown'}"
                 )
@@ -61,7 +63,7 @@ def register_agent_endpoint(app: Any, registry: AgentRegistry) -> None:
             pass
         # One misbehaving connection (bad frame, mid-handshake drop) must not take the endpoint down.
         except Exception as e:
-            logging.warning(f"agent endpoint: connection ended with an error: {e}")
+            log.warning(f"agent endpoint: connection ended with an error: {e}")
         finally:
             if conn is not None:
                 conn.detach(websocket)

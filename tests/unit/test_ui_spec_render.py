@@ -106,3 +106,135 @@ class TestInlineThresholdColoring:
         label = _cpu_label(built)
         assert label.text == '-- %'
         assert 'color' not in label._style
+
+
+def _bar_fills(built: dict) -> list:
+    """Every per-core bar's fill element, in render order."""
+    return [e for e in built['client'].elements.values() if 'halon-meter-fill' in e._classes]
+
+
+@pytest.fixture
+def cores_page(plugin):
+    """Serve only the CPU page's per-core panel, as the plugin's own UI_SPEC declares it."""
+    built = {}
+    cores_spec = {'layout': [['cores']], 'cards': {'cores': plugin.UI_SPEC['cards']['cores']}}
+
+    @ui.page('/')
+    def _page():
+        from nicegui import context
+        built['page'] = spec.generic_render(plugin, spec=cores_spec, start=False)
+        built['client'] = context.client
+
+    return built
+
+
+class TestPerCoreBars:
+    async def test_each_core_gets_a_bar_filled_to_its_share(self, user: User, plugin, cores_page):
+        plugin.storage.apply(CollectResult(
+            metrics={'cpu_pct': 50.0}, status='online',
+            snapshot=[{'label': '0', 'value': 20.0}, {'label': '1', 'value': 90.0}]))
+        built = await _ticked(user, cores_page)
+        assert [f._style['width'] for f in _bar_fills(built)] == ['20.0%', '90.0%']
+
+    async def test_a_busy_core_is_filled_with_the_failed_color(self, user: User, plugin, cores_page):
+        plugin.storage.apply(CollectResult(
+            metrics={'cpu_pct': 50.0}, status='online',
+            snapshot=[{'label': '0', 'value': 10.0}, {'label': '1', 'value': 99.0}]))
+        built = await _ticked(user, cores_page)
+        idle, busy = _bar_fills(built)
+        assert STATUS_COLORS['online'] in idle._style['background']
+        assert STATUS_COLORS['failed'] in busy._style['background']
+
+    async def test_no_snapshot_renders_no_bars(self, user: User, cores_page):
+        built = await _ticked(user, cores_page)
+        assert _bar_fills(built) == []
+
+
+class TestFormInputs:
+    async def test_select_checkbox_and_text_fields(self, user: User):
+        from types import SimpleNamespace
+        from nicegui.elements.checkbox import Checkbox
+        from nicegui.elements.input import Input
+        from nicegui.elements.select import Select
+        from x_monitor.core.ui.components import _form_input
+        plugin = SimpleNamespace(entries={'0001': 'Linux', '0003': 'Windows'}, chosen='0003')
+        built = {}
+
+        @ui.page('/form')
+        def _page():
+            built['select'] = _form_input(plugin, {'name': 'entry', 'options_attr': 'entries',
+                                                   'default_attr': 'chosen'})
+            built['fallback'] = _form_input(plugin, {'name': 'p', 'options': ['a', 'b'], 'default': 'z'})
+            built['checkbox'] = _form_input(plugin, {'name': 'reboot', 'type': 'checkbox'})
+            built['text'] = _form_input(plugin, {'name': 'path', 'default': '/etc'})
+
+        await user.open('/form')
+        assert isinstance(built['select'], Select) and built['select'].value == '0003'
+        assert built['fallback'].value == 'a'
+        assert isinstance(built['checkbox'], Checkbox) and built['checkbox'].value is False
+        assert isinstance(built['text'], Input) and built['text'].value == '/etc'
+
+
+class TestHostControlPage:
+    async def test_renders_its_cards_buttons_and_boot_table(self, user: User, make_plugin):
+        from nicegui.elements.button import Button
+        from nicegui.elements.table import Table
+        from x_monitor.core.connectors.types import CmdResult
+        from x_monitor.plugins.host_control import HostControl
+        control = make_plugin(HostControl, {"name": "host1 control", "id": "host1-control",
+                                            "allow": ["reboot", "next_boot"],
+                                            "ssh_config": {"host": "host1"}})
+        boot = ('loader=efi\n@@entries\nBootOrder: 0001\n'
+                'Boot0001* Linux Boot Manager\tHD(1)\nBoot0003* Windows Boot Manager\tHD(1)\n')
+        control.storage.apply(control.parse([CmdResult(0, "backend=none", ""), CmdResult(0, boot, ""),
+                                             CmdResult(0, "mem", "")]))
+        built = {}
+
+        @ui.page('/control')
+        def _page():
+            from nicegui import context
+            built['page'] = spec.generic_render(control, start=False)
+            built['client'] = context.client
+
+        await _ticked(user, built, '/control')
+        await user.should_see('Linux Boot Manager')
+        elements = list(built['client'].elements.values())
+        labels = [e.text for e in elements if isinstance(e, Button) and getattr(e, 'text', '')]
+        assert 'Reboot' in labels and 'Next Boot' in labels
+        assert 'Shut Down' not in labels
+        table = next(e for e in elements if isinstance(e, Table)
+                     and any(c['name'] == 'next' for c in e.columns))
+        assert [r['id'] for r in table.rows] == ['0001', '0003']
+
+
+@pytest.fixture
+def self_page(make_plugin):
+    """The self-monitor's page, whose timings table colors cells with a callable rule."""
+    from x_monitor.plugins.x_monitor_self import XMonitorSelfPlugin
+    plugin = make_plugin(XMonitorSelfPlugin, {"name": "x-monitor", "id": "x-monitor"})
+    built = {'plugin': plugin}
+
+    @ui.page('/self')
+    def _page():
+        from nicegui import context
+        built['page'] = spec.generic_render(plugin, start=False)
+        built['client'] = context.client
+
+    yield built
+    XMonitorSelfPlugin.engine = None
+
+
+class TestCallableCellColors:
+    async def test_the_table_sent_to_the_browser_carries_no_function(self, user: User, self_page):
+        from nicegui import json
+        self_page['plugin'].storage.snapshot([
+            {'id': 'crawl', 'name': 'crawl', 'interval': 10, 'last': 6.0, 'avg': 6.0, 'max': 6.0,
+             'wait': 0.0, 'share': 60.0, 'slow': True}])
+        built = await _ticked(user, self_page, '/self')
+        tables = [e for e in built['client'].elements.values() if isinstance(e, ui.table)
+                  and any(col['name'] == 'avg' for col in e._props['columns'])]
+        assert tables, "the timings table was not rendered"
+        table = tables[0]
+        assert all('cell_color_by' not in col for col in table._props['columns'])
+        json.dumps(table._props)
+        assert table.rows[0]['_color_name'] == STATUS_COLORS['warning']

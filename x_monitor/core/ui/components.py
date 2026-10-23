@@ -526,9 +526,12 @@ def _outcome_notice(label: str, success: bool, content: str) -> str:
 
 
 def _substitute(template: str, row: Optional[dict], plugin) -> str:
-    class _PluginProxy(dict):
-        def __missing__(self, key):
+    """Fills a dialog title or confirm template from the row and the plugin, a missing attribute reading as empty."""
+    class _PluginProxy:
+        def __getattr__(self, key):
             return getattr(plugin, key, '')
+
+        __getitem__ = __getattr__
     return template.format(row=row or {}, plugin=_PluginProxy())
 
 
@@ -594,12 +597,7 @@ async def open_dialog_impl(plugin, dialog_name: str, row: Optional[dict] = None)
         with ui.dialog() as dialog:
             body, footer = dialog_card(title)
             with body:
-                inputs = {
-                    field['name']: labeled_input(field.get('label', field['name']),
-                                                 value=field.get('default', ''),
-                                                 placeholder=field.get('placeholder', ''))
-                    for field in spec.get('fields', [])
-                }
+                inputs = {field['name']: _form_input(plugin, field) for field in spec.get('fields', [])}
                 output = ui.textarea().props('readonly autogrow outlined').classes('w-full font-mono')
                 output.set_visibility(False)
             with footer:
@@ -607,7 +605,11 @@ async def open_dialog_impl(plugin, dialog_name: str, row: Optional[dict] = None)
 
                 async def submit():
                     kwargs = _resolve_params(spec.get('params'))
-                    kwargs.update({name: (field.value or '').strip() for name, field in inputs.items()})
+                    values = form_values(inputs)
+                    kwargs.update(values)
+                    if spec.get('confirm') and not await confirmed(
+                            _substitute(spec['confirm'], {**(row or {}), **values}, plugin)):
+                        return
                     ok, content = await plugin.run_action(spec['action_id'], **kwargs)
                     if not ok:
                         ui.notify(content or 'Action failed', type='negative')
@@ -618,6 +620,38 @@ async def open_dialog_impl(plugin, dialog_name: str, row: Optional[dict] = None)
                 action_button(spec.get('submit_label', 'Run'), on_click=submit, icon=None, weight='filled')
         dialog.open()
         return
+
+
+def form_options(plugin, field: dict):
+    """The choices a select field offers: its own `options`, or the plugin attribute `options_attr` names."""
+    if 'options_attr' in field:
+        return getattr(plugin, field['options_attr'], None) or []
+    return field.get('options') or []
+
+
+def form_values(inputs: dict) -> dict:
+    """Each form input's value by field name, text trimmed and checkboxes kept as booleans."""
+    values = {}
+    for name, element in inputs.items():
+        value = element.value
+        values[name] = value if isinstance(value, bool) else str(value or '').strip()
+    return values
+
+
+def _form_input(plugin, field: dict):
+    """One form field's input: a checkbox, a select when it has options, else a text box."""
+    label = field.get('label', field['name'])
+    if field.get('type') == 'checkbox':
+        return ui.checkbox(label, value=bool(field.get('default', False)))
+    if 'options' in field or 'options_attr' in field:
+        options = form_options(plugin, field)
+        default = getattr(plugin, field['default_attr'], None) if 'default_attr' in field else field.get('default')
+        if default not in options:
+            default = next(iter(options), None)
+        with ui.column().classes('halon-field'):
+            ui.label(label).classes('halon-field-label')
+            return ui.select(options, value=default).props('outlined dense').classes('w-full')
+    return labeled_input(label, value=field.get('default', ''), placeholder=field.get('placeholder', ''))
 
 
 def _color_rules(columns: list) -> list:

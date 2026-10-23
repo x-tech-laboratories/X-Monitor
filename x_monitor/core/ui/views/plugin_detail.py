@@ -24,9 +24,10 @@ def render_plugin_detail(engine: EngineLike, switch_view: Callable, plugin: Any)
 
 
 def _render_schedule(plugin: Any):
-    """Renders one caption per scheduled action, naming it as its button does and giving its next run."""
+    """Renders one caption per scheduled action, naming it as its button does and giving its next run, then one per triggered action."""
     entries = getattr(plugin, 'scheduled_actions', [])
-    if not entries:
+    triggered = getattr(plugin, 'triggered_actions', None) or []
+    if not entries and not triggered:
         return
     names = action_names(plugin.all_actions())
     for entry in entries:
@@ -34,6 +35,8 @@ def _render_schedule(plugin: Any):
         when = f"next {upcoming:%a %d %b %H:%M}" if upcoming else 'never'
         ui.label(f"Scheduled: {names.get(entry.action, entry.action)} · {entry.cron.expression} · {when}") \
             .classes('halon-caption')
+    for entry in triggered:
+        ui.label(f"Triggered: {names.get(entry.action, entry.action)} · {entry.describe()}").classes('halon-caption')
 
 
 def _lede(plugin: Any) -> str:

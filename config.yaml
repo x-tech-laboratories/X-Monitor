@@ -3,6 +3,11 @@
 # This is a minimal example. A full deployment (the TechNet homelab) is defined
 # declaratively in NixOS via services.x-monitor — see that module for a complete,
 # real-world plugin tree.
+#
+# X-Monitor applies an edit to this file while it runs: it notices the change within
+# a few seconds (or on SIGHUP, POST /api/config/reload, or the dashboard's System
+# menu), keeps unchanged monitors running, and refuses a file that does not load
+# whole. database, memory, auth and theme still take a restart; a reload says so.
 
 # Database settings
 database:
@@ -21,7 +26,14 @@ logging:
                               # disk footprint. 0 (default) disables.
   # cycle_timings: true       # Record cycle_collect/parse_seconds metrics per
                               # monitor; they double the metric row count, so
-                              # set false to shed them.
+                              # set false to shed them. x_monitor_self's cycle-time
+                              # table is kept in memory and works either way.
+  # level: INFO               # Root log level at startup: DEBUG, INFO, WARNING,
+                              # ERROR or CRITICAL. Change it while running from
+                              # the dashboard's System menu, POST /api/log-levels,
+                              # or SIGUSR1 (more verbose) / SIGUSR2 (quieter).
+  # levels:                   # Per-logger levels; a logger is its module path.
+  #   x_monitor.core.connectors.ssh_connector: DEBUG
 
 # In-memory state (optional).
 # Live state is held in Python objects and served to the UI from there; the
@@ -52,6 +64,20 @@ logging:
 #     token: "my-api-token"
 #     # InfluxDB 1.x (use instead of org/bucket/token):
 #     # database: "x-monitor"
+#   # MQTT publishes on every change and announces each monitor to Home Assistant.
+#   # Needs the mqtt extra (pip install 'x-monitor[mqtt]'); the Nix package includes it.
+#   mqtt:
+#     host: "mqtt.lan"
+#     port: 1883              # 8883 by default when tls is set
+#     username: "x-monitor"
+#     password: "secret"      # or password_file: "/run/secrets/mqtt_password"
+#     # tls: true             # or a mapping: {ca_certs: /path/ca.pem, certfile: ..., keyfile: ..., insecure: false}
+#     # client_id: "x-monitor-myhost"
+#     base_topic: "x-monitor" # <base>/<monitor>/status, <base>/<monitor>/<metric>, <base>/status
+#     discovery_prefix: "homeassistant"
+#     discovery: true         # publish Home Assistant discovery configs
+#     retain: true
+#     # interval: 5m          # also republish everything on this period; off by default
 
 # Global SSH connection defaults.
 # Merged into every plugin's `ssh_config` unless the plugin overrides a given
@@ -74,6 +100,19 @@ ssh_defaults:
 #   #                       so restarts do not sign everyone out; else generated
 #   # session_hours: 12     # How long a sign-in lasts
 #   # remember_days: 30     # How long "keep me signed in" lasts
+#   # One named token per client, sent as "Authorization: Bearer <token>".
+#   # Mint one with: x-monitor token new <name> --scope read|control|push
+#   # tokens:
+#   #   - name: "prometheus"
+#   #     scope: read                  # GET /api/... and /metrics
+#   #     token_hash: "sha256:..."     # as printed by x-monitor token new
+#   #   - name: "ops-laptop"
+#   #     scope: control               # read, plus poll now / actions / test notifications
+#   #     token_file: "/run/secrets/x_monitor_ops_token"
+#   #   - name: "backup-jobs"
+#   #     scope: push                  # /api/push/{id}
+#   #     token_hash: "sha256:..."
+#   #     monitors: ["nightly-backup"] # omit for every push monitor
 
 # Theme — the dashboard is themed with Halon, whose token set lives in
 # x_monitor/core/ui/static/halon-tokens.css. Every field here is optional; each one
@@ -112,6 +151,14 @@ theme:
 #     repeat: 0                     # remind this often while it lasts, e.g. 1h; 0 is off
 #     recovery: true
 
+# Out-of-tree plugins (optional) — see docs/plugins.md#out-of-tree-plugins.
+# Directories searched, in order, for a plugin `type` X-Monitor does not ship, as
+# <type>.py or a <type>/ package. Relative paths start at this file's directory.
+# plugin_paths:
+#   - /etc/x-monitor/plugins
+#   - path: ./my-plugins
+#     override: true            # let its plugins replace built-ins of the same name
+
 # Domain-based Plugins
 plugins:
   - name: "Devices"
@@ -122,6 +169,8 @@ plugins:
         type: "uptime"
         target_host: "server.example.com"
         interval: 30s
+        # mac: "00:11:22:33:44:55"   # adds a Wake-on-LAN button
+        # wake_on_down: true         # and wakes it automatically when it goes down
 
   # A group with a `layout:` stops wrapping its children in collapsible cards and
   # builds its own rows instead, one child widget per cell, addressed as
@@ -152,6 +201,11 @@ plugins:
         interval: 1m
         warning: 70              # CPU % (warn / fail)
         threshold: 85
+        # per_core_metrics: false  # Record cpu<n>_pct history per core (one row
+                                   # per core per cycle); the per-core bars
+                                   # need no history and are always shown.
+        # core_warning: 95         # Busiest-core % (warn / fail); off unless
+        # core_threshold: 100      # both are set.
         ssh_config:
           host: "server.example.com"
       - name: "Memory"
@@ -204,6 +258,16 @@ plugins:
         service_name: "nginx.service"
         ssh_config:
           host: "server.example.com"
+      # Power and boot controls; every action stays off unless it is listed
+      # under allow, and each needs passwordless sudo for its exact command
+      # (see docs/plugins.md#host_control).
+      # - name: "Server Control"
+      #   id: "server-control"
+      #   type: "host_control"
+      #   interval: 5m
+      #   allow: [reboot, power_profile, next_boot]
+      #   ssh_config:
+      #     host: "server.example.com"
 
   - name: "Backups"
     type: "group"
@@ -308,6 +372,14 @@ plugins:
         quality_threshold: 20    # link quality floor (fail below)
         ssh_config:
           host: "server.example.com"
+      - name: "Interfaces"
+        id: "server-interfaces"
+        type: "interfaces"       # every NIC with state, carrier, MAC, MTU, speed and addresses
+        interval: 1m
+        exclude: ["veth*", "docker*", "br-*"]
+        expect_up: ["eth0"]      # down or no carrier -> failed; address change -> warning
+        ssh_config:
+          host: "server.example.com"
 
   - name: "Reachability"
     type: "group"
@@ -339,8 +411,13 @@ plugins:
         mem_threshold: 95
         temp_warning: 80       # °C (warn / fail)
         temp_threshold: 90
+        # vendor: auto           # Or nvidia / amd / intel (or a list) to probe
+                                 # only those; NVIDIA needs nvidia-smi, AMD and
+                                 # Intel are read from /sys/class/drm.
+        # intel_gpu_top: true    # Intel utilization needs intel_gpu_top with
+                                 # CAP_PERFMON; without it, it is left unknown.
         ssh_config:
-          host: "server.example.com"   # target needs nvidia-smi
+          host: "server.example.com"
       - name: "Docker"
         id: "server-docker"
         type: "containers"
@@ -350,6 +427,10 @@ plugins:
           - "nginx"
           - "postgres"
         stopped_warning: true  # any other stopped container -> warning
+        update_check_interval: 6h  # ask registries for image updates; 0 turns it off
+        update_warning: false  # true -> warning while any image has an update
+        prune_all_images: false  # Prune button also removes unused images (-a)
+        prune_volumes: false   # Prune button also removes unused volumes (--volumes)
         ssh_config:
           host: "server.example.com"
 
@@ -375,11 +456,30 @@ plugins:
           host: "server.example.com"
       - name: "Reboot Required"
         id: "server-reboot-required"
-        type: "command"
+        type: "reboot_required"   # Debian flag, needs-restarting, NixOS boot links or kernel modules
         interval: 1h
-        # No pattern -> status is driven by exit code (0 = online, non-zero = below).
-        command: "test ! -f /var/run/reboot-required"
-        nonzero_is_warning: true   # reboot pending -> warning, not failed
+        # reboot_status: "failed" # default warning
+        ssh_config:
+          host: "server.example.com"
+      - name: "Package Updates"
+        id: "server-package-updates"
+        type: "package_updates"   # apt, dnf or pacman, read from the cache (no refresh, no root)
+        interval: 1h
+        # manager: "apt"          # optional; auto-detected
+        # warning: 50             # pending updates (warn / fail); off by default
+        # threshold: 200
+        security_warning: 1       # any pending security update -> warning
+        # security_threshold: 5
+        ssh_config:
+          host: "server.example.com"
+      - name: "Sessions"
+        id: "server-sessions"
+        type: "sessions"          # logged-in users (loginctl, or who) plus recent logins (last)
+        interval: 1m
+        # allowed_users: ["admin"]                    # anyone else logged in -> warning
+        # allowed_sources: ["192.0.2.0/24", "*.example.com"]
+        # violation_status: "failed"                  # default warning
+        # recent_logins: 10
         ssh_config:
           host: "server.example.com"
 

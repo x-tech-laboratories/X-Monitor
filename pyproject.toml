@@ -41,6 +41,8 @@ x-monitor-agent = "x_monitor_agent.__main__:main"
 [project.optional-dependencies]
 # The apprise notification channel, which reaches most chat, push and SMS services.
 apprise = ["apprise>=1.6"]
+# The MQTT exporter, which publishes every monitor to Home Assistant through MQTT discovery.
+mqtt = ["aiomqtt>=2.0"]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",

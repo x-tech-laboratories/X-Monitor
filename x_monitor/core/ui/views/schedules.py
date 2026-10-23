@@ -1,4 +1,4 @@
-"""The schedules view: every monitor's scheduled actions in one table, with each one's next run and how its last run went."""
+"""The schedules view: every monitor's scheduled and triggered actions in one table, with each one's next run and how its last run went."""
 
 import json
 from datetime import datetime
@@ -13,7 +13,7 @@ from .plugin_detail import action_names
 _COLUMNS = [
     {'name': 'monitor', 'label': 'Monitor', 'field': 'monitor', 'align': 'left'},
     {'name': 'action', 'label': 'Action', 'field': 'action', 'align': 'left'},
-    {'name': 'cron', 'label': 'Schedule', 'field': 'cron', 'align': 'left'},
+    {'name': 'cron', 'label': 'When', 'field': 'cron', 'align': 'left'},
     {'name': 'next', 'label': 'Next run', 'field': 'next', 'align': 'left'},
     {'name': 'last', 'label': 'Last run', 'field': 'last', 'align': 'left'},
     {'name': 'outcome', 'label': 'Outcome', 'field': 'outcome', 'align': 'left'},
@@ -63,18 +63,29 @@ def _with_paths(roots: Iterable[Any]) -> Iterator[Tuple[Any, str]]:
     yield from walk(roots, ())
 
 
+def _last_run_cells(raw: Optional[str]) -> Dict[str, Any]:
+    """The last run, outcome and badge cells of a row, from an entry's stored record."""
+    last = _last_run(raw)
+    ran = last.get('at')
+    return {
+        'last': f"{datetime.fromtimestamp(ran):{_WHEN}}" if ran else 'not yet',
+        'outcome': ('Started' if last.get('ok') else 'Failed') if ran else '',
+        'outcome_badge': STATUS_BADGES['online' if last.get('ok') else 'failed'] if ran else '',
+        'message': last.get('message', ''),
+    }
+
+
 def schedule_rows(roots: Iterable[Any], get_setting: Callable[[str], Optional[str]], now: datetime) -> List[Dict[str, Any]]:
-    """One row per scheduled action anywhere under the roots, soonest next run first."""
+    """One row per scheduled or triggered action anywhere under the roots, soonest next run first and triggered ones last."""
     rows = []
     for plugin, path in _with_paths(roots):
         entries = getattr(plugin, 'scheduled_actions', None) or []
-        if not entries:
+        triggered = getattr(plugin, 'triggered_actions', None) or []
+        if not entries and not triggered:
             continue
         names = action_names(plugin.all_actions())
         for index, entry in enumerate(entries):
             upcoming = entry.cron.next_after(now)
-            last = _last_run(get_setting(entry.result_key(plugin.id)))
-            ran = last.get('at')
             rows.append({
                 'id': f"{plugin.id}:{index}",
                 'monitor_id': plugin.id,
@@ -83,10 +94,18 @@ def schedule_rows(roots: Iterable[Any], get_setting: Callable[[str], Optional[st
                 'cron': entry.cron.expression,
                 'next': f"{upcoming:{_WHEN}}" if upcoming else 'never',
                 'next_epoch': upcoming.timestamp() if upcoming else float('inf'),
-                'last': f"{datetime.fromtimestamp(ran):{_WHEN}}" if ran else 'not yet',
-                'outcome': ('Started' if last.get('ok') else 'Failed') if ran else '',
-                'outcome_badge': STATUS_BADGES['online' if last.get('ok') else 'failed'] if ran else '',
-                'message': last.get('message', ''),
+                **_last_run_cells(get_setting(entry.result_key(plugin.id))),
+            })
+        for index, entry in enumerate(triggered):
+            rows.append({
+                'id': f"{plugin.id}:trigger:{index}",
+                'monitor_id': plugin.id,
+                'monitor': path,
+                'action': _action_label(names, entry.action, entry.args),
+                'cron': entry.describe().capitalize(),
+                'next': 'on that event',
+                'next_epoch': float('inf'),
+                **_last_run_cells(get_setting(entry.result_key(plugin.id))),
             })
     rows.sort(key=lambda row: (row['next_epoch'], row['monitor'].lower()))
     return rows

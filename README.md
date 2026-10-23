@@ -16,7 +16,7 @@ Unlike most network and system monitors, X-Monitor is designed to be highly exte
 - **Event-Driven Collection**: Agent-backed monitors subscribe to live streams (journal follow, path watches, sub-second local sampling), so detection latency stops being a function of the poll interval.
 - **Web Dashboard**: Real-time interactive visualizations built with NiceGUI and ECharts, featuring latency history, status distribution, and log views.
 - **Notifications**: Notifies you when a monitor starts failing, keeps failing or recovers, with per-monitor rules. Sends to the desktop through the agent, to your phone through ntfy, by email, to any webhook, or to around a hundred services through Apprise, and each notification links straight to the monitor's page. See [docs/notifications.md](docs/notifications.md).
-- **Target Control**: Trigger actions on monitored targets (e.g. restarting systemd services) directly from the UI, and add your own command buttons to any monitor.
+- **Target Control**: Trigger actions on monitored targets (e.g. restarting systemd services) directly from the UI, add your own command buttons to any monitor, and use opt-in host power controls — reboot, shutdown, suspend, power profile and next boot entry — each confirmed and logged, and Wake-on-LAN for hosts an `uptime` monitor sees go down, by hand or automatically.
 - **Plugin Architecture**: Core features are implemented through plugins called "monitors" which handle specific domains (systemd services, host uptime, hardware parameters, etc.).
 - **Hierarchical Organization**: Organize monitors into nested groups by location, service, or environment. A monitor can sit in several groups at once, so one tree can hold the same monitors arranged different ways — by host, say, and by domain.
 - **Lightweight**: Minimal dependencies and low resource footprint.
@@ -46,7 +46,7 @@ The engine executes the declared IO, persists the returned `CollectResult`, and 
 3b. **Events**: monitors on an agent-backed target also declare `subscriptions()`. The agent watches those sources locally and pushes a frame the instant one changes; the engine hands it to the plugin's pure `parse_event()` and persists the result immediately, outside the polling schedule.
 4. **Persistence**: the engine writes the resulting `CollectResult` via `db.apply_result(...)` into SQLite (Peewee ORM). A background writer thread batches commits off the event loop.
 5. **Visualization**: every write publishes a change, and the NiceGUI dashboard refreshes off that — one subscription per connected client — rendering the sidebar tree plus each plugin's detail page. It reads only through `plugin.data` / the database — never through a plugin's IO.
-6. **Export**: metrics are exposed to Prometheus (pull, `/metrics`) and optionally pushed to InfluxDB.
+6. **Export**: metrics are exposed to Prometheus (pull, `/metrics`) and optionally pushed to InfluxDB, or published over MQTT with Home Assistant discovery.
 
 ### Project Structure
 
@@ -58,7 +58,7 @@ x_monitor/
 │   ├── connectors/          # All IO: agent + SSH + HTTP/DNS/ICMP sub-connectors, request types
 │   ├── database/            # DatabaseManager (SQLite/Peewee), models, read-result types
 │   ├── settings/            # config.yaml loader + typed schema
-│   ├── exporters/           # Prometheus pull + InfluxDB push
+│   ├── exporters/           # Prometheus pull + InfluxDB and MQTT push
 │   └── ui/                  # NiceGUI dashboard, declarative UI_SPEC renderer
 └── plugins/
     ├── base/                # Plugin ABC + shared config/helper mixins
@@ -129,6 +129,8 @@ Agents sign their login with the X-Monitor name, so a Vigil agent cannot log in 
 
 ```bash
 pip install .
+# Optional extras: the Apprise notification channel and the MQTT exporter.
+pip install '.[apprise,mqtt]'
 ```
 
 ### Quick Start
@@ -214,7 +216,7 @@ one that would put a group inside itself is logged and ignored.
 
 Every monitor type, its config keys, and its `ssh_config` / layout options are
 documented in the [plugin reference](docs/plugins.md). Agent declaration and
-installation are covered in the [agent guide](docs/agent.md).
+installation are covered in the [agent guide](docs/agent.md). A plugin type of your own can live in a directory outside X-Monitor, named under `plugin_paths:` (see [out-of-tree plugins](docs/plugins.md#out-of-tree-plugins)).
 
 ### Authentication
 
@@ -233,9 +235,48 @@ auth:
 
 An unauthenticated browser is redirected to `/login`, where it exchanges the credentials for a signed, expiring session cookie (`HttpOnly`, `SameSite=Lax`, and `Secure` when X-Monitor is reached over HTTPS — including behind a reverse proxy that sets `X-Forwarded-Proto`). "Keep me signed in" is what makes the cookie outlive the browser session. The dashboard header gains an account menu with **Sign out**, which drops the session at `/logout`. Repeated failures from one address are throttled after five attempts in five minutes.
 
-Scripts and scrapers cannot follow a form redirect, so `/api/...` and `/metrics` also accept HTTP Basic credentials — the same username and password — and answer `401` rather than redirecting. No `WWW-Authenticate` header is sent, so a browser never sees the native credential dialog. `/api/push/...` stays public; it carries its own per-monitor token.
+Scripts and scrapers cannot follow a form redirect, so `/api/...` and `/metrics` also accept HTTP Basic credentials — the same username and password — and answer `401` rather than redirecting. No `WWW-Authenticate` header is sent, so a browser never sees the native credential dialog. `/api/push/...` stays public to the gate; it checks a per-monitor token or a push-scoped API token itself.
 
 Every `*_file` value is read once at startup. If only one of `username`/`password` is set, auth stays disabled and a warning is logged.
+
+#### API tokens
+
+Rather than hand the operator password to every scraper and script, give each client its own named token. Mint one with:
+
+```bash
+x-monitor token new prometheus --scope read
+```
+
+It prints the token once and the entry to add under `auth:`. X-Monitor keeps only the token's SHA-256 hash:
+
+```yaml
+auth:
+  username: "admin"
+  password_file: "/run/secrets/x_monitor_dashboard_password"
+  tokens:
+    - name: "prometheus"
+      scope: read
+      token_hash: "sha256:…"   # as printed by x-monitor token new
+    - name: "ops-laptop"
+      scope: control
+      token_file: "/run/secrets/x_monitor_ops_token"   # the token itself, hashed at startup
+    - name: "backup-jobs"
+      scope: push
+      token_hash: "sha256:…"
+      monitors: ["nightly-backup", "weekly-backup"]   # omit for every push monitor
+```
+
+A client sends `Authorization: Bearer <token>`. The scopes are:
+
+| Scope | Reaches |
+|-------|---------|
+| `read` | `GET` on `/api/...` and `/metrics` |
+| `control` | Everything `read` does, plus the API's write routes: poll now, run a monitor's action, send a test notification |
+| `push` | `/api/push/{id}` for the monitors in `monitors`, or every push monitor when it is absent |
+
+A token never opens the dashboard itself — that stays behind the sign-in page. A token with the wrong scope for a route gets `403`, and an unknown one `401`. Each action taken with a token is written to the monitor's events and the log under the token's name, so the audit trail shows which client acted; revoking a client means deleting its entry and restarting. `token: "..."` in plain text also works, but logs a warning. Read and control tokens need `username`/`password` to be set, since without them the API is open anyway; push tokens work either way.
+
+For Prometheus, set `authorization: {credentials_file: /run/secrets/x_monitor_scrape_token}` on the scrape job.
 
 ---
 
@@ -246,6 +287,10 @@ The primary entry point starts both the background engine and the web dashboard:
 ```bash
 x-monitor --config config.yaml
 ```
+
+Editing `config.yaml` takes effect while X-Monitor runs: the change is picked up within a few seconds, or at once with `kill -HUP`, `POST /api/config/reload`, or **Reload config** in the dashboard's **System** menu. Unchanged monitors keep running and keep their connections; added, removed and changed ones start, stop or restart; and a file that does not load whole is refused, leaving the running config in place. The events feed records what each reload did, including any setting (`database`, `memory`, `auth`, `theme`) that only takes effect on restart.
+
+Logging verbosity can change while X-Monitor runs, for the whole process or one module: from the dashboard's **System** menu (**Log levels**), through `POST /api/log-levels` (see [integrations](docs/integrations.md#runtime-control)), or, when the dashboard is unreachable, with `kill -USR1` (one step more verbose) and `kill -USR2` (one step quieter). `logging.level` and `logging.levels` in `config.yaml` set the starting values.
 
 To run just the dashboard against an existing database:
 
@@ -277,7 +322,7 @@ nix run . -- --config config.yaml
 
 - [Plugin reference](docs/plugins.md) — every monitor type, its config keys, metrics, actions, and layout options
 - [Agent guide](docs/agent.md) — installing `x-monitor-agent`, server-side declaration, event streams, agent vs SSH
-- [Integrations](docs/integrations.md) — the events feed, REST API, Prometheus endpoint, and InfluxDB export
+- [Integrations](docs/integrations.md) — the events feed, REST API, Prometheus endpoint, InfluxDB export, and MQTT / Home Assistant export
 - [Theme tokens](docs/theme.md) — per-token color overrides for the Halon theme
 - [Roadmap](docs/roadmap.md) — what's done and what's planned
 - [docs/develop.md](docs/develop.md) — architectural rationale and development notes

@@ -3,10 +3,15 @@ plus collection health across every other monitor, gathered through the
 io_call escape hatch since it reads local files and live engine state rather
 than issuing connector requests. Config: memory_warning / memory_threshold
 (MB of RSS), stale_warning / stale_threshold (how many intervals overdue a
-monitor may run); each is optional, and null turns that level off. RSS past its bounds sets warning/failed, monitors overdue
-past stale_warning are warning ("late"), and any past stale_threshold makes
-the status failed ("stalled"). A sample that raises before anything was
-read is unavailable."""
+monitor may run), slow_cycle_fraction / slow_cycle_seconds (how long a
+monitor's average cycle may take, as a share of its interval or in seconds);
+each is optional, and null turns that level off. RSS past its bounds sets
+warning/failed, monitors overdue past stale_warning are warning ("late"), any
+past stale_threshold makes the status failed ("stalled"), and a monitor whose
+cycles run past either slow bound is warning ("slow"). A table lists every
+monitor's recent cycle times, slowest first, with how long its SSH commands
+queued for a channel. A sample that raises before anything was read is
+unavailable."""
 
 import os
 import time
@@ -19,8 +24,9 @@ from x_monitor.plugins.base.plugin_helpers import level_for, limit_from
 _CLOCK_TICKS = os.sysconf('SC_CLK_TCK') if hasattr(os, 'sysconf') else 100
 
 _DEFAULT_LAYOUT = [
-    ['uptime_card', 'memory_card', 'monitors_card'],
+    ['uptime_card', 'memory_card', 'monitors_card', 'slow_card'],
     ['chart'],
+    ['timings'],
     ['events'],
 ]
 
@@ -56,6 +62,9 @@ class XMonitorSelfPlugin(Plugin):
         self.stale_warning    = limit_from(
             config, 'stale_warning', Plugin.SAMPLE_MAX_QUIET_INTERVALS + 1)
         self.stale_threshold  = limit_from(config, 'stale_threshold',  10)
+        self.slow_cycle_fraction = limit_from(config, 'slow_cycle_fraction', 0.5)
+        # Off by default, which leaves only the share-of-interval bound.
+        self.slow_cycle_seconds = limit_from(config, 'slow_cycle_seconds')
         self._started_at = time.time()
         self._last_cpu_sample: Optional[Tuple[float, float]] = None
         self.target = 'x-monitor'
@@ -98,6 +107,35 @@ class XMonitorSelfPlugin(Plugin):
         offenders.sort(reverse=True)
         return total, late, stalled, offenders[:5]
 
+    def _is_slow(self, avg_seconds: float, interval: float) -> bool:
+        if self.slow_cycle_seconds and avg_seconds > self.slow_cycle_seconds:
+            return True
+        return (bool(interval) and bool(self.slow_cycle_fraction)
+                and avg_seconds > interval * self.slow_cycle_fraction)
+
+    def _cycle_rows(self) -> List[Dict[str, Any]]:
+        """One row per monitor that has timed a cycle, slowest average first."""
+        rows = []
+        for p in self._walk_monitors():
+            if p.children:
+                continue
+            timing = self.engine.cycle_timing(p.id)
+            if timing is None:
+                continue
+            rows.append({
+                'id': p.id,
+                'name': p.name,
+                'interval': p.interval,
+                'last': round(timing.last_seconds, 3),
+                'avg': round(timing.avg_seconds, 3),
+                'max': round(timing.max_seconds, 3),
+                'wait': round(timing.avg_wait_seconds, 3),
+                'share': round(100.0 * timing.avg_seconds / p.interval, 1) if p.interval else None,
+                'slow': self._is_slow(timing.avg_seconds, p.interval),
+            })
+        rows.sort(key=lambda r: r['avg'], reverse=True)
+        return rows
+
     def io_call(self) -> Optional[Callable[[], Any]]:
         # Reads /proc/self plus the engine's live collection-health map —
         # local introspection the declarative connector requests can't model.
@@ -126,6 +164,7 @@ class XMonitorSelfPlugin(Plugin):
 
         total, late, stalled, offenders = self._collection_health()
         return {
+            'cycles': self._cycle_rows() if self.engine is not None else [],
             'rss_mb': rss_mb,
             'cpu_pct': cpu_pct,
             'uptime_seconds': uptime_seconds,
@@ -144,8 +183,14 @@ class XMonitorSelfPlugin(Plugin):
         uptime_seconds = result['uptime_seconds']
         total, late, stalled, offenders = result['total'], result['late'], result['stalled'], result['offenders']
 
+        cycles = result.get('cycles') or []
+        slow = [row for row in cycles if row['slow']]
+
         metrics = {'uptime_seconds': uptime_seconds, 'monitors_total': float(total),
-                   'monitors_late': float(late), 'monitors_stalled': float(stalled)}
+                   'monitors_late': float(late), 'monitors_stalled': float(stalled),
+                   'monitors_slow': float(len(slow))}
+        if cycles:
+            metrics['slowest_cycle_seconds'] = cycles[0]['avg']
         if rss_mb is not None:
             metrics['memory_mb'] = rss_mb
         if cpu_pct is not None:
@@ -157,7 +202,7 @@ class XMonitorSelfPlugin(Plugin):
         )
         if stalled:
             collect_level = 'failed'
-        elif late:
+        elif late or slow:
             collect_level = 'warning'
         else:
             collect_level = 'online'
@@ -178,9 +223,13 @@ class XMonitorSelfPlugin(Plugin):
         if offenders:
             worst = ', '.join(f"{name} ({mult:.0f}x)" for mult, name in offenders)
             parts.append(f"worst: {worst}")
+        if slow:
+            named = ', '.join(f"{row['name']} ({row['avg']:.1f}s of {row['interval']:.0f}s)" for row in slow[:5])
+            parts.append(f"slow: {named}")
 
         log_level = "ERROR" if overall == 'failed' else "WARNING" if overall == 'warning' else "INFO"
-        return CollectResult(metrics=metrics, logs=[(' | '.join(parts), log_level)], status=overall)
+        return CollectResult(metrics=metrics, logs=[(' | '.join(parts), log_level)], status=overall,
+                             snapshot=cycles)
 
     @staticmethod
     def _monitors_text(values: Dict[str, Any]) -> str:
@@ -205,6 +254,10 @@ class XMonitorSelfPlugin(Plugin):
             return 'warning'
         return 'online'
 
+    @staticmethod
+    def _slow_row_color(row: Dict[str, Any]) -> Optional[str]:
+        return 'warning' if row.get('slow') else None
+
     @property
     def UI_SPEC(self):
         return {
@@ -217,8 +270,27 @@ class XMonitorSelfPlugin(Plugin):
                 'monitors_card': {'title': 'MONITORS',
                                   'metrics': ['monitors_total', 'monitors_late', 'monitors_stalled'],
                                   'format_fn': self._monitors_text, 'color_fn': self._monitors_color},
+                'slow_card': {'metric': 'monitors_slow', 'title': 'SLOW MONITORS', 'color': 'nonzero_warning'},
             },
             'chart': {'metric': 'memory_mb', 'title': 'XMONITOR MEMORY (MB)'},
+            'tables': {
+                'timings': {
+                    'row_key': 'id',
+                    'columns': [
+                        {'name': 'name', 'label': 'MONITOR', 'field': 'name', 'sortable': True, 'align': 'left',
+                         'cell_color_by': self._slow_row_color},
+                        {'name': 'interval', 'label': 'INTERVAL (S)', 'field': 'interval', 'sortable': True,
+                         'align': 'right'},
+                        {'name': 'last', 'label': 'LAST (S)', 'field': 'last', 'sortable': True, 'align': 'right'},
+                        {'name': 'avg', 'label': 'AVG (S)', 'field': 'avg', 'sortable': True, 'align': 'right'},
+                        {'name': 'max', 'label': 'MAX (S)', 'field': 'max', 'sortable': True, 'align': 'right'},
+                        {'name': 'wait', 'label': 'CHANNEL WAIT (S)', 'field': 'wait', 'sortable': True,
+                         'align': 'right'},
+                        {'name': 'share', 'label': '% OF INTERVAL', 'field': 'share', 'sortable': True,
+                         'align': 'right', 'cell_color_by': self._slow_row_color},
+                    ],
+                },
+            },
             'events': True,
         }
 

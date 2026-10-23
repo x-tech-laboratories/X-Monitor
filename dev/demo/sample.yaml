@@ -27,6 +27,17 @@ plugins:
           - {name: "Filesystems", id: "heimdall-fs", type: "filesystems", warning: 85, threshold: 95, interval: 5, <<: *ssh}
           - {name: "ZFS", id: "heimdall-zfs", type: "zfs", warning: 80, threshold: 90, interval: 5, <<: *ssh}
           - {name: "SMART", id: "heimdall-smart", type: "smart", interval: 10, <<: *ssh}
+          - {name: "Package Updates", id: "heimdall-updates", type: "package_updates", interval: 10, <<: *ssh}
+          - {name: "Reboot Required", id: "heimdall-reboot", type: "reboot_required", interval: 10, <<: *ssh}
+          - {name: "Interfaces", id: "heimdall-ifaces", type: "interfaces", expect_up: ["eth0"], interval: 10, <<: *ssh}
+          - {name: "Sessions", id: "heimdall-sessions", type: "sessions", allowed_users: ["alice", "bob"], interval: 10, <<: *ssh}
+          - name: "Host Control"
+            id: "heimdall-control"
+            type: "host_control"
+            allow: ["reboot", "shutdown", "suspend", "power_profile", "next_boot", "identify"]
+            identify_device: "/dev/sda"
+            interval: 10
+            <<: *ssh
       - name: "Services"
         id: "heimdall-services"
         type: "group"

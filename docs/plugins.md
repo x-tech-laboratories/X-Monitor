@@ -39,16 +39,23 @@ config examples. For what X-Monitor is and how to run it, see the
   [`connections`](#connections) ·
   [`wifi`](#wifi) ·
   [`power`](#power) ·
+  [`reboot_required`](#reboot_required) ·
+  [`package_updates`](#package_updates) ·
+  [`interfaces`](#interfaces) ·
+  [`sessions`](#sessions) ·
   [`borg`](#borg) ·
   [`containers`](#containers) ·
   [`command`](#command) ·
   [`filesystems`](#filesystems) ·
   [`folders`](#folders) ·
   [`vms`](#vms) ·
+  [`host_control`](#host_control) ·
   [`cloud`](#cloud) ·
+  [`x_monitor_self`](#x_monitor_self) ·
   [`group`](#group)
 - [Plugin Layout](#plugin-layout) — arranging a plugin's widgets on its page
 - [SSH Config](#ssh-config) — the `ssh_config` block SSH-based plugins accept
+- [Out-of-tree plugins](#out-of-tree-plugins) — adding your own plugin types without changing X-Monitor
 
 ---
 
@@ -58,7 +65,7 @@ config examples. For what X-Monitor is and how to run it, see the
 
 | Type | Monitors | Collection | Key metrics | Actions |
 |------|----------|------------|-------------|---------|
-| [`uptime`](#uptime)                     | Host reachability                     | ICMP ping                                        | `up`, `latency_ms`                              | — |
+| [`uptime`](#uptime)                     | Host reachability                     | ICMP ping                                        | `up`, `latency_ms`                              | Wake (Wake-on-LAN, with `mac`) |
 | [`push`](#push)                         | External heartbeat (dead man's switch) | REST API (caller pushes in)                     | `last_push_epoch`, `reported_up`, `value`       | — |
 | [`http`](#http)                         | HTTP(S)/WebSocket endpoint health     | HTTP from the X-Monitor host, or `websocat` over SSH | `probe_ok`, `probe_status`, `probe_latency_ms`  | — |
 | [`dns_record`](#dns_record)             | DNS record resolution                 | DNS query (via dnspython, in-process)            | `resolved`, `ttl`, `matches_expected`            | — |
@@ -74,26 +81,32 @@ config examples. For what X-Monitor is and how to run it, see the
 | [`md`](#md)                             | mdadm array health                     | SSH (`/proc/mdstat`)                            | `arrays_total`, `arrays_ok`, `arrays_degraded`  | — |
 | [`disk_io`](#disk_io)                   | Disk read/write throughput             | SSH (`/proc/diskstats`)                         | `read_kbps`, `write_kbps`                       | — |
 | [`disk_space`](#disk_space)             | Filesystem usage for a path           | SSH (`df`)                                       | `used_pct`, `size_gb`, `used_gb`, `avail_gb`    | — |
-| [`cpu`](#cpu)                           | CPU utilization                        | SSH (`/proc/stat`)                              | `cpu_pct`                                       | — |
+| [`cpu`](#cpu)                           | CPU utilization, overall and per core  | SSH (`/proc/stat`)                              | `cpu_pct`, `cpu_core_max_pct`                   | — |
 | [`memory`](#memory)                     | Memory and swap use                    | SSH (`/proc/meminfo`)                           | `memory_pct`, `memory_used_gb`                  | — |
 | [`load`](#load)                         | Load average, scaled by core count     | SSH (`/proc/loadavg`)                           | `load_pct_1m`, `load_pct_5m`, `load_pct_15m`    | — |
 | [`temperature`](#temperature)           | Thermal zone temperatures              | SSH (`/sys/class/thermal`)                      | `temp_c`, `temp_zone_<zone>`                    | — |
 | [`interrupts`](#interrupts)             | Interrupt and context-switch rates     | SSH (`/proc/stat`)                              | `irq_per_sec`, `ctxt_per_sec`                   | — |
-| [`gpu`](#gpu)                           | NVIDIA GPU utilization, memory, temperature | SSH (`nvidia-smi`)                         | `gpu_util`, `gpu_mem_pct`, `gpu_temp`           | — |
+| [`gpu`](#gpu)                           | NVIDIA, AMD and Intel GPU utilization, memory, temperature | SSH (`nvidia-smi`, `/sys/class/drm`) | `gpu_util`, `gpu_mem_pct`, `gpu_temp`           | — |
 | [`oom`](#oom)                           | Kernel OOM kills                       | SSH (`/proc/vmstat`) + agent journal push       | `oom_kills_total`, `oom_kills_new`              | — |
 | [`processes`](#processes)               | Running processes by CPU              | SSH (`ps`)                                       | `process_count`, `top_cpu_pct` *(ephemeral)*    | SIGTERM, SIGKILL |
 | [`throughput`](#throughput)             | Network interface throughput           | SSH (`/proc/net/dev`)                           | `rx_kbps`, `tx_kbps`                            | — |
 | [`connections`](#connections)           | TCP connection counts by state         | SSH (`/proc/net/tcp`)                           | `conn_total`, `conn_established`, `conn_listen` | — |
 | [`wifi`](#wifi)                         | WiFi link quality and signal strength  | SSH (`/proc/net/wireless`)                      | `link_quality`, `signal_dbm`                    | — |
 | [`power`](#power)                       | Battery charge, external power, wear   | SSH (`/sys/class/power_supply`)                 | `charge_pct`, `plugged_in`, `capacity_health_pct`, `battery_<name>_charge_pct` | — |
+| [`reboot_required`](#reboot_required)   | Whether the host needs a reboot        | SSH (`/var/run/reboot-required`, `needs-restarting`, `/run/booted-system`, `/usr/lib/modules`) | `reboot_required` | — |
+| [`package_updates`](#package_updates)   | Pending package and security updates   | SSH (`apt list`, `dnf --cacheonly check-update`, `checkupdates`/`pacman -Qu`) | `updates_pending`, `security_updates_pending` | — |
+| [`interfaces`](#interfaces)             | Network interface inventory and addressing | SSH (`ip -j addr`, `/sys/class/net`)        | `interfaces_up`, `interfaces_total`, `interface_<name>_up` | — |
+| [`sessions`](#sessions)                 | Logged-in users and recent logins      | SSH (`loginctl` or `who`, `last`)               | `sessions_total`, `sessions_remote`, `sessions_unexpected` | — |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
 | [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
-| [`containers`](#containers)             | Docker / Podman container states      | SSH (`docker`/`podman ps`)                       | `containers_total`, `containers_running`, `containers_stopped` | Restart (per expected container) |
+| [`containers`](#containers)             | Docker / Podman containers, image updates | SSH (`docker`/`podman ps`, `inspect`) + registry API | `containers_total`, `containers_running`, `containers_stopped`, `images_update_available` | Restart (per expected container), Prune |
 | [`command`](#command)                   | Arbitrary command (generic check)     | SSH (any command)                                | `exit_code` (+ `value` in pattern mode)         | — |
 | [`filesystems`](#filesystems)           | All mounted filesystems (auto-discovered) | SSH (`df`)                                    | `worst_used_pct`, `fs_<mount>_used_pct`         | — |
 | [`folders`](#folders)                   | Sizes of arbitrary directories        | SSH (`du`)                                        | `worst_folder_gb`, `folder_<path>_gb`           | — |
 | [`vms`](#vms)                           | libvirt/KVM virtual machines          | SSH (`virsh`)                                     | `vms_total`, `vms_running`, `vms_stopped`       | Running toggle (per expected VM) |
+| [`host_control`](#host_control)         | Host power, boot and identify controls | SSH (`powerprofilesctl`, `bootctl`/GRUB/`efibootmgr`, `/sys/power`) | `power_profiles`, `boot_entries`, `suspend_supported` | Reboot, Shut Down, Suspend, Power Profile, Next Boot, Identify (each opt-in) |
 | [`cloud`](#cloud)                       | Cloud instance metadata (AWS/GCP/Azure) | SSH (metadata endpoint)                         | `on_cloud`                                      | — |
+| [`x_monitor_self`](#x_monitor_self)             | X-Monitor itself: memory, CPU, late and slow monitors | Local (`/proc/self`, engine state)     | `memory_mb`, `monitors_late`, `monitors_slow`, `slowest_cycle_seconds` | — |
 | [`group`](#group)                       | Container for nested monitors         | — (aggregates children)                          | —                                               | — |
 
 All plugin types share these common fields:
@@ -102,7 +115,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `cloud`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `host_control`, `cloud`, `x_monitor_self`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 | `schedule` | Actions to run on a cron schedule — see [Scheduled actions](#scheduled-actions) (default: none) |
 | `actions` | Your own command buttons on the monitor's page — see [Custom actions](#custom-actions) (default: none) |
@@ -141,6 +154,32 @@ The expression has the usual five fields (minute, hour, day of month, month, day
 
 A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a backup that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. The Schedules page in the sidebar lists every schedule in the fleet, soonest first, with its monitor, action, cron expression, next run, and when its last run started and whether it did. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
 
+### Triggered actions
+
+An action can also run because of what a monitor sees rather than the time. Each `triggers` entry names the action and one condition: a `status` (one name or a list), or a `metric` with exactly one of `above`, `below` or `equals`. `for` is how long the condition must hold first (default: at once), and `args` passes the same parameters a dialog would.
+
+```yaml
+- name: Root Disk
+  type: disk_space
+  actions:
+    - name: Clear Cache
+      command: rm -rf /var/cache/app/*
+  triggers:
+    - action: custom:clear_cache  # a custom action, or the action_id behind any button
+      metric: used_pct
+      above: 90
+      for: 10m
+- name: Media Server
+  type: systemd_service
+  triggers:
+    - action: restart_service
+      status: failed
+```
+
+Every cycle the monitor records, polled or pushed by its agent, is checked against its triggers. An entry runs once each time its condition becomes true and has held for `for`, and it is armed again only once a cycle shows the condition cleared, so a monitor that stays failed runs the action once, not every cycle. A cycle that does not report what the entry watches, such as one without that metric, neither starts nor clears it. The run is recorded before the action starts, so a restart never repeats it, and the time the condition started holding survives a restart too. A triggered run goes through the same path as the button, logs its outcome on the monitor, and appears on the monitor's page and on the Schedules page next to the scheduled ones. Changing an entry's condition, `for` or `args` starts it afresh.
+
+A metric's name is the one shown in the monitor's metrics and exports. The NixOS monitor's own `auto_switch` is the better way to switch on drift, since it also refuses to roll back a generation newer than the flake.
+
 ### Custom actions
 
 Every monitor, whatever its type, accepts an `actions` list of your own commands. Each one becomes a button in the monitor's page header, next to the plugin's own actions.
@@ -173,17 +212,26 @@ Every monitor, whatever its type, accepts an `actions` list of your own commands
 | `timeout` | How long the command may run, as seconds or a duration such as `2m` |
 | `agent`   | Run on this agent instead of the monitor's own host |
 
-The command runs where the monitor's own commands run: over its agent, or over SSH to its host. It succeeds on exit code 0, and each run is logged on the monitor with the start of its output, or of its error when it fails. Custom ids start with `custom:`, so they never clash with the plugin's own actions, and [`schedule`](#scheduled-actions) can run them like any other action.
+The command runs where the monitor's own commands run: over its agent, or over SSH to its host. It succeeds on exit code 0, and each run is logged on the monitor with the start of its output, or of its error when it fails. Custom ids start with `custom:`, so they never clash with the plugin's own actions, and [`schedule`](#scheduled-actions) and [`triggers`](#triggered-actions) can run them like any other action.
 
 ---
 
 ### `uptime`
-Checks host availability using ICMP ping.
+Checks host availability using ICMP ping. With `mac:` set it can also wake the host with a Wake-on-LAN magic packet.
 
-| Option        | Description                                        |
-|---------------|----------------------------------------------------|
-| `target_host` | IP address or hostname to ping                     |
-| `interval`    | Polling frequency in seconds (default: `60`)       |
+| Option              | Description                                        |
+|---------------------|----------------------------------------------------|
+| `target_host`       | IP address or hostname to ping                     |
+| `interval`          | Polling frequency in seconds (default: `60`)       |
+| `mac`               | *(Optional)* The host's MAC address; adds a **Wake** button (asks for confirmation) |
+| `wol_broadcast`     | Address the packet is sent to (default: `255.255.255.255`); a subnet's broadcast address such as `192.168.1.255` reaches it from a host with several networks |
+| `wol_port`          | UDP port (default: `9`)                            |
+| `wol_password`      | *(Optional)* SecureOn password, as six hex bytes (`01:02:03:04:05:06`) or a dotted quad |
+| `wake_via`          | *(Optional)* The `id` of another monitor whose host sends the packet instead of the X-Monitor server — for a host on a subnet only that one reaches. It uses that monitor's SSH connection or agent |
+| `wake_command`      | *(Optional, with `wake_via`)* The command that sends it there, overriding the default. `{mac}`, `{hex}` (the whole packet), `{broadcast}`, `{port}` and `{password}` are filled in, shell-quoted; write other braces doubled |
+| `wake_on_down`      | Send a wake automatically when the host goes **failed** (default: `false`) |
+| `wake_retry`        | Time between automatic wakes while it stays down (default: `10m`) |
+| `wake_max_attempts` | Automatic wakes before giving up until the host is seen up again (default: `3`) |
 
 **Metrics**: `up` (1/0), `latency_ms`
 
@@ -193,6 +241,19 @@ Checks host availability using ICMP ping.
   type: "uptime"
   target_host: "192.168.1.1"
   interval: 30
+```
+
+Without `wake_via`, the packet is one UDP broadcast from the X-Monitor server, so it reaches hosts on the server's own network. With it, X-Monitor builds the packet and the other host sends it with `python3` or, failing that, `socat`; a host with neither needs a `wake_command`, such as `wakeonlan -i {broadcast} -p {port} {mac}` or `etherwake -i eth0 {mac}` (which sends raw Ethernet frames and so usually needs root). Every wake, manual or automatic, is logged to the monitor's events with where it was sent and whether that worked; the last automatic one says it is giving up.
+
+```yaml
+- name: "NAS"
+  id: "nas-ping"
+  type: "uptime"
+  target_host: "192.168.20.5"
+  mac: "00:11:22:33:44:55"
+  wake_via: "host1-cpu"            # any monitor on a host in that subnet
+  wol_broadcast: "192.168.20.255"
+  wake_on_down: true               # wake it whenever it drops, every 10m, 3 times at most
 ```
 
 ---
@@ -205,12 +266,14 @@ The inverse of every other monitor: instead of X-Monitor reaching out to a targe
 | Option      | Description                                                                 |
 |-------------|------------------------------------------------------------------------------|
 | `max_age`   | Seconds since the last heartbeat before reporting `failed` (default: `interval * 2`) |
-| `token`     | Shared secret the caller must present when pushing. **Required** — without one, anyone who can reach the API could mark this monitor healthy. Generate with `openssl rand -hex 20`. |
+| `token`     | Shared secret the caller must present when pushing through `/api/push/{id}/{token}`. Generate with `openssl rand -hex 20`. Optional when a push-scoped [API token](../README.md#api-tokens) covers the monitor; with neither, nothing can push to it. |
 | `interval`  | How often the staleness check itself runs (default: `60`)                    |
 
 **Metrics**: `last_push_epoch` (Unix timestamp of the last heartbeat), `reported_up` (1/0, the caller's own status), `value` (optional, if the caller supplies one)
 
-To push a heartbeat, hit `GET` or `POST /api/push/{id}/{token}`, optionally with `status` (`up` or `down`, default `up`), `msg`, and `value` query parameters. This endpoint is not covered by the dashboard's HTTP Basic Auth (see [Authentication](../README.md#authentication)) — the per-monitor token is its credential instead.
+To push a heartbeat, hit `GET` or `POST /api/push/{id}/{token}`, optionally with `status` (`up` or `down`, default `up`), `msg`, and `value` query parameters. This endpoint is not covered by the dashboard's sign-in (see [Authentication](../README.md#authentication)) — the per-monitor token is its credential instead.
+
+Alternatively, push to `/api/push/{id}` with a push-scoped [API token](../README.md#api-tokens) in an `Authorization: Bearer` header. One such token can cover several monitors (or all of them), it stays out of URLs and so out of proxy access logs, and each heartbeat's event names the token that sent it. Both routes work side by side.
 
 ```yaml
 - name: "Nightly Backup Job"
@@ -227,6 +290,10 @@ curl "https://x-monitor.example.com/api/push/nightly-backup/a1b2c3d4e5f6...?stat
 
 # Or report a failure the job detected itself, while still checking in on time:
 curl "https://x-monitor.example.com/api/push/nightly-backup/a1b2c3d4e5f6...?status=down&msg=disk+full"
+
+# Or with a push-scoped API token (x-monitor token new backup-jobs --scope push):
+curl -X POST -H "Authorization: Bearer $XMONITOR_PUSH_TOKEN" \
+  "https://x-monitor.example.com/api/push/nightly-backup?status=up"
 ```
 
 ---
@@ -863,16 +930,23 @@ Monitors disk space usage for a path or mountpoint over SSH via `df`. Works on a
 ---
 
 ### `cpu`
-CPU utilization from two `/proc/stat` samples a second apart, taken on the target so the sleep costs one round trip rather than two.
+CPU utilization from two `/proc/stat` samples a second apart, taken on the target so the sleep costs one round trip rather than two. The same two samples give every core's utilization, drawn as a bar per core on the monitor's page, and the busiest core is kept as `cpu_core_max_pct`.
 
-| Option       | Description                                                  |
-|--------------|--------------------------------------------------------------|
-| `warning`    | CPU % that triggers `warning` (default: `70`)                |
-| `threshold`  | CPU % that triggers `failed` (default: `85`)                 |
-| `interval`   | Polling frequency (default: `60`)                            |
-| `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
+The per-core bars come from a snapshot that is replaced every cycle, so they cost no history however many cores the host has. Per-core *history* is opt-in with `per_core_metrics`, because it writes one metric row per core per cycle — a 64-thread host at a one-minute interval adds about 92,000 rows a day.
 
-**Metrics**: `cpu_pct`
+A single pinned core is usually a stuck or single-threaded process that the overall figure hides on a many-core host. Set both `core_warning` and `core_threshold` to let the busiest core change the status too; without both, it is only shown. The bars are colored by these bounds when they are set, else by `warning`/`threshold`.
+
+| Option             | Description                                                              |
+|--------------------|--------------------------------------------------------------------------|
+| `warning`          | CPU % that triggers `warning` (default: `70`)                            |
+| `threshold`        | CPU % that triggers `failed` (default: `85`)                             |
+| `per_core_metrics` | Record `cpu<n>_pct` for every core (default: `false`)                    |
+| `core_warning`     | Busiest-core % that triggers `warning` (optional, off by default)         |
+| `core_threshold`   | Busiest-core % that triggers `failed` (optional, off by default)          |
+| `interval`         | Polling frequency (default: `60`)                                        |
+| `ssh_config`       | SSH connection details — see [SSH Config](#ssh-config) below             |
+
+**Metrics**: `cpu_pct`, `cpu_core_max_pct`, and `cpu<n>_pct` per core with `per_core_metrics: true`
 
 ```yaml
 - name: "CPU"
@@ -881,6 +955,8 @@ CPU utilization from two `/proc/stat` samples a second apart, taken on the targe
   interval: 1m
   warning: 70
   threshold: 85
+  core_warning: 95       # optional: flag a single pinned core
+  core_threshold: 100
   ssh_config:
     host: "ragnarok.example.com"
 ```
@@ -982,23 +1058,44 @@ Interrupt and context-switch rates, from two `/proc/stat` snapshots a second apa
 ---
 
 ### `gpu`
-NVIDIA GPU utilization, memory and temperature via `nvidia-smi`. The peak across cards sets the status; every card is also kept individually.
+Every NVIDIA, AMD and Intel card on the host, in one command per cycle: NVIDIA cards through `nvidia-smi`, AMD (`amdgpu`) and Intel (`i915`/`xe`) cards through `/sys/class/drm`, which needs no extra tools and no root. The vendor is detected per card, so one monitor covers a desktop with an Intel iGPU and an NVIDIA dGPU. Each card gets its own metric family and chip, and the worst card sets the status.
 
-A GPU that sleeps with a laptop lid can wedge `nvidia-smi` uninterruptibly. After `timeout_trip` consecutive timeouts the monitor stops issuing the probe entirely for `suspend_seconds` and reports `unavailable` rather than stranding a process per cycle.
+**Numbering.** NVIDIA cards keep `nvidia-smi`'s indices, so existing `gpu<n>_*` series carry over. AMD and Intel cards are numbered after the host's NVIDIA cards, in DRM card order. The NVIDIA count comes from the PCI bus rather than from `nvidia-smi`, so an AMD card keeps its number when `nvidia-smi` is missing or suspended.
+
+**A sleeping card is not woken.** An AMD or Intel card whose runtime power state is `suspended` (a laptop's idle dGPU) is reported as idle — `gpu<n>_util` of `0`, shown as *asleep* — without reading any of its other files, since reading them would power it up every cycle.
+
+**Intel utilization** comes only from `intel_gpu_top`, sampled once for 0.5 s and bounded to 2 s, and is the busiest engine's share (render, video, and so on). It needs `intel_gpu_top` installed and perf access for the user X-Monitor runs as (`CAP_PERFMON`, or `kernel.perf_event_paranoid` of `0` or less). Without it, an Intel card reports its clock and any temperatures but no utilization, and the log says why; the load is never guessed from the clock.
+
+A GPU that sleeps with a laptop lid can wedge `nvidia-smi` uninterruptibly. After `timeout_trip` consecutive timeouts the monitor stops running `nvidia-smi` for `suspend_seconds` rather than stranding a process per cycle; other cards keep reporting, and a host with only NVIDIA cards reports `unavailable`.
 
 | Option            | Description                                                       |
 |-------------------|-------------------------------------------------------------------|
+| `vendor`          | `auto` (default), or `nvidia`, `amd`, `intel`, or a list of them, to probe only those cards |
+| `intel_gpu_top`   | Sample Intel utilization with `intel_gpu_top` when it is installed (default: `true`) |
 | `util_warning`    | GPU utilization % that triggers `warning` (default: `85`)         |
 | `util_threshold`  | GPU utilization % that triggers `failed` (default: `95`)          |
 | `mem_warning`     | GPU memory % that triggers `warning` (default: `85`)              |
 | `mem_threshold`   | GPU memory % that triggers `failed` (default: `95`)               |
 | `temp_warning`    | °C that triggers `warning` (default: `80`)                        |
 | `temp_threshold`  | °C that triggers `failed` (default: `90`)                         |
-| `timeout_trip`    | Consecutive timeouts before the probe is suspended (default: `2`) |
-| `suspend_seconds` | How long the probe stays suspended (default: `1800`)              |
+| `timeout_trip`    | Consecutive timeouts before `nvidia-smi` is suspended (default: `2`) |
+| `suspend_seconds` | How long `nvidia-smi` stays suspended (default: `1800`)           |
 | `ssh_config`      | SSH connection details — see [SSH Config](#ssh-config) below      |
 
-**Metrics**: `gpu_util`, `gpu_mem_pct`, `gpu_temp`, `gpu<n>_util`, `gpu<n>_mem_pct`, `gpu<n>_temp`
+**Metrics**: `gpu_util`, `gpu_mem_pct`, `gpu_temp` (the peak across cards that report each), and per card:
+
+| Metric                  | NVIDIA (`nvidia-smi`)  | AMD (sysfs)                          | Intel (sysfs, `intel_gpu_top`)          |
+|-------------------------|------------------------|--------------------------------------|-----------------------------------------|
+| `gpu<n>_util`           | `utilization.gpu`      | `gpu_busy_percent`                   | busiest engine, `intel_gpu_top` only    |
+| `gpu<n>_mem_pct`        | `memory.used / total`  | `mem_info_vram_used / total`         | —                                       |
+| `gpu<n>_temp`           | `temperature.gpu`      | hwmon `edge`                         | hwmon `pkg` (`xe` only)                 |
+| `gpu<n>_temp_junction`  | —                      | hwmon `junction`                     | —                                       |
+| `gpu<n>_temp_mem`       | —                      | hwmon `mem`                          | hwmon `vram` (`xe` discrete only)       |
+| `gpu<n>_power_w`        | `power.draw`           | hwmon `power1_average` or `power1_input` | `intel_gpu_top` GPU power           |
+| `gpu<n>_clock_mhz`      | `clocks.sm`            | current `pp_dpm_sclk` level          | `gt_act_freq_mhz`, or `xe`'s `act_freq` |
+| `gpu<n>_mem_busy_pct`   | —                      | `mem_busy_percent`                   | —                                       |
+
+Only the utilization, VRAM and temperature readings count against the thresholds. On an AMD APU the "VRAM" is the firmware's carve-out from system memory, and the edge temperature and power are the whole chip's, CPU included — raise `temp_warning` there if the CPU normally runs hot.
 
 ```yaml
 - name: "GPU"
@@ -1007,7 +1104,7 @@ A GPU that sleeps with a laptop lid can wedge `nvidia-smi` uninterruptibly. Afte
   interval: 1m
   temp_threshold: 88
   ssh_config:
-    host: "odin.example.com"   # target needs nvidia-smi
+    host: "odin.example.com"
 ```
 
 ---
@@ -1164,6 +1261,136 @@ Battery charge, whether the device is on external power, and how worn the batter
 ```
 ---
 
+### `reboot_required`
+Whether the host must reboot to run the kernel and core libraries it has installed. It runs every check that applies to the host, in one cheap script, and reports a reboot when any of them asks for one:
+
+- **Debian / Ubuntu** — `/var/run/reboot-required` exists; the packages that asked for it are read from `/var/run/reboot-required.pkgs`. Debian writes this flag only when `unattended-upgrades` or `update-notifier-common` is installed.
+- **RHEL / Fedora** — `needs-restarting -r` (or `dnf needs-restarting -r`) exits `1`; the core packages it lists are shown.
+- **NixOS** — the booted system's `initrd`, `kernel`, `kernel-modules` or `systemd` differ from the current system's, the same comparison [`nixos_upgrade`](#nixos_upgrade) makes; the parts that differ are shown.
+- **Any other host (Arch and friends)** — the running kernel (`uname -r`) has no directory under `/usr/lib/modules`, because a kernel upgrade removed it.
+
+A host where none of these applies (a container with no module tree, say) is `unavailable`. Nothing here needs root.
+
+| Option          | Description                                                                  |
+|-----------------|------------------------------------------------------------------------------|
+| `reboot_status` | Status when a reboot is required: `warning` (default), `failed`, or `online` to only record it |
+| `interval`      | Polling frequency (default: `60`; `1h` is plenty)                             |
+| `ssh_config`    | SSH connection details — see [SSH Config](#ssh-config) below                 |
+
+**Metrics**: `reboot_required` (1/0)
+
+```yaml
+- name: "Reboot Required"
+  id: "server-reboot"
+  type: "reboot_required"
+  interval: 1h
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `package_updates`
+Pending package updates and how many of them are security fixes, normalised across apt, dnf and pacman. It only reads what the package manager already has cached — it never refreshes metadata and needs no root — so the counts are as fresh as the host's own `apt update` / `dnf makecache` timer:
+
+- **apt** — `apt list --upgradable` (or `apt-get -s dist-upgrade` without `apt`); an update is a security update when it comes from a `-security` suite.
+- **dnf** — `dnf --cacheonly check-update`, with `dnf --cacheonly updateinfo list --security` for the security flag and `rpm -q` for installed versions. A non-root `--cacheonly` reads the system cache.
+- **pacman** — `checkupdates` from `pacman-contrib` when installed (it syncs a temporary copy of the databases, so it needs network access but no root), otherwise `pacman -Qu` against the last `pacman -Sy`. Arch has no security metadata of its own; when `arch-audit` is installed, the packages it lists are flagged as security updates.
+
+The manager is detected in that order unless `manager` names one. The dashboard lists every pending package with its installed and available version and its security flag, security updates first.
+
+A host with none of the three managers is `unavailable`. That includes NixOS, whose updates are tracked by [`nixos_upgrade`](#nixos_upgrade) instead; the message says so. A cache the manager cannot read (dnf with no system cache yet, say) is `unavailable` too.
+
+| Option               | Description                                                                 |
+|----------------------|-----------------------------------------------------------------------------|
+| `manager`            | `apt`, `dnf` or `pacman` (default: auto-detect)                             |
+| `warning`            | Pending updates that trigger `warning` (default: none)                      |
+| `threshold`          | Pending updates that trigger `failed` (default: none)                       |
+| `security_warning`   | Pending security updates that trigger `warning` (default: `1`, so any; `null` to disable) |
+| `security_threshold` | Pending security updates that trigger `failed` (default: none)              |
+| `interval`           | Polling frequency (default: `1h`)                                           |
+| `ssh_config`         | SSH connection details — see [SSH Config](#ssh-config) below                |
+
+**Metrics**: `updates_pending`, `security_updates_pending`
+
+```yaml
+- name: "Package Updates"
+  id: "server-updates"
+  type: "package_updates"
+  interval: 1h
+  warning: 50              # a long-neglected host
+  security_threshold: 5    # any security update warns; five fail
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `interfaces`
+Every network interface on the host with its state, carrier, MAC, MTU, link speed and IPv4/IPv6 addresses, from `ip -j addr` and `/sys/class/net` (plain `ip addr` stands in when `ip` has no JSON output). Where [`throughput`](#throughput) measures one busy interface, this lists them all — for catching a dropped link or a changed DHCP lease.
+
+An interface counts as up when its operstate is `up`, or `unknown` with a carrier (loopback, WireGuard and other tunnels report `unknown`). Interfaces you name in `expect_up` are checked:
+
+- **missing, down or without carrier** → `failed`;
+- **addresses changed since the previous cycle** (a new DHCP lease, a new IPv6 prefix) → `warning` for that cycle, with an event naming the old and new addresses. Temporary IPv6 privacy addresses rotate by design, so they are listed but never compared; a link that drops and comes back with the same address is not a change.
+
+Other interfaces are listed and counted, but never change the status. An `expect_up` interface is always listed, even when `include`/`exclude` would hide it.
+
+| Option             | Description                                                              |
+|--------------------|--------------------------------------------------------------------------|
+| `include`          | Glob patterns of interfaces to list, e.g. `["eth*", "wlan*"]` (default: all) |
+| `exclude`          | Glob patterns of interfaces to leave out, e.g. `["veth*", "docker*"]`     |
+| `include_loopback` | List the loopback interface too (default: `false`)                       |
+| `expect_up`        | Interfaces that must be up with carrier; also watched for address changes |
+| `interval`         | Polling frequency (default: `60`)                                         |
+| `ssh_config`       | SSH connection details — see [SSH Config](#ssh-config) below             |
+
+**Metrics**: `interfaces_up`, `interfaces_total` (both over the listed interfaces); `interface_<name>_up` (1/0) per `expect_up` interface
+
+```yaml
+- name: "Interfaces"
+  id: "server-interfaces"
+  type: "interfaces"
+  interval: 1m
+  exclude: ["veth*", "docker*", "br-*"]
+  expect_up: ["eth0", "wg0"]
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `sessions`
+Who is logged in, from where and since when: every active session with its user, tty or seat, remote host, type (`tty`, `x11`, `wayland`, with the PAM service such as `sshd`), login time and idle time, read from `loginctl`. Where logind is not running (a container, a non-systemd host) it falls back to `who -u --ips`. The per-user service manager and the display manager's login screen are sessions to logind but not people logging in, so they are left out (`manager`, `greeter` and `lock-screen` classes).
+
+With `allowed_users` and/or `allowed_sources` set, a session outside them sets `violation_status` (`warning` by default) for as long as it lasts, and logs one event the first time it is seen. `allowed_sources` takes CIDRs (`192.0.2.0/24`, `2001:db8::/32`), hostnames and globs (`*.example.com`); a local session (console, desktop) has no source and always passes that check. Once the first cycle has recorded who is already on, each later new session logs an event too.
+
+A **Recent logins** table shows the last `recent_logins` logins from `last --time-format iso` (util-linux or wtmpdb), with reboot records left out; it stays empty where `last` is missing.
+
+| Option             | Description                                                                  |
+|--------------------|------------------------------------------------------------------------------|
+| `allowed_users`    | User names (globs allowed) that may log in (default: anyone)                |
+| `allowed_sources`  | CIDRs, hostnames or globs remote sessions may come from (default: anywhere) |
+| `violation_status` | Status while a session is outside the allowlists: `warning` (default) or `failed` |
+| `recent_logins`    | Rows in the recent logins table (default: `10`; `0` hides it)               |
+| `interval`         | Polling frequency (default: `60`)                                            |
+| `ssh_config`       | SSH connection details — see [SSH Config](#ssh-config) below                |
+
+**Metrics**: `sessions_total`, `sessions_remote`, `sessions_unexpected`, `users_total`
+
+```yaml
+- name: "Sessions"
+  id: "server-sessions"
+  type: "sessions"
+  interval: 1m
+  allowed_users: ["admin", "deploy"]
+  allowed_sources: ["192.0.2.0/24", "*.example.com"]
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
 ### `borg`
 Whether a Borg repository is being backed up, can be restored from, and is being checked, plus a file browser and the maintenance jobs that go with it. Everything runs as `borg` on the target over SSH, so the repository can be a local path there or a remote `ssh://` one.
 
@@ -1261,18 +1488,38 @@ check_kinds: {repository: 8d, archives: 8d, data: 32d}
 ---
 
 ### `containers`
-Monitors Docker or Podman containers over SSH via `<runtime> ps -a`, counting running vs. stopped containers. Paused/created containers are treated as benign. Named containers listed in `expect_running` are required — any that are missing or not running drive the status to **failed** and expose a per-container **Restart** action in the UI. Other unexpectedly-stopped containers drive **warning** (unless `stopped_warning: false`).
+Monitors Docker or Podman containers over SSH via `<runtime> ps -a`, counting running vs. stopped containers and listing each one with its state and image in a table. Paused/created containers are treated as benign. Named containers listed in `expect_running` are required — any that are missing or not running drive the status to **failed** and expose a per-container **Restart** action in the UI. Other unexpectedly-stopped containers drive **warning** (unless `stopped_warning: false`).
 
 For safety, the restart action only ever targets containers explicitly listed in `expect_running`.
 
-| Option            | Description                                                            |
-|-------------------|------------------------------------------------------------------------|
-| `runtime`         | `docker` (default) or `podman`                                         |
-| `expect_running`  | *(Optional)* List of container names that must be running (→ Restart actions) |
-| `stopped_warning` | Treat any stopped container as a warning (default: `true`)             |
-| `ssh_config`      | SSH connection details — see [SSH Config](#ssh-config) below           |
+**Prune.** The **Prune** button runs `<runtime> system prune -f` on the target after a confirmation that spells out what it deletes: every stopped container, unused networks, dangling images and the build cache. `prune_all_images: true` adds `-a` (every image no container uses) and `prune_volumes: true` adds `--volumes` (every unused volume, with its data). The space reclaimed and the number of objects deleted are shown when it finishes and logged as an event; a failed prune is logged as an error event without changing the status. There is no per-container "pull and recreate": a plain `docker run` container cannot be recreated with its original options from what the runtime reports, so pull and recreate through whatever started it (compose, systemd, `podman auto-update`).
 
-**Metrics**: `containers_total`, `containers_running`, `containers_stopped`
+**Image updates.** Each cycle the target also reports every container's image reference and the RepoDigests of the image it runs (`<runtime> container inspect` / `image inspect`), so the target needs nothing beyond the runtime. Every `update_check_interval` X-Monitor itself asks each image's registry for the digest its tag points at now (a `HEAD` on `/v2/<repo>/manifests/<tag>`), and the **Update** column shows one of:
+
+- **Update available** — the registry's digest is not among the image's RepoDigests, so a pull and a recreate of the container would change it. This also catches a container still running an older image after its tag was pulled anew.
+- **Up to date** — the registry's digest matches.
+- **Pinned by digest** / **Local image** — the reference names a digest, or the image has no RepoDigests (built locally), so there is nothing to compare; these are never checked.
+- **Not checked yet** / **Check failed** — no answer from the registry so far.
+
+The count of distinct images with an update is the `images_update_available` metric and the **IMAGE UPDATES** card. By default it does not change the status; `update_warning: true` makes it a **warning**. A registry that fails or refuses is only logged as a warning event — it never changes the status — and the last digest it did report keeps being used until a check succeeds again.
+
+Docker Hub (`registry-1.docker.io`, with `library/` for official images), ghcr.io, quay.io and any other v2 registry work anonymously through the bearer-token challenge the registry sends. A private registry or repository needs credentials under `registries`, keyed by the host as image references name it (`docker.io`, `ghcr.io`, `registry.example.com:5000`).
+
+**Rate limits.** Docker Hub limits anonymous pulls per IP, and other registries throttle too. A check sends one `HEAD` per distinct image (Docker Hub does not count a `HEAD` as a pull) plus one token request, and its answers are cached until the next check, but keep `update_check_interval` in hours rather than minutes, and give Docker Hub credentials when many hosts share one public IP. A `429` answer is logged as a rate-limit event. The check runs in place of one ordinary poll, so on an agent-backed host a monitor with update checks on is polled through the agent rather than sampled by it; `update_check_interval: 0` turns the checks off and restores sampling.
+
+| Option                  | Description                                                            |
+|-------------------------|------------------------------------------------------------------------|
+| `runtime`               | `docker` (default) or `podman`                                         |
+| `expect_running`        | *(Optional)* List of container names that must be running (→ Restart actions) |
+| `stopped_warning`       | Treat any stopped container as a warning (default: `true`)             |
+| `update_check_interval` | How often X-Monitor asks registries for image updates (default: `6h`; `0` turns update detection off) |
+| `update_warning`        | Make the status **warning** while any image has an update (default: `false`) |
+| `registries`            | *(Optional)* Per-registry credentials, `{host: {username, password or password_command, insecure}}`; `insecure: true` talks plain HTTP to that registry |
+| `prune_all_images`      | Prune also removes every image no container uses (`-a`), not only dangling ones (default: `false`) |
+| `prune_volumes`         | Prune also removes unused volumes and their data (`--volumes`) (default: `false`) |
+| `ssh_config`            | SSH connection details — see [SSH Config](#ssh-config) below           |
+
+**Metrics**: `containers_total`, `containers_running`, `containers_stopped`, `images_update_available`
 
 ```yaml
 - name: "Docker"
@@ -1283,6 +1530,12 @@ For safety, the restart action only ever targets containers explicitly listed in
   expect_running:
     - "nginx"
     - "postgres"
+  update_check_interval: 6h
+  update_warning: false
+  registries:
+    registry.example.com:5000:
+      username: "robot"
+      password_command: "cat /run/secrets/registry-password"
   ssh_config:
     host: "server.example.com"
 ```
@@ -1326,16 +1579,18 @@ Every run is wrapped in `timeout` so a hung target can't stall the polling loop.
   ssh_config:
     host: "server.example.com"
 
-# Exit-code mode: pending reboot -> warning
-- name: "Reboot Required"
-  id: "server-reboot"
+# Exit-code mode: a failing backup script -> warning
+- name: "Nightly Export"
+  id: "server-export"
   type: "command"
   interval: 1h
-  command: "test ! -f /var/run/reboot-required"
+  command: "/usr/local/bin/check-export"
   nonzero_is_warning: true
   ssh_config:
     host: "server.example.com"
 ```
+
+A pending reboot has its own monitor type, [`reboot_required`](#reboot_required), which knows each distro's check.
 
 ---
 
@@ -1418,6 +1673,87 @@ Monitors libvirt/KVM virtual machines over SSH via `virsh list --all`, counting 
 
 ---
 
+### `host_control`
+A host's power and boot controls, one monitor per host. It shows the current power profile and the ones available, the boot entries with the default and the one-shot next-boot entry, and whether the host can suspend, and offers the actions below. It is a control surface rather than a health check: it is **online** whenever the host answers, and a host without one of the tools simply shows that control as `n/a`.
+
+What it reads, and from where:
+
+| Control | Read with | Fallbacks |
+|---------|-----------|-----------|
+| Power profile | `powerprofilesctl list` (power-profiles-daemon) | `tuned-adm list`, then `/sys/firmware/acpi/platform_profile` |
+| Boot entries | `bootctl list --json=short` (systemd-boot), with the one-shot entry from the `LoaderEntryOneShot` EFI variable | `grub-editenv list` plus the `menuentry` titles in `grub.cfg` (GRUB), then `efibootmgr` (`BootOrder` / `BootNext`) |
+| Suspend | `/sys/power/state` (`mem` or `freeze`) | — |
+
+**Every action is off** unless it is listed under `allow:`. The dashboard only shows the buttons of allowed actions, and asks for confirmation, naming the host, before each one. An action that is not allowed is refused and logged (`… refused: not in allow`); every attempt, allowed or refused, is logged to the monitor's events with the action and its outcome.
+
+| Action | `allow:` name | Runs |
+|--------|---------------|------|
+| Reboot | `reboot` | `sudo -n systemctl reboot` |
+| Shut Down | `shutdown` | `sudo -n systemctl poweroff` |
+| Suspend | `suspend` | `sudo -n systemctl suspend` (shown only when the host can suspend) |
+| Power Profile | `power_profile` | `powerprofilesctl set <profile>`, `tuned-adm profile <profile>`, or writes `platform_profile` through `tee`, each through `sudo -n` |
+| Next Boot | `next_boot` | `bootctl set-oneshot <entry>`, `grub-reboot <entry>` (`grub2-reboot` on Fedora-style hosts), or `efibootmgr --bootnext <entry>`, through `sudo -n`; with **Reboot now** ticked (offered only when `reboot` is allowed too) it reboots straight afterwards |
+| Identify / Stop Identify | `identify` | `ledctl locate=<identify_device>` / `ledctl locate_off=<identify_device>`, or with `identify_method: beep`, `beep -r 5`, falling back to a bell on `/dev/console` |
+
+Reboot, shutdown and suspend take the host away mid-command, so a connection that drops after the command was sent counts as success; a host that could not be reached at all is a failure. The SSH connection is re-dialled on the next poll, and an agent reconnects by itself when the host is back.
+
+| Option            | Description |
+|-------------------|-------------|
+| `allow`           | Actions to offer: any of `reboot`, `shutdown`, `suspend`, `power_profile`, `next_boot`, `identify` (default: none) |
+| `privilege`       | `sudo` (default) runs each action as `sudo -n …`, which fails at once with a clear message instead of waiting for a password; `none` runs it as the SSH or agent user, for a root login or a polkit rule |
+| `identify_method` | `ledctl` (default when `identify_device` is set) or `beep` (the default otherwise) |
+| `identify_device` | The drive whose enclosure LED `ledctl` blinks, e.g. `/dev/sda` |
+| `ssh_config`      | SSH connection details — see [SSH Config](#ssh-config) below |
+
+**Metrics**: `power_profiles`, `boot_entries`, `suspend_supported` (1/0)
+
+```yaml
+- name: "host1 control"
+  id: "host1-control"
+  type: "host_control"
+  interval: 5m
+  allow: [reboot, shutdown, suspend, power_profile, next_boot, identify]
+  identify_device: "/dev/sda"
+  ssh_config:
+    host: "host1"
+```
+
+With `privilege: sudo`, the X-Monitor user needs passwordless sudo for exactly the commands it runs, and nothing else. Keep only the lines for the actions you allow; boot-entry reads fall back to running unprivileged, so their lines are needed only where the ESP or `grub.cfg` is root-only. Command paths vary by distribution (`command -v systemctl` on the host shows yours), and sudo matches the arguments exactly:
+
+```
+# /etc/sudoers.d/x-monitor — edit with: visudo -f /etc/sudoers.d/x-monitor
+x-monitor ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl suspend
+x-monitor ALL=(root) NOPASSWD: /usr/bin/powerprofilesctl set *, /usr/sbin/tuned-adm profile *
+x-monitor ALL=(root) NOPASSWD: /usr/bin/tee /sys/firmware/acpi/platform_profile
+x-monitor ALL=(root) NOPASSWD: /usr/bin/bootctl list --json=short, /usr/bin/bootctl set-oneshot *
+x-monitor ALL=(root) NOPASSWD: /usr/bin/cat /boot/grub/grub.cfg, /usr/bin/cat /boot/grub2/grub.cfg, /usr/sbin/grub-reboot *, /usr/sbin/grub2-reboot *
+x-monitor ALL=(root) NOPASSWD: /usr/bin/efibootmgr --bootnext *
+x-monitor ALL=(root) NOPASSWD: /usr/sbin/ledctl locate=/dev/sda, /usr/sbin/ledctl locate_off=/dev/sda
+x-monitor ALL=(root) NOPASSWD: /usr/bin/beep -r 5, /usr/bin/tee /dev/console
+```
+
+A `*` lets the profile or boot entry vary, which is safe here because X-Monitor only ever passes a name it read from the host, shell-quoted. On NixOS the same rule goes in the system configuration, with the store paths of the system profile:
+
+```nix
+security.sudo.extraRules = [{
+  users = [ "x-monitor" ];
+  commands = map (command: { inherit command; options = [ "NOPASSWD" ]; }) [
+    "/run/current-system/sw/bin/systemctl reboot"
+    "/run/current-system/sw/bin/systemctl poweroff"
+    "/run/current-system/sw/bin/systemctl suspend"
+    "/run/current-system/sw/bin/powerprofilesctl set *"
+    "/run/current-system/sw/bin/bootctl list --json=short"
+    "/run/current-system/sw/bin/bootctl set-oneshot *"
+    "/run/current-system/sw/bin/ledctl locate=/dev/sda"
+    "/run/current-system/sw/bin/ledctl locate_off=/dev/sda"
+  ];
+}];
+```
+
+GRUB's one-shot entry (`grub-reboot`) only takes effect when the host's GRUB config has `GRUB_DEFAULT=saved`.
+
+---
+
 ### `cloud`
 Detects the cloud provider of the target and surfaces its instance metadata (id, type, region/zone) over SSH via the link-local metadata endpoint (`169.254.169.254`). Auto-detects across AWS (IMDSv2), GCP, and Azure, or query one provider explicitly. Informational — no thresholds; reports online when metadata is reachable, unavailable when the host isn't on a recognized cloud.
 
@@ -1436,6 +1772,34 @@ Detects the cloud provider of the target and surfaces its instance metadata (id,
   provider: "auto"
   ssh_config:
     host: "server.example.com"
+```
+
+---
+
+### `x_monitor_self`
+X-Monitor watching itself: its own memory, CPU and uptime, whether every other monitor is collecting on schedule, and how long each one's collection takes.
+
+A **late** monitor has gone `stale_warning` intervals without finishing a cycle, and a **stalled** one `stale_threshold` intervals. A **slow** monitor's recent cycles take, on average, more than `slow_cycle_fraction` of its interval, or more than `slow_cycle_seconds` when that is set.
+
+The page lists every monitor's last, average and longest cycle over its last 20 cycles, slowest first, with how long its SSH commands waited for a free channel. That wait is time spent queued behind other monitors on the same host at the `MaxSessions` ceiling (see [SSH Config](#ssh-config)), so a monitor that is slow because of the wait needs fewer neighbours or the agent, not a faster target.
+
+| Option                | Description                                                                     |
+|-----------------------|---------------------------------------------------------------------------------|
+| `memory_warning`      | RSS in MB that sets warning (default: `256`)                                   |
+| `memory_threshold`    | RSS in MB that sets failed (default: `512`)                                    |
+| `stale_warning`       | Intervals overdue before a monitor counts as late, a warning (default: `6`)    |
+| `stale_threshold`     | Intervals overdue before a monitor counts as stalled, a failure (default: `10`) |
+| `slow_cycle_fraction` | Share of its interval a monitor's average cycle may take before it counts as slow, a warning (default: `0.5`; `0` turns it off) |
+| `slow_cycle_seconds`  | Seconds a monitor's average cycle may take before it counts as slow (default: `0`, off) |
+
+**Metrics**: `memory_mb`, `cpu_pct`, `uptime_seconds`, `monitors_total`, `monitors_late`, `monitors_stalled`, `monitors_slow`, `slowest_cycle_seconds`
+
+```yaml
+- name: "X-Monitor"
+  id: "x-monitor"
+  type: "x_monitor_self"
+  interval: 60
+  slow_cycle_seconds: 20
 ```
 
 ---
@@ -1564,9 +1928,9 @@ The same keys can instead be given as a **mapping of widget name → properties*
 
 | Plugin             | Widget names                                                                 |
 |--------------------|------------------------------------------------------------------------------|
-| `uptime`           | `host_card`, `status_card`, `latency_card`, `uptime_strip`, `chart`, `events` |
+| `uptime`           | `host_card`, `status_card`, `latency_card`, `wake` (with `mac`), `uptime_strip`, `chart`, `events` |
 | `systemd_service`  | hand-written UI — not individually addressable                              |
-| `cpu`              | `host_card`, `cpu_card`, `cpu_chart`, `events`                              |
+| `cpu`              | `host_card`, `cpu_card`, `cores`, `cpu_chart`, `events`                     |
 | `memory`           | `host_card`, `mem_pct_card`, `mem_used_card`, `memory_chart`, `events`      |
 | `load`             | `host_card`, `load_1m_card`, `load_chart`, `events`                         |
 | `temperature`      | `host_card`, `temp_card`, `sensors`, `temp_chart`, `events`                 |
@@ -1657,3 +2021,38 @@ polling, benefit from raising `MaxSessions` in that host's own `sshd_config`
 [agent](agent.md) on that host, where commands are frames multiplexed on one
 socket and no session ceiling applies.
 
+---
+
+### Out-of-tree plugins
+
+A monitor type X-Monitor does not ship can live in a directory of your own, named under `plugin_paths:` in `config.yaml`. A relative path is taken from the directory `config.yaml` is in.
+
+```yaml
+plugin_paths:
+  - /etc/x-monitor/plugins            # searched in order; the first directory holding the type wins
+  - path: ./my-plugins
+    override: true                # its plugins replace X-Monitor's own of the same name
+
+plugins:
+  - name: "Weather"
+    id: "weather"
+    type: "weather"               # /etc/x-monitor/plugins/weather.py, or a weather/ package
+```
+
+A plugin type `<type>` is either `<type>.py` or a package directory `<type>/` with an `__init__.py`. The module must define exactly one concrete `Plugin` subclass (classes it imports, such as `Plugin` or `SignalPlugin`, do not count), written the same way as X-Monitor's own plugins: pure `commands()`/`parse()` or `requests()`/`parse_results()` returning a `CollectResult`, with the page described by a `UI_SPEC`.
+
+```python
+from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.core.connectors.types import Command, CollectResult
+
+
+class Weather(Plugin):
+    def commands(self):
+        return [Command('curl -s wttr.in/?format=%t')]
+
+    def parse(self, results):
+        ok = results[0].exit_code == 0
+        return CollectResult(status='online' if ok else 'failed', logs=[(results[0].stdout, 'INFO')])
+```
+
+A name X-Monitor already uses stays X-Monitor's: the file is ignored with a warning in the log, unless its `plugin_paths` entry says `override: true`, which is logged too. A missing type, or a module that defines no `Plugin` class or more than one, stops only that monitor from loading, with the reason in the log. An edited plugin file is read again on the next config reload, and takes effect for the monitors that reload adds or changes; the rest keep running the code they started with until a restart.

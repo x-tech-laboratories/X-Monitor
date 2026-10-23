@@ -25,6 +25,8 @@ from x_monitor.core.state import changes
 from x_monitor.core.state.changes import CHANGES
 from x_monitor.plugins.base.plugin_helpers import format_duration, parse_duration
 
+log = logging.getLogger(__name__)
+
 RETRY_DELAYS = (5, 30)
 """Seconds to wait before each retry of a failed delivery."""
 
@@ -43,17 +45,17 @@ def build_channels(entries: List[Dict[str, Any]], agents: Any) -> Dict[str, Chan
     for entry in entries or []:
         channel_id = str(entry.get('id') or entry.get('type') or '')
         if not channel_id or channel_id in channels:
-            logging.error(f"notifications: channel needs a unique `id`, skipping {entry!r}")
+            log.error(f"notifications: channel needs a unique `id`, skipping {entry!r}")
             continue
         channel_type = CHANNEL_TYPES.get(entry.get('type'))
         if channel_type is None:
-            logging.error(f"notifications: channel {channel_id!r} has unknown type {entry.get('type')!r}")
+            log.error(f"notifications: channel {channel_id!r} has unknown type {entry.get('type')!r}")
             continue
         # A broken channel must not stop the others from working.
         try:
             channels[channel_id] = channel_type(channel_id, entry, agents)
         except ValueError as e:
-            logging.error(f"notifications: channel {channel_id!r} disabled: {e}")
+            log.error(f"notifications: channel {channel_id!r} disabled: {e}")
     return channels
 
 
@@ -102,14 +104,17 @@ class NotificationEngine:
 
         self._loop = asyncio.get_running_loop()
         self._unsubscribe = CHANGES.subscribe(self._on_change)
-        logging.info(
+        log.info(
             f"Notifications: {len(self.channels)} channel(s), {len(rules)} monitor(s) notify"
         )
 
-    def stop(self) -> None:
+    def stop(self, cancel_deliveries: bool = True) -> None:
+        """Stop watching status writes; a config reload keeps deliveries already under way."""
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
+        if not cancel_deliveries:
+            return
         for task in list(self._tasks):
             task.cancel()
 
@@ -267,11 +272,11 @@ class NotificationEngine:
                     await channel.send(summary)
                 else:
                     await channel.send_batch(messages, summary)
-                logging.info(f"Notified {channel.id!r}: {summary.title}")
+                log.info(f"Notified {channel.id!r}: {summary.title}")
                 return
             except Exception as e:
                 error = e
-                logging.warning(f"Notification to {channel.id!r} failed (try {attempt + 1}): {e}")
+                log.warning(f"Notification to {channel.id!r} failed (try {attempt + 1}): {e}")
         self._db.insert_event(
             "WARNING",
             f"[notifications] Could not notify {channel.id!r} that {summary.title}: {error}",

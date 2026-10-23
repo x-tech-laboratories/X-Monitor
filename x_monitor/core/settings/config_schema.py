@@ -42,6 +42,10 @@ class DatabaseSettings(TypedDict, total=False):
 class LoggingSettings(TypedDict, total=False):
     retention_days: int
     metric_retention_days: int
+    metric_downsample_days: int
+    cycle_timings: bool
+    level: str                  # root log level at startup: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    levels: Dict[str, str]      # per-logger levels, e.g. {'x_monitor.core.connectors.ssh_connector': 'DEBUG'}
 
 
 class MemorySettings(TypedDict, total=False):
@@ -58,11 +62,24 @@ class MemorySettings(TypedDict, total=False):
     finished_job_output: int
 
 
+class ApiTokenSettings(TypedDict, total=False):
+    """One entry in ``auth.tokens``: a named client's bearer token and its scope.
+    Give the secret as ``token_hash`` (from ``x-monitor token new``), or as
+    ``token_file`` or ``token``, which are hashed at startup."""
+    name: str
+    scope: str                  # read, control or push
+    token_hash: str             # sha256:<64 hex digits>
+    token_file: str
+    token: str
+    monitors: List[str]         # push only: the monitor ids it may push to; all when absent
+
+
 class AuthSettings(TypedDict, total=False):
-    """The single operator account guarding the dashboard, and how long a
-    sign-in lasts. Each secret may be given inline or as a ``*_file`` path read
-    once at startup. Without ``session_secret`` a key is generated per start,
-    so a restart signs everyone out."""
+    """The single operator account guarding the dashboard, how long a sign-in
+    lasts, and the API tokens other clients use. Each secret may be given
+    inline or as a ``*_file`` path read once at startup. Without
+    ``session_secret`` a key is generated per start, so a restart signs
+    everyone out."""
     username: str
     password: str
     password_file: str
@@ -70,6 +87,7 @@ class AuthSettings(TypedDict, total=False):
     session_secret_file: str
     session_hours: int
     remember_days: int
+    tokens: List[ApiTokenSettings]
 
 
 class InfluxDBExporterSettings(TypedDict, total=False):
@@ -81,8 +99,24 @@ class InfluxDBExporterSettings(TypedDict, total=False):
     database: str
 
 
+class MQTTExporterSettings(TypedDict, total=False):
+    host: str
+    port: int                   # 1883, or 8883 with tls
+    username: str
+    password: str
+    password_file: str
+    tls: Any                    # true, or a mapping of ca_certs, certfile, keyfile, insecure
+    client_id: str
+    base_topic: str             # x-monitor
+    discovery_prefix: str       # homeassistant
+    discovery: bool             # publish Home Assistant discovery configs
+    retain: bool
+    interval: Any               # optional periodic republish of everything, in seconds or a duration
+
+
 class ExporterSettings(TypedDict, total=False):
     influxdb: InfluxDBExporterSettings
+    mqtt: MQTTExporterSettings
 
 
 class NotifySettings(TypedDict, total=False):
@@ -134,6 +168,7 @@ class PluginConfig(TypedDict, total=False):
     interval: Any               # int seconds, or a duration string like '5m' — see parse_duration
     offset: Any                 # pins polls to the clock: run when UTC time is this far past a multiple of interval
     schedule: List[Dict[str, Any]]  # actions run on a cron schedule: [{action, cron, args}] — see coordination/schedule.py
+    triggers: List[Dict[str, Any]]  # actions run when a cycle shows a condition: [{action, status | metric + above/below/equals, for, args}] — see coordination/triggers.py
     actions: List[Dict[str, Any]]  # user command buttons: [{name, command, id, icon, confirm, danger, timeout, agent}] — see plugins/base/custom_actions.py
     timeout: Any
     target_host: str
@@ -157,3 +192,4 @@ class XMonitorConfig(TypedDict, total=False):
     ssh_defaults: SSHConfig
     control: List[Dict[str, Any]]
     auth: AuthSettings
+    plugin_paths: List[Any]     # directories of out-of-tree plugins: a path, or {path, override}

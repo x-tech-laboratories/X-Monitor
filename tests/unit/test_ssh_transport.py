@@ -255,3 +255,37 @@ class TestClose:
         mock_conn.close.side_effect = Exception("boom")
         conn._conn = mock_conn
         conn.close()
+
+
+class TestConnectionLoss:
+    async def test_connect_failure_is_marked_as_never_sent(self):
+        conn = SSHConnection("h")
+        with patch.object(conn, "_get_connection", AsyncMock(side_effect=OSError("no route to host"))):
+            rc, _, err = await conn.execute("cmd")
+        assert rc == -1
+        assert err.startswith(ssh_module.CONNECT_FAILED)
+
+    async def test_connect_timeout_still_names_itself(self):
+        conn = SSHConnection("h")
+        with patch.object(conn, "_get_connection", AsyncMock(side_effect=TimeoutError())):
+            _, _, err = await conn.execute("cmd")
+        assert err == f"{ssh_module.CONNECT_FAILED}: TimeoutError"
+
+    async def test_lost_connection_is_redialled_on_the_next_command(self):
+        import asyncssh
+        lost = MagicMock()
+        lost.is_closed.return_value = False
+
+        async def create_process(*a, **kw):
+            raise asyncssh.ConnectionLost("Connection lost")
+
+        lost.create_process = create_process
+        fresh, _ = _mock_conn_and_proc(0, "back", "")
+        conn = SSHConnection("h")
+        with patch.object(ssh_module.asyncssh, "connect", AsyncMock(side_effect=[lost, fresh])) as dial:
+            rc, _, err = await conn.execute("sudo -n systemctl reboot")
+            assert (rc, err) == (-1, "Connection lost")
+            assert lost.close.called
+            rc, out, _ = await conn.execute("uptime")
+        assert (rc, out) == (0, "back")
+        assert dial.await_count == 2
