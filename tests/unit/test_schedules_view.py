@@ -9,6 +9,7 @@ from nicegui import ui
 from nicegui.testing import User
 
 from x_monitor.core.coordination.schedule import parse_schedule
+from x_monitor.core.coordination.triggers import parse_triggers
 from x_monitor.core.ui.views.schedules import render_schedules, schedule_rows
 
 pytest_plugins = ['nicegui.testing.user_plugin']
@@ -64,6 +65,26 @@ def test_an_unreadable_record_reads_as_not_run():
     row = schedule_rows([BORG], {entry.result_key('borg'): 'garbage'}.get, NOW)[0]
     assert row['last'] == 'not yet'
 
+
+
+def test_a_triggered_action_is_listed_after_the_scheduled_ones():
+    nixos = SimpleNamespace(id='nixos', name='NixOS', children=[], scheduled_actions=[],
+                            triggered_actions=parse_triggers([{'action': 'switch', 'metric': 'up_to_date', 'below': 1}]),
+                            all_actions=lambda: [{'name': 'Rebuild & Switch', 'action_id': 'switch'}])
+    rows = schedule_rows([nixos, FRIGATE], lambda key: None, NOW)
+    assert [(r['action'], r['cron'], r['next']) for r in rows] == [
+        ('Sync recordings', '@weekly', 'Sun 25 Oct 00:00'),
+        ('Rebuild & Switch', 'When up_to_date < 1', 'on that event'),
+    ]
+
+
+def test_a_triggered_action_shows_its_last_run():
+    entry = parse_triggers([{'action': 'switch', 'status': 'warning'}])[0]
+    nixos = SimpleNamespace(id='nixos', name='NixOS', children=[], scheduled_actions=[],
+                            triggered_actions=[entry], all_actions=lambda: [])
+    stored = {entry.result_key('nixos'): json.dumps({'at': datetime(2026, 10, 22, 18, 0).timestamp(), 'ok': True})}
+    row = schedule_rows([nixos], stored.get, NOW)[0]
+    assert (row['last'], row['outcome']) == ('Thu 22 Oct 18:00', 'Started')
 
 async def test_the_table_lists_every_schedule_and_a_row_opens_its_monitor(user: User, monkeypatch):
     callbacks = []
