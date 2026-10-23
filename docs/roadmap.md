@@ -18,6 +18,10 @@
 - [x] Folder size monitor (arbitrary directories via `du`)
 - [x] VM monitor (libvirt/KVM via `virsh`, with start/shutdown)
 - [x] Cloud instance metadata monitor (AWS/GCP/Azure)
+- [x] Reboot-required monitor (Debian flag, `needs-restarting`, NixOS boot links, missing kernel modules)
+- [x] Pending package updates monitor (apt, dnf and pacman, with security updates counted separately)
+- [x] Network interface inventory monitor (state, carrier, addresses; expected links and DHCP lease changes)
+- [x] Logged-in sessions monitor (loginctl/who with user and source allowlists, recent logins from `last`)
 - [x] Push monitor (dead man's switch — external heartbeat via REST API, per-monitor token)
 - [x] DNS record monitor (A/AAAA/CNAME/MX/TXT/NS/SOA via dnspython, custom resolver, expected-value pinning)
 - [x] Dynamic DNS updater (public IP lookup + FreeDNS-style update URL, drift-triggered with rate limiting, Force Update action)
@@ -34,5 +38,6 @@
 - [ ] Boot-uptime monitor (`uptime -p` — how long the host has been up, distinct from ping reachability)
 - [ ] Public IP / geolocation monitor
 - [ ] CSV / JSON file export (flat-file dump alongside the Prometheus/InfluxDB exporters)
-- [ ] Additional export backends (Graphite, MQTT, Elasticsearch, …)
-- [ ] Per-core CPU breakdown in the CPU monitor
+- [ ] Additional export backends — MQTT with Home Assistant discovery is done; Graphite, Elasticsearch, … remain
+- [x] Per-core CPU breakdown in the CPU monitor
+- [x] AMD and Intel GPUs in the GPU monitor, auto-detected alongside NVIDIA

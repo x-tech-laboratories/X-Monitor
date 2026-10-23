@@ -8,7 +8,7 @@ from typing import Dict, List
 
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import Status
-from x_monitor.core.ui.spec_types import CardSpec, ChartSpec, LayoutRow, UISpec
+from x_monitor.core.ui.spec_types import CardSpec, ChartSpec, LayoutRow, TableSpec, UISpec
 
 def worst_status(statuses: List[str]) -> str:
     """The most severe of the given statuses, defaulting to online."""
@@ -34,17 +34,26 @@ class SignalPlugin(Plugin):
         """Full-width layout rows this monitor adds above its charts."""
         return []
 
+    def tables(self) -> Dict[str, TableSpec]:
+        """Tables this monitor shows, each on a full-width row between its cards and charts."""
+        return {}
+
     @property
     def UI_SPEC(self) -> UISpec:
         charts = self.charts()
+        tables = self.tables()
         layout = ([['host_card'] + self.card_row()]
                   + self.rows()
+                  + [[name] for name in tables]
                   + [[name] for name in charts]
                   + [['events']])
-        return {
+        spec: UISpec = {
             'layout': layout,
             'cards': self.cards(),
             'charts': charts,
             'events': True,
         }
+        if tables:
+            spec['tables'] = tables
+        return spec
 

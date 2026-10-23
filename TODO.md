@@ -39,39 +39,55 @@ it is the one architectural change X-Monitor has deliberately deferred.
 - [x] **Battery** — LNXlink `battery` tracks level and charging state for every connected
       battery. Done: [power.py](x_monitor/plugins/power.py) reads charge, external power and wear
       from `/sys/class/power_supply/*`.
-- [ ] **Pending package updates** — LNXlink `sys_updates` counts available packages and flags
+- [x] **Pending package updates** — LNXlink `sys_updates` counts available packages and flags
       security updates. X-Monitor can approximate this with a `command` plugin, but a first-class type
       would normalize across `apt`/`dnf`/`pacman` and give a real metric to threshold on. The Nix
       half is covered: [nixos_upgrade.py](x_monitor/plugins/nixos_upgrade.py) compares the running
       system closure to what its flake evaluates to, and carries the update and switch actions.
-- [ ] **Reboot required** — LNXlink `required_restart`. [docs/plugins.md](docs/plugins.md#command)
+      Done: [package_updates.py](x_monitor/plugins/package_updates.py) counts pending and security
+      updates from the apt, dnf or pacman cache without refreshing it.
+- [x] **Reboot required** — LNXlink `required_restart`. [docs/plugins.md](docs/plugins.md#command)
       already shows this as a `command` example; promoting it to a dedicated plugin removes the
       per-distro shell snippet from every user's config. NixOS hosts already get this from
       `nixos_upgrade`'s `reboot_required` metric.
-- [ ] **Network interface inventory** — LNXlink `interfaces` lists active NICs and their assigned
+      Done: [reboot_required.py](x_monitor/plugins/reboot_required.py) runs every check that fits the
+      host (Debian flag, `needs-restarting`, missing module dir, NixOS boot parts).
+- [x] **Network interface inventory** — LNXlink `interfaces` lists active NICs and their assigned
       IPs. The `network` plugin's `throughput` module auto-detects *one* interface but never reports the
       set of interfaces or their addressing. Useful for catching a dropped link or a changed DHCP lease.
-- [ ] **Logged-in users / active sessions** — LNXlink `current_user` reports the active graphical
+      Done: [interfaces.py](x_monitor/plugins/interfaces.py) lists every interface with its state and
+      addresses, and flags an `expect_up` link that drops or changes address.
+- [x] **Logged-in users / active sessions** — LNXlink `current_user` reports the active graphical
       user. The server-side reframing is `who`/`loginctl`/`last`: who is logged in, from where, since
       when. That is a legitimate security-adjacent monitor and X-Monitor has nothing in the space.
-- [ ] **Per-plugin collection latency** — LNXlink `inference_time` measures how long each module's
+      Done: [sessions.py](x_monitor/plugins/sessions.py) lists sessions from `loginctl` or `who`, with
+      recent logins, and flags users or sources outside the allowed lists.
+- [x] **Per-plugin collection latency** — LNXlink `inference_time` measures how long each module's
       data collection takes. X-Monitor has [x_monitor_self.py](x_monitor/plugins/x_monitor_self.py) but does not
       expose per-monitor cycle duration. Would make SSH contention and slow targets visible, and
       pairs naturally with the `MaxSessions` queuing behaviour documented at
       [docs/plugins.md](docs/plugins.md#ssh-config).
+      Done: `x_monitor_self` shows each monitor's cycle time and SSH channel wait, slowest first, and
+      warns on monitors that use too much of their interval.
 
 ### 1b. Extensions to existing plugins
 
-- [ ] **GPU: AMD and Intel** — LNXlink `gpu` covers NVIDIA, AMD, and Intel.
+- [x] **GPU: AMD and Intel** — LNXlink `gpu` covers NVIDIA, AMD, and Intel.
       [gpu.py](x_monitor/plugins/gpu.py) is `nvidia-smi`-only and reports offline on anything else.
       Add `amdgpu_top`/`sysfs` and `intel_gpu_top` paths.
-- [ ] **Containers: update-available detection and prune** — LNXlink `docker` checks whether a newer
+      Done: `gpu` reads AMD and Intel cards from sysfs (Intel load via `intel_gpu_top` when
+      present), auto-detected per card with the same metric names.
+- [x] **Containers: update-available detection and prune** — LNXlink `docker` checks whether a newer
       image exists and can prune. [containers.py](x_monitor/plugins/containers.py) counts running/stopped
       and offers restart only. An `image_update_available` metric plus a Prune action would be a
       genuine addition.
-- [ ] *(Already on roadmap)* Per-core CPU breakdown — LNXlink's `cpu` exposes load 1m/5m/15m as
+      Done: [containers/](x_monitor/plugins/containers/) asks the registry for each image's current
+      digest on a slow interval, and has a confirmed Prune button.
+- [x] *(Already on roadmap)* Per-core CPU breakdown — LNXlink's `cpu` exposes load 1m/5m/15m as
       attributes; X-Monitor already splits these into `load_pct_*` metrics, so only the per-core split
       is outstanding.
+      Done: `cpu` shows a bar per core from the same sample, with per-core history opt-in via
+      `per_core_metrics`.
 
 ### 1b2. Plugin granularity
 
@@ -85,15 +101,19 @@ and the page assembly.
       own 1s sample, so a host running several pays one sleep apiece. Collapsing them would need
       a shared snapshot the four monitors slice, which cuts against one-monitor-one-signal;
       open whether it is worth it.
-- [ ] **Filesystem monitors** — whether [filesystems.py](x_monitor/plugins/filesystems.py),
+- [x] **Filesystem monitors** — whether [filesystems.py](x_monitor/plugins/filesystems.py),
       `disk_space` and `folders` should stay three plugins is open. `disk_space` and `folders`
       exist so a named path gets its *own* status and alert, which is the same argument the
       per-signal split rests on. If they stay, the duplication belongs in a shared `df`/`du`
       parser, not a merged plugin.
-- [ ] **DNS monitors** — [dns_record.py](x_monitor/plugins/dns_record.py) checks a record resolves and
+      Decided: they stay three plugins and share [disk_usage.py](x_monitor/plugins/base/disk_usage.py)
+      for `df`/`du`.
+- [x] **DNS monitors** — [dns_record.py](x_monitor/plugins/dns_record.py) checks a record resolves and
       [ddns_updater.py](x_monitor/plugins/ddns_updater.py) keeps one current, and the updater already
       resolves the record it is about to update. Open whether they should share that lookup or
       merge. `unbound` and `pihole` stay out either way: they are resolver products with their own stats.
+      Decided: they stay separate and share one lookup in
+      [dns_lookup.py](x_monitor/plugins/base/dns_lookup.py).
 
 ### 1c. Control actions
 
@@ -102,36 +122,49 @@ or hardware controls. All four map cleanly onto the existing
 `plan_action()`/`interpret_action()` contract in
 [plugin_base.py:104-119](x_monitor/plugins/base/plugin_base.py#L104-L119).
 
-- [ ] **Host power actions** — reboot / shutdown / suspend (LNXlink `restart`, `shutdown`,
+- [x] **Host power actions** — reboot / shutdown / suspend (LNXlink `restart`, `shutdown`,
       `suspend`). Needs a confirmation gate and an allowlist; design principle #5 ("Fail-Safe
       Control") already asks for confirmable, logged actions.
-- [ ] **Wake-on-LAN** — LNXlink `wol` only toggles WoL support on the NIC. The more valuable X-Monitor
+      Done: [host_control.py](x_monitor/plugins/host_control.py) offers reboot, shutdown and suspend,
+      each off until listed under `allow:`, confirmed and logged.
+- [x] **Wake-on-LAN** — LNXlink `wol` only toggles WoL support on the NIC. The more valuable X-Monitor
       feature is the inverse: *sending* a magic packet to wake a host that an `uptime` monitor
       reports down. X-Monitor is the only one of the three projects positioned to do this, since it sits
       on the network watching the offline host.
-- [ ] **Power profile** — LNXlink `power_profile` toggles performance/balanced/power-saver via
+      Done: an `uptime` monitor with `mac:` has a Wake action, can send it through another host
+      (`wake_via`), and can wake the host when it goes down (`wake_on_down`).
+- [x] **Power profile** — LNXlink `power_profile` toggles performance/balanced/power-saver via
       `power-profiles-daemon`.
-- [ ] **Next-boot selection** — LNXlink `boot_select` picks the OS for the next boot. Niche; pairs
+      Done: in `host_control`, through `powerprofilesctl`, `tuned-adm` or the platform profile.
+- [x] **Next-boot selection** — LNXlink `boot_select` picks the OS for the next boot. Niche; pairs
       with the reboot action for dual-boot or kernel-testing hosts.
+      Done: in `host_control`, through `bootctl`, `grub-reboot` or `efibootmgr`, optionally
+      rebooting at once.
 
 ### 1d. Engine and platform capabilities
 
-- [ ] **Config hot-reload** — LNXlink `watch_changes` watches its config file and restarts on
+- [x] **Config hot-reload** — LNXlink `watch_changes` watches its config file and restarts on
       change. X-Monitor reads `config.yaml` once at startup
       ([engine.py:111-144](x_monitor/core/coordination/engine.py#L111-L144)); adding or retuning a
       monitor requires a full restart, dropping every persistent SSH connection. Reloading the
       plugin tree in place is the highest-leverage item in this section.
-- [ ] **Out-of-tree plugin loading** — LNXlink auto-imports modules from a directory, including
+      Done: config.yaml reloads in place on file change, SIGHUP, the API or the dashboard; unchanged
+      monitors keep running and bad config is refused whole.
+- [x] **Out-of-tree plugin loading** — LNXlink auto-imports modules from a directory, including
       user-supplied ones. X-Monitor resolves a plugin type by importing `x_monitor.plugins.{type}`
       ([engine.py:120](x_monitor/core/coordination/engine.py#L120)), so a third-party plugin must be
       dropped inside the installed package. A configurable plugin path would let people extend X-Monitor
       without vendoring it.
-- [ ] **Runtime log-level control** — LNXlink `logging_level` changes verbosity without a restart.
+      Done: `plugin_paths:` names directories searched for plugin types that are not built in.
+- [x] **Runtime log-level control** — LNXlink `logging_level` changes verbosity without a restart.
       Small, and genuinely useful while debugging a flaky target.
-- [ ] *(Already on roadmap)* MQTT export — LNXlink's entire integration story is MQTT autodiscovery.
+      Done: levels change from the API, the dashboard or SIGUSR1/SIGUSR2, globally or per logger.
+- [x] *(Already on roadmap)* MQTT export — LNXlink's entire integration story is MQTT autodiscovery.
       The roadmap's "Additional export backends" item ([docs/roadmap.md](docs/roadmap.md)) is the
       right shape: an HA-discovery MQTT exporter next to the Prometheus and InfluxDB ones would make
       every X-Monitor monitor a Home Assistant entity without an agent.
+      Done: [mqtt.py](x_monitor/core/exporters/mqtt.py) publishes every monitor with Home Assistant
+      discovery.
 
 ### 1e. Raspberry Pi / hardware — decide in or out
 
@@ -167,17 +200,21 @@ Of the remaining 17, almost everything is phone↔desktop sync.
 
 ### Worth stealing
 
-- [ ] **Per-device pairing and certificate auth** — Valent pairs each device with its own
+- [x] **Per-device pairing and certificate auth** — Valent pairs each device with its own
       certificate identity rather than a shared password. X-Monitor currently offers a single HTTP Basic
       Auth credential for the whole dashboard and API
       ([README.md](README.md#authentication)), with HTTPS still open on the roadmap. A
       per-client token/identity model is the natural next step and would also give the REST API and
       the `push` endpoint a common auth story instead of `push`'s bespoke per-monitor token.
-- [ ] **Battery monitoring** — Valent `battery` reports level and charging state, independently
+      Done: named API tokens in `auth.tokens`, scoped to read, control or push, minted with
+      `x-monitor token new`.
+- [x] **Battery monitoring** — Valent `battery` reports level and charging state, independently
       confirming §1a's battery item. Two of two surveyed projects have it; X-Monitor has none.
-- [ ] **Identify-this-host action** — Valent `findmyphone` makes a device ring. The datacenter
+      Done: see §1a, as `power`.
+- [x] **Identify-this-host action** — Valent `findmyphone` makes a device ring. The datacenter
       analogue is a locate action: `ledctl` to blink a drive/chassis LED, or a console beep, to
       physically identify a machine you are SSH'd into. Marginal, but it fits the control model.
+      Done: `identify` in `host_control` blinks a drive LED with `ledctl` or beeps.
 
 ### Adjacent to existing roadmap items
 
@@ -204,12 +241,12 @@ Device-sync features with no server-monitoring analogue: `clipboard`, `contacts`
 
 Highest leverage, in order:
 
-1. Config hot-reload (§1d) — removes the restart-to-reconfigure penalty that every other item makes worse.
+1. ~~Config hot-reload (§1d)~~ — done.
 2. ~~Battery monitor (§1a)~~ — done, as `power`.
-3. Host power actions + Wake-on-LAN (§1c) — WoL in particular is something neither comparison project
-   can do and X-Monitor's central, agentless position makes natural.
-4. MQTT/HA export (§1d) — already on the roadmap; delivers LNXlink's entire integration value
-   without adopting its architecture.
+3. ~~Host power actions + Wake-on-LAN (§1c)~~ — done, as `host_control` and the `uptime` Wake action.
+4. ~~MQTT/HA export (§1d)~~ — done.
+
+Still open: shared delta sampling (§1b2) and the Raspberry Pi hardware (§1e), both undecided.
 
 ---
 

@@ -37,6 +37,7 @@ from datetime import datetime, time as time_of_day, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from x_monitor.plugins.base.plugin_base import Plugin
+from x_monitor.plugins.base.nixos_boot import boot_parts_script, reboot_required as nixos_reboot_required
 from x_monitor.core.connectors import ssh_connector as detached
 from x_monitor.core.connectors.types import (
     ActionPlan, CmdResult, Command, CollectResult, Status,
@@ -58,10 +59,6 @@ _DEFAULT_LAYOUT = [
 # state as JSON metadata, so a restart resumes the eval schedule.
 _STATE_METRIC = 'flake_eval_epoch'
 
-# The parts of a system closure whose change between the booted and the current
-# generation means the new one is only fully live after a reboot.
-_BOOT_PARTS = ('initrd', 'kernel', 'kernel-modules', 'systemd')
-
 _LOCAL_SCHEMES = ('path:', 'git+file://', 'file://')
 
 
@@ -76,10 +73,7 @@ def _probe_script() -> str:
         'echo "profile_created=$(stat -c %Y "/nix/var/nix/profiles/$(readlink /nix/var/nix/profiles/system)" 2>/dev/null)"',
         'echo "version=$(cat /run/current-system/nixos-version 2>/dev/null)"',
         "echo \"version_json=$(nixos-version --json 2>/dev/null | tr -d '\\n')\"",
-        f'for part in {" ".join(_BOOT_PARTS)}; do',
-        '  echo "booted_part=$(readlink -f /run/booted-system/$part 2>/dev/null)"',
-        '  echo "current_part=$(readlink -f /run/current-system/$part 2>/dev/null)"',
-        'done',
+        *boot_parts_script(),
     ])
 
 
@@ -624,10 +618,8 @@ class NixosUpgrade(Plugin):
     def _reboot_required(fields: Dict[str, Any]) -> Optional[bool]:
         """Whether the booted closure's kernel-side parts differ from the
         current one's; None when the comparison could not be made."""
-        booted, current = fields.get('booted_part') or [], fields.get('current_part') or []
-        if not booted or len(booted) != len(current) or not any(booted):
-            return None
-        return booted != current
+        return nixos_reboot_required(fields.get('booted_part') or [],
+                                     fields.get('current_part') or [])
 
     # --- job polling ---
 

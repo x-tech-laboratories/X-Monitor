@@ -8,7 +8,7 @@ the agent run a single-command plugin locally at the monitor's interval and
 push results, suppressing unchanged ones with a five-interval keepalive."""
 
 from abc import ABC
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from x_monitor.core.coordination.data_view import PluginDataView
@@ -242,6 +242,16 @@ class Plugin(PluginConfigMixin, ABC):
         CollectResult (with .success set) to also apply a write, e.g. logging
         a failure message alongside the outcome. Default assumes a CmdResult."""
         return result.exit_code == 0
+
+    def on_status(self, status: str, now: float) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """Pure: an action to run because of the status a collection cycle
+        just recorded, as (action_id, kwargs), or None. The engine calls it
+        after persisting each polled cycle, with `now` in monotonic seconds,
+        and dispatches the action like a click on its button — the one way a
+        plugin asks for a side effect of its own, such as waking a host that
+        went down. A plugin may keep the bookkeeping this needs (attempts,
+        the time of the last one) between calls."""
+        return None
 
     async def run_action(self, action_id: str, **kwargs) -> tuple:
         """Dispatch one UI-triggered action through the engine; returns (success, content)."""

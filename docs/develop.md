@@ -28,7 +28,8 @@ read path) and read exactly once, at startup, to restore the store.
 owns and wires together:
 
 - **Settings Engine** (`core/settings/`) — `ConfigFileManager` loads and types
-  `config.yaml` (`config_schema.py`).
+  `config.yaml` (`config_schema.py`), at startup and again on each
+  [config reload](#config-reload); `LogLevels` holds the runtime log levels.
 - **State Engine** (`core/state/`) — `StateStore` holds the live system of
   record in memory: current state (statuses, snapshots, settings, jobs) whole,
   and history (metrics, events, log lines, job output) in bounded per-stream
@@ -45,8 +46,8 @@ owns and wires together:
   `icmp_connector`).
 - **UI Engine** (`core/ui/`) — the NiceGUI dashboard. Reads only through
   `plugin.data` or the Database Engine; it never reaches into a plugin's IO.
-- **Exporter Engine** (`core/exporters/`) — Prometheus pull render + InfluxDB
-  push task.
+- **Exporter Engine** (`core/exporters/`) — Prometheus pull render, InfluxDB
+  push task, and the MQTT / Home Assistant publisher.
 
 `EngineLike` (`core/contracts.py`) is the narrow slice of `XMonitorEngine` that the
 UI and plugins actually call, so those modules — and test doubles — depend on a
@@ -89,6 +90,20 @@ back through the engine surface — `engine.apply`, `engine.set_setting` — and
 job-row updates go through `plugin.jobs`, the `JobsGateway` the engine wires
 onto each plugin (`jobs.create`/`jobs.finish`/etc.; the job panel reads
 `jobs.is_running`/`jobs.recent` and cancels via `jobs.cancel`).
+
+**Side effects a plugin asks for.** A plugin can never cause IO from
+`parse_results()`, so a reaction to what it just measured — `uptime` waking a
+host that went down — is requested instead: after persisting each polled
+cycle the engine calls the plugin's pure `on_status(status, now)`, and when it
+returns `(action_id, kwargs)` the engine dispatches that action on its own
+task, exactly like a button click, so its outcome is logged the same way. The
+plugin keeps the bookkeeping (attempts, the last try) as derived state; the
+engine only runs what it is handed.
+
+**Running an action elsewhere.** An `ActionPlan` with `via=<monitor id>` runs
+on that monitor's `ExecContext` instead of the plugin's own, which is how
+`uptime` sends a wake packet from a host inside another subnet. The plugin
+names a monitor, never a connection, so it stays transport-blind.
 
 ## The write path: `db.apply_result`
 
@@ -180,10 +195,120 @@ of the two.
 scheduler and any out-of-band (dashboard-triggered) collection, so a slow cycle
 never overlaps itself.
 
+**Cycle timing.** Every cycle that did IO is timed into `CycleStats`
+(`core/coordination/cycle_stats.py`), a 20-cycle window per monitor that
+`engine.cycle_timing(id)` reads back as last/average/max seconds plus SSH
+channel wait. It is memory only and always on; `logging.cycle_timings` governs
+only the `cycle_collect_seconds` / `cycle_parse_seconds` metric rows, which
+cost disk. `x_monitor_self` turns it into its slowest-first table and its "slow"
+warning. The channel wait is measured without threading anything through the
+connector API: `_run_cycle` wraps its dispatch in `measure_channel_wait()`,
+which sets a `ContextVar`, and `SSHConnection.execute` reports how long it
+queued on the per-host semaphore to whatever tally that var holds. The tasks
+`asyncio.gather` spawns copy the context, so every command of the cycle
+reports to the same tally, which keeps the longest single wait — a sum over
+parallel commands could exceed the cycle itself.
+
 Two monitors resolving to the same effective `id` (falls back to display name
 when config omits it) would silently overwrite each other's status/metrics/logs
 every cycle, since everything is keyed by `id`. Startup detects and logs this
 once, loudly.
+
+## Config reload
+
+`config.yaml` is re-read and applied in place, without a restart and without
+dropping the connections unchanged monitors use. `engine.reload_config(source)`
+is the one entry point; four triggers call it: the file watcher, SIGHUP,
+`POST /api/config/reload`, and the dashboard's System menu. Reloads hold an
+`asyncio.Lock`, so they run one at a time, and each returns a `ReloadResult`
+(`core/coordination/reload.py`) and records its summary as an event: how many
+monitors were added, removed and changed, and which settings need a restart.
+
+**Validate everything, then apply.** `_plan_reload` runs off the event loop.
+It reads the file strictly (`ConfigFileManager(strict=True)` raises
+`ConfigError` where the startup read would fall back to an empty config: a
+missing or empty file, bad YAML, a top level that is not a mapping), resolves
+every monitor's type through a fresh `PluginLoader`, and constructs every new
+or changed plugin. Any failure — an unknown type, a constructor that raises, two
+monitors with the same id — refuses the whole reload: the running tree is never
+touched, and the error goes to the log and the events feed. A reload never
+leaves half a config running. Building uses the same `_build_tree` as startup,
+which records each group's new children in a `_Node` rather than assigning
+them, so even a kept group's `children` stays as it was until the plan applies.
+
+**Monitors are diffed by id.** A monitor is unchanged when its plugin class
+and its effective config (after `ssh_defaults` are merged and a group's
+`agent` is inherited, not counting `children`) are equal to the running
+instance's (`reload.same_monitor`). An unchanged monitor keeps its instance, its
+polling task, its in-memory state and its connection, even when it moved to
+another group. Everything else is keyed by id, so a changed monitor is simply
+stopped and a new instance started, and its stored history carries over.
+Changing `ssh_defaults` therefore changes exactly the monitors it reaches.
+
+**Applying** (`_apply_reload`), in order:
+
+1. `_retire` stops removed and changed monitors: cancels and awaits their loop
+   task (tracked per id in `_monitor_tasks`), drops their exec context and
+   event streams, and clears their single-flight and timing state. Each
+   retired instance goes into `_retired`, so a cycle already in flight for it
+   (an out-of-band poll, an agent warm-up) finishes without writing.
+2. Agents whose stream set shrank are sent it straight away. The agent keeps
+   a stream whose id it already runs, so a changed monitor's stream has to
+   leave before it comes back with new parameters.
+3. The new config, plugin loader and global settings go in: retention windows,
+   cycle-timing metrics, log levels when `logging.level`/`levels` changed, and
+   agents when `agents:` changed (`AgentRegistry.configure` keeps each existing
+   connection object, because live exec contexts hold it).
+4. New instances are wired, the tree is swapped in one assignment
+   (`self.plugins = ...`), SSH connections no exec context refers to any more
+   are closed (`ConnectorEngine.close_unused`; the pool key is
+   `(host, port, user, key)`, so a changed monitor on the same host reuses its
+   connection), agents get their new stream sets, and new polling loops start
+   with the usual startup stagger.
+5. Notifications are rebuilt when the tree or the `notifications:` section
+   changed; the old engine stops watching but lets deliveries already under
+   way finish. Exporters restart when `exporters:` changed.
+6. Settings read only at startup — `database.path` (unless `--db` overrides
+   it), `database.write_batch_seconds`, `memory`, `auth`, `theme` — are
+   compared and reported as restart required rather than silently ignored.
+
+**The UI follows through the change bus.** A reload that changed the tree
+increments `engine.monitors_version` and publishes a `MONITORS` change. The
+sidebar tree already rebuilds from `engine.plugins` on every change, so it
+picks up added and removed monitors on its own. `_render_index` registers a
+callback that compares the version with the one it last saw and redraws the
+overview, or re-points a monitor page at the replacement instance with the same
+id — or goes to the overview when that monitor is gone (`after_reload`).
+
+**The file watcher** (`_watch_config`) polls every `CONFIG_POLL_SECONDS`
+rather than using inotify, which would be a new dependency and does not follow
+the ways a config gets replaced. It stats the resolved path — so an editor that
+writes a new file and renames it over the old one, and a NixOS switch that
+re-points the symlink into the store (where every file's mtime is the same),
+both change the fingerprint — waits for one further poll with the same
+fingerprint so a file mid-write is not read, and then reloads only when the
+content hash differs from the one last loaded, so a `touch` does nothing.
+
+## Runtime log levels
+
+A module logs through its own `logging.getLogger(__name__)`, so a logger's
+name is its module path and one module's verbosity can change without touching
+the rest. A module still calling `logging.info()` directly logs on the root
+logger and follows only the root level. `LogLevels` (`core/settings/log_levels.py`) is the one
+place levels change: `configure()` applies `logging.level` / `logging.levels`
+at startup and on a config reload, and undoes a per-logger level only when the
+config that set it drops it, so a level set by hand on some other logger
+survives a reload. The engine exposes it as `log_levels()`, `known_loggers()`
+and `set_log_level()`, which the REST route, the dashboard's System menu and the
+signal handlers all call.
+
+Every change is logged at WARNING on `x_monitor.log_levels`, a logger with its own
+explicit WARNING level, so the record of who made logging quieter survives the
+change it describes. SIGUSR1 and SIGUSR2 step only the root level, one notch at
+a time, because a signal carries no argument. They and SIGHUP (a config reload)
+are installed with `loop.add_signal_handler` in `run()` and only when `main()` asks
+(`handle_signals=True`), so an engine built in a test never takes over the
+process's signals.
 
 ## Agent transport
 
@@ -506,6 +631,57 @@ registering, so a freshly loaded page shows real data rather than its
 constructed defaults (`--`, empty tables) until the first tick. `run_now=False`
 on a callback defers only its first tick.
 
+## Exporter Engine
+
+`ExporterEngine` (`core/exporters/__init__.py`) owns the push exporters; the
+Prometheus pull render needs no runtime object. The Coordination Engine calls
+`start(monitors)` from `run()` once the loop is live and `stop()` from
+`shutdown()`. `monitors` is a callable returning the live monitors, so an
+exporter that describes them (MQTT) always sees the current set.
+
+**InfluxDB** pushes the whole latest snapshot on a fixed interval, its blocking
+`requests` call on a worker thread.
+
+**MQTT** (`core/exporters/mqtt.py`) is change-driven instead. It subscribes to
+the change bus and reacts to `STATUS` and `METRIC` changes only: the subscriber
+runs on the writer's thread, so it just hands the monitor id to the loop, where
+it joins a dirty set and wakes a drain task. The drain waits `COALESCE_SECONDS`
+before publishing, so a cycle that writes ten metrics and a status goes out as
+one pass over that monitor. Everything — discovery configs and current state —
+is marked for publishing on every (re)connect, on Home Assistant's
+non-retained birth message, and on the optional `interval`.
+
+*Why aiomqtt.* It is an asyncio client over paho-mqtt, so publishing lives on
+the single event loop with no thread of its own; it is an optional extra
+(`x-monitor[mqtt]`), imported only when `exporters.mqtt` is configured, and a
+missing install is logged as an error naming the extra rather than stopping the
+engine.
+
+*Availability.* The connection carries a retained last will of `offline` on
+`<base>/status`, and `online` is published retained on connect. A clean
+DISCONNECT suppresses the will, so `stop()` cancels the task, whose cancellation
+handler publishes `offline` itself before leaving.
+
+*Discovery.* One Home Assistant device per target host, identified by
+`<base>_<target>`; per monitor an `enum` status sensor and a `problem` binary
+sensor sharing `<base>/<monitor>/status`; one sensor per metric whose
+device_class and unit come from the metric name's suffix (`metric_traits`).
+Every sensor is `state_class: measurement`, since X-Monitor's `_total` metrics are
+counts of things, not monotonic counters. A config is sent once per connection
+the first time its monitor or metric is published, so a new metric is
+announced before its first value. Ids pass through `slug()`, which lowercases
+and keeps `a-z 0-9 _ -`, making every id a single topic level and a valid Home
+Assistant object id; unique ids include the base topic so they stay stable
+across restarts and distinct between X-Monitor instances. Monitors removed from the
+config keep their retained discovery entries until deleted in Home Assistant.
+
+*Failure.* Any error inside a session — a refused connect, a failed publish, a
+dropped message stream — ends that session; `run()` logs it (a warning for the
+first failure, debug while the outage lasts) and reconnects with exponential
+backoff from `BACKOFF_MIN` to `BACKOFF_MAX`. Nothing is queued while
+disconnected: the reconnect republishes the current state, which is all a
+subscriber needs.
+
 ## Teardown
 
 NiceGUI resolves a `ui.timer`'s context *outside* the callback and raises "The
@@ -583,9 +759,59 @@ replaced would reappear. Since Prometheus and scripts cannot follow a form
 redirect, Basic credentials remain a valid alternative on any route.
 
 **What stays public.** `/login`, `/logout`, `/icon.svg`, and `/api/push/`,
-which authenticates with its own per-monitor token. As before, this is a
+which checks its own credential: the monitor's per-monitor token in the path,
+or a push-scoped API token in the header. As before, this is a
 `BaseHTTPMiddleware` and so runs for `http` scopes only — the agent WebSocket
 authenticates itself (see `core/ui/agent_endpoint.py`).
+
+**Named API tokens.** `core/ui/tokens.py` resolves `auth.tokens` into a
+`TokenRegistry`; `main_dashboard` builds it once and hands it to both the gate
+and the push routes, so the REST API and push share one credential story. A
+client sends `Authorization: Bearer <token>` and gets one scope: `read` (`GET`
+on `/api/` and `/metrics`), `control` (those plus the write routes), or `push`
+(`/api/push/{id}`, optionally limited to listed monitors). The gate tries the
+session cookie, then a bearer token, then Basic. A bearer header decides the
+request on its own: an unknown token is `401` and a known one outside its
+scope is `403`, rather than falling through to Basic or the login redirect.
+
+- **Why SHA-256 and not a password KDF.** Config holds only
+  `sha256:<hex>` of each token. `x-monitor token new` mints 256 bits from
+  `secrets`, so there is nothing to guess from a dictionary and a leaked digest
+  is as hard to reverse as the token is to guess; a slow KDF would add its cost
+  to every scrape and API call for no gain. That argument needs a random token,
+  so a plaintext `token`/`token_file` shorter than 16 characters is refused,
+  and a plaintext `token` in the YAML logs a warning. For the same reason there
+  is no throttle on wrong tokens, unlike the login form.
+- **Constant-time matching.** A presented token is hashed once and its digest
+  compared with `hmac.compare_digest` against every configured digest, without
+  stopping at the first match, so timing reveals neither which entry matched
+  nor how many there are. There is no dict lookup keyed on the digest.
+- **Never the dashboard.** `ApiToken.allows_request` only admits paths under
+  `/api/` and `/metrics`, so a token cannot load the dashboard page or open
+  NiceGUI's socket. A token is a long-lived credential sitting in a script or
+  scrape config; letting it open a browser session would turn a leaked read
+  token into full dashboard control.
+- **Named tokens stay out of URLs.** The push route only reads them from the
+  header, so they never land in a reverse proxy's access log the way the
+  per-monitor path token does.
+- **The audit trail.** The gate stores who authenticated on
+  `request.state.x_monitor_client` (the account name, or `token '<name>'`), read
+  through `auth.acting_client`. The control routes write it into the monitor's
+  events ("Poll requested through the API by token 'ops'"), push heartbeats
+  carry it through `record_push(source=...)`, and the gate logs every
+  token-authenticated write (reads only at debug, since a scraper polls every
+  few seconds).
+- **Control routes.** `POST /api/monitors/{id}/poll` and
+  `/actions/{action_id}` mirror the monitor page's header buttons. Only ids in
+  `get_actions()` are reachable, called with no parameters, so an action that
+  needs a dialog's input (borg restore, say) stays dashboard-only.
+- **Agents are not in this list.** Each `agents:` entry already has its own
+  ed25519 public key, which the agent endpoint checks the login signature
+  against, so an agent scope here would be a second identity for the same host.
+- **Without an account.** Tokens only narrow what the gate lets through, so
+  without `username`/`password` there is no gate and read or control tokens do
+  nothing (a warning says so). Push tokens still work, since the push route
+  checks them itself.
 
 **Guessing and CSRF.** `LoginThrottle` counts failures per client address (the
 first `X-Forwarded-For` hop when there is one) and answers `429` with a
@@ -740,6 +966,22 @@ alphabetical luck: `SignalPlugin` sorts before `Throughput`.
 
 A plugin that outgrows one file becomes a package (`plugins/borg/`), and its class may then live in any of the package's own submodules.
 
+**Out-of-tree plugins.** `PluginLoader` (`core/coordination/plugin_loader.py`)
+owns the type-to-class step for `setup_modules()`. A type that is not a module
+under `x_monitor.plugins` is looked up in the `plugin_paths` directories, in order,
+as `<type>.py` or a `<type>/` package, and imported with
+`importlib.util.spec_from_file_location` under `x_monitor_external.<type>` — its
+own namespace, so an external module can never replace an `x_monitor.*` module in
+`sys.modules`, and a package's relative imports resolve inside it. The same
+one-concrete-subclass rule applies, since the loader and the built-in path
+share `_plugin_class`. A built-in name wins by default, because silently
+swapping a shipped plugin for a local file of the same name is the surprising
+outcome; an entry with `override: true` reverses that, and both cases log a
+warning naming the file. The type name must be a Python identifier, so a
+`type:` can never walk out of a plugin directory. Each loader imports a type at
+most once, and the engine builds a new loader from each config, so an edited
+external file is read afresh the next time a config is loaded.
+
 A plugin whose subject is not the host it collects on — `vuln_scan` runs nmap
 on one agent against another host — sets `display_target`, and `_wire_plugin`
 labels the monitor with that instead of the transport's target. `target` is
@@ -755,12 +997,41 @@ its value in GB by default and takes a unit for the rest — `format_bytes(n, 'B
 for a raw byte count — so a caller never divides before formatting, and it is the
 only byte formatter: the `bytes_gb` UI formatter is a thin wrapper on it.
 
+`plugins/base/disk_usage.py` holds the `df` and `du` handling the three
+filesystem monitors share, so they cannot read the same output differently.
+`filesystems`, `disk_space` and `folders` stay separate monitors — a fleet-wide
+sweep, one path against one threshold, and folder sizes are different questions
+— but each builds its command with `df_command(columns, path=, byte_blocks=,
+exclude_types=)` or `du_command(path, timeout)` and reads it back with
+`parse_df(block, columns, header=)` or `parse_du(result, timeout)`. `parse_df`
+reads every column but a leading `target` from the right, so a mount point with
+spaces survives, and drops any row that does not parse (an inode column of `-`
+on a filesystem without inodes). `filesystems` alone passes `PSEUDO_FS_TYPES`,
+since it lists every mount; `disk_space` keeps its `| tail -1` and parses
+headerless. `path_key` turns a path into the metric-name fragment both
+`filesystems` and `folders` store series under.
+
+`plugins/base/dns_lookup.py` is the one record lookup `dns_record` and
+`ddns_updater` share, so the two can never disagree about what a record
+currently resolves to. Their transports stay different: `dns_record` declares a
+`DnsQuery` the `DnsConnector` resolves, while `ddns_updater` resolves inside its
+`io_call` with `resolve_now(query)`. Both paths build their resolver with the
+connector's `build_resolver` (the named nameserver alone, or the system's when
+none is named) and map errors with its `failure_result` (`nxdomain` /
+`no_answer` / `timeout` / `dns_error`), and both read answers through
+`answer_values` (MX as `preference host`, TXT unquoted and joined, names without
+the trailing dot). `record_type` reads the config value and `failure_message`
+words a failed lookup. Each plugin keeps its own defaults — `ddns_updater`
+asks `8.8.8.8` with a 10s budget because it must see the public record, not a
+local override.
+
 `plugins/base/signal_plugin.py` holds what the single-signal monitors (`cpu`,
 `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`,
-`connections`, `wifi`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`) share: the severity
+`connections`, `wifi`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `reboot_required`,
+`package_updates`, `interfaces`, `sessions`) share: the severity
 ordering, `worst_status` for the ones that fold several disks or pools into one
-verdict, and a `SignalPlugin` base that turns the `cards()`/`charts()`/`rows()`
-a monitor declares into the usual host-card / charts / events page. Each one
+verdict, and a `SignalPlugin` base that turns the `cards()`/`tables()`/`charts()`/`rows()`
+a monitor declares into the usual host-card / tables / charts / events page. Each one
 collects exactly one signal, so it carries its own status, interval and history,
 and a monitor that needs hardware the host lacks is simply not configured rather
 than reporting unavailable for something nobody asked about.

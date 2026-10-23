@@ -86,6 +86,8 @@ _LOG_LEVEL = {Status.ONLINE: 'INFO', Status.INFO: 'INFO', Status.UNAVAILABLE: 'W
 class ActionPlan:
     command: str
     timeout: Optional[float] = None
+    # Run on this other monitor's transport instead of the plugin's own, e.g. a wake packet sent from inside another subnet.
+    via: Optional[str] = None
     # Run on this agent instead of the monitor's own target, matching Command.agent, e.g. a switch driven from the host that builds it.
     agent: Optional[str] = None
 
@@ -119,6 +121,8 @@ class HttpResult:
     elapsed_ms: float = 0.0
     """Wall-clock time the request took, measured by the connector. 0.0 on a
     transport error (nothing completed)."""
+    headers: Dict[str, str] = field(default_factory=dict)
+    """Response headers with lower-cased names; empty on a transport error."""
 
 
 @dataclass(frozen=True)
