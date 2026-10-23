@@ -69,7 +69,8 @@ class ActionButtonSpec(TypedDict, total=False):
     A `job` names the kind of job the action launches, or a list of kinds when it
     launches one of several, so the header fills it while that job runs, greys it
     out while another runs, and shows Cancel. Kind 'dialog' opens the plugin's
-    `dialog` instead of running an action."""
+    `dialog` instead of running an action. `more` puts the action in the
+    header's More menu instead of on a button of its own."""
     action_id: str
     name: str
     icon: str
@@ -81,6 +82,7 @@ class ActionButtonSpec(TypedDict, total=False):
     confirm: str
     job: Union[str, List[str]]
     dialog: str
+    more: bool
 
 
 @runtime_checkable

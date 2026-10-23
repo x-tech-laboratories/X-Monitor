@@ -637,7 +637,7 @@ class Borg(Plugin):
                  'variant': 'secondary', 'icon': 'fact_check'},
             ]
         if self.canary_path:
-            actions.append({'name': 'Verify Restore', 'action_id': 'verify_restore',
+            actions.append({'name': 'Verify Restore', 'action_id': 'verify_restore', 'more': True,
                             'variant': 'secondary', 'icon': 'verified'})
         if self.repo:
             actions += [
@@ -647,19 +647,19 @@ class Borg(Plugin):
                  'variant': 'secondary', 'icon': 'compress'},
             ]
         if self.retention:
-            actions.append({'name': 'Prune Preview', 'action_id': 'prune_preview', 'kind': 'dialog',
+            actions.append({'name': 'Prune Preview', 'action_id': 'prune_preview', 'kind': 'dialog', 'more': True,
                             'dialog': 'prune_preview', 'variant': 'secondary', 'icon': 'content_cut'})
         if self.allow_delete and self.retention:
-            actions.append({'name': 'Prune', 'action_id': 'prune_repo', 'job': 'prune',
+            actions.append({'name': 'Prune', 'action_id': 'prune_repo', 'job': 'prune', 'more': True,
                             'variant': 'danger', 'icon': 'delete_sweep',
                             'confirm': f'Prune {self.repo} by its retention policy? Archives it drops are gone for '
                                        'good — run Prune Preview first to see which. Space is freed by a Compact '
                                        'afterwards.'})
         if self.allow_purge:
             actions += [
-                {'name': 'Purge Preview', 'action_id': 'purge_preview', 'job': 'purge-preview',
+                {'name': 'Purge Preview', 'action_id': 'purge_preview', 'job': 'purge-preview', 'more': True,
                  'variant': 'secondary', 'icon': 'filter_alt'},
-                {'name': 'Purge Excluded', 'action_id': 'purge_excluded', 'job': 'purge',
+                {'name': 'Purge Excluded', 'action_id': 'purge_excluded', 'job': 'purge', 'more': True,
                  'variant': 'danger', 'icon': 'cleaning_services',
                  'confirm': f'Rewrite every archive in {self.repo} without the files its exclude patterns now '
                             'drop, then compact? Those files are gone from every archive for good — run Purge '
@@ -667,7 +667,7 @@ class Borg(Plugin):
                             'backups wait until it ends.'},
             ]
         if self.allow_delete:
-            actions.append({'name': 'Break Lock', 'action_id': 'break_lock', 'variant': 'danger', 'icon': 'lock_open',
+            actions.append({'name': 'Break Lock', 'action_id': 'break_lock', 'more': True, 'variant': 'danger', 'icon': 'lock_open',
                             'confirm': f'Break the locks on {self.repo}? Only do this when no borg process is '
                                        'using it; breaking a live lock can corrupt the repository.'})
         return actions

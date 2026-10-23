@@ -33,6 +33,15 @@ class TestParseCustomActions:
         assert action.button() == {'action_id': 'custom:reboot', 'name': 'Reboot', 'icon': 'power',
                                    'variant': 'danger', 'confirm': 'Reboot this host?'}
 
+    def test_more_puts_the_button_in_the_more_menu(self):
+        [action] = parse_custom_actions([{'name': 'Rotate Logs', 'command': 'logrotate -f /etc/logrotate.conf',
+                                          'more': True}])
+        assert action.button()['more'] is True
+
+    def test_a_button_is_on_its_own_by_default(self):
+        [action] = parse_custom_actions([{'name': 'Rotate Logs', 'command': 'true'}])
+        assert 'more' not in action.button()
+
     @pytest.mark.parametrize('value', [
         {'name': 'x', 'command': 'y'},
         [{'name': 'No command'}],
