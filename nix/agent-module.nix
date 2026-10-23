@@ -29,10 +29,14 @@ let
     literalExpression
     ;
 
+  # The system agent serves its own notifications here while X-Monitor is out of reach, and the desktop agent follows it.
+  localSocket = "/run/x-monitor-agent/notify.sock";
+
   settings = {
     url = cfg.url;
     id = cfg.id;
     state_dir = "/var/lib/x-monitor-agent";
+    local_socket = localSocket;
   }
   // lib.optionalAttrs (cfg.keyFile != null) { key_file = toString cfg.keyFile; }
   // lib.optionalAttrs (cfg.hostname != null) { hostname = cfg.hostname; }
@@ -47,6 +51,7 @@ let
       url = cfg.url;
       id = cfg.desktop.id;
       notify_only = true;
+      local_socket = localSocket;
     }
     // lib.optionalAttrs (cfg.desktop.keyFile != null) {
       key_file = toString cfg.desktop.keyFile;
@@ -276,6 +281,8 @@ in
           ExecStart = "${cfg.package}/bin/x-monitor-agent --config ${configFile}";
           # Holds the plan of monitors the agent runs itself and the records it has not synced yet.
           StateDirectory = "x-monitor-agent";
+          RuntimeDirectory = "x-monitor-agent";
+          RuntimeDirectoryMode = "0755";
           User = cfg.user;
           Group = cfg.group;
 
