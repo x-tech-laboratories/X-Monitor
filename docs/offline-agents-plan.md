@@ -43,8 +43,8 @@ The agent installs the `x_monitor` package minus the UI: the plugins, `core.coor
 entry point with `nicegui` made unimportable.
 
 The Nix agent package builds from the same source as the server, without the UI dependencies. The
-server and its agents run the same version: the hello frame carries the version, and the server
-refuses to hand monitors to an agent on a different one (it still accepts its records and runs its
+server and its agents run the same code: the hello frame carries `code_version()`, a hash of both
+packages' sources, and the server refuses to hand monitors to an agent whose hash differs (it still accepts its records and runs its
 legacy commands). TechNet deploys both from one flake input, so they move together.
 
 Plugins loaded from `plugin_paths` must be installed on the agent too; a monitor whose type the

@@ -96,8 +96,8 @@ def challenge(nonce: str) -> Dict[str, Any]:
 
 
 def hello(agent_id: str, signature: str, hostname: str, version: str,
-          capabilities: List[str]) -> Dict[str, Any]:
-    """Build the agent's HELLO frame, signed over the server's challenge."""
+          capabilities: List[str], code: str = '') -> Dict[str, Any]:
+    """Build the agent's HELLO frame, signed over the server's challenge; `code` is the agent's code_version()."""
     return {
         't': HELLO,
         'protocol': PROTOCOL_VERSION,
@@ -106,6 +106,7 @@ def hello(agent_id: str, signature: str, hostname: str, version: str,
         'hostname': hostname,
         'version': version,
         'caps': capabilities,
+        'code': code,
     }
 
 
