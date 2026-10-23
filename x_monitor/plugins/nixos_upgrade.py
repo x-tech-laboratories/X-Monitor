@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.plugins.base.nixos_boot import boot_parts_script, reboot_required as nixos_reboot_required
 from x_monitor.core.connectors import ssh_connector as detached
+from x_monitor.core.coordination.jobs import action_id_of
 from x_monitor.core.connectors.types import (
     ActionPlan, CmdResult, Command, CollectResult, Status,
 )
@@ -344,6 +345,8 @@ class NixosUpgrade(Plugin):
         return self.build_agent if kind == 'build' else self.switch_agent
 
     def job_agent(self, job: dict) -> Optional[str]:
+        if action_id_of(job.get('kind') or '') is not None:
+            return super().job_agent(job)
         return self._agent_for(job.get('kind'))
 
     def _running_job(self) -> Optional[dict]:
