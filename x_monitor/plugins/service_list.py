@@ -15,7 +15,7 @@ from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors.types import ActionPlan, CmdResult, Command, CollectResult
 
 _DEFAULT_LAYOUT = [
-    ['host_card', 'count_card', 'reload_card'],
+    ['host_card', 'count_card'],
     ['table'],
     ['events'],
 ]
@@ -217,14 +217,9 @@ class ServiceList(Plugin):
             'cards': {
                 'count_card': {'title': 'SERVICES', 'value_attr': '_service_count_text'},
             },
-            'buttons': {
-                'reload_card': [
-                    {'id': 'daemon_reload', 'label': 'Reload Daemon', 'icon': 'refresh',
-                     'color': 'secondary', 'kind': 'dispatch'},
-                ],
-            },
             'tables': {
                 'table': {
+                    'title': 'SERVICES',
                     'row_key': 'unit',
                     'columns': [
                         {'name': 'unit', 'label': 'Unit', 'field': 'unit', 'sortable': True, 'align': 'left'},

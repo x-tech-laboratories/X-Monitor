@@ -420,6 +420,7 @@ class VulnScan(Plugin):
             },
             'tables': {
                 'findings': {
+                    'title': 'FINDINGS',
                     'row_key': 'key',
                     'rows_attr': '_finding_rows',
                     'columns': [

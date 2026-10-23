@@ -73,7 +73,6 @@ _DEFAULT_LAYOUT = [
     ['host_card', 'repo_card', 'maxage_card', 'state_card'],
     ['size_card', 'dedup_card', 'count_card', 'age_card'],
     ['canary_card', 'checks_card'],
-    ['tools'],
     ['archives'],
     ['browser'],
     ['jobs'],
@@ -628,19 +627,56 @@ class Borg(Plugin):
             return [], {}
         return data.get('archives') or [], data.get('repository') or {}
 
-    def get_actions(self) -> List[Dict[str, str]]:
+    def get_actions(self) -> List[Dict[str, Any]]:
         actions = []
         if self.source_paths:
             actions += [
-                {'name': 'Run Backup', 'action_id': 'run_backup',
+                {'name': 'Run Backup', 'action_id': 'run_backup', 'job': 'backup',
                  'variant': 'primary', 'icon': 'backup'},
-                {'name': 'Dry Run', 'action_id': 'dry_run_backup',
+                {'name': 'Dry Run', 'action_id': 'dry_run_backup', 'job': 'dry-run',
                  'variant': 'secondary', 'icon': 'fact_check'},
             ]
         if self.canary_path:
             actions.append({'name': 'Verify Restore', 'action_id': 'verify_restore',
                             'variant': 'secondary', 'icon': 'verified'})
+        if self.repo:
+            actions += [
+                {'name': 'Check', 'action_id': 'check_repo', 'job': [_check_job_kind(k) for k in _CHECK_KINDS],
+                 'variant': 'secondary', 'icon': 'health_and_safety'},
+                {'name': 'Compact', 'action_id': 'compact_repo', 'job': 'compact',
+                 'variant': 'secondary', 'icon': 'compress'},
+            ]
+        if self.retention:
+            actions.append({'name': 'Prune Preview', 'action_id': 'prune_preview', 'kind': 'dialog',
+                            'dialog': 'prune_preview', 'variant': 'secondary', 'icon': 'content_cut'})
+        if self.allow_delete and self.retention:
+            actions.append({'name': 'Prune', 'action_id': 'prune_repo', 'job': 'prune',
+                            'variant': 'danger', 'icon': 'delete_sweep',
+                            'confirm': f'Prune {self.repo} by its retention policy? Archives it drops are gone for '
+                                       'good — run Prune Preview first to see which. Space is freed by a Compact '
+                                       'afterwards.'})
+        if self.allow_purge:
+            actions += [
+                {'name': 'Purge Preview', 'action_id': 'purge_preview', 'job': 'purge-preview',
+                 'variant': 'secondary', 'icon': 'filter_alt'},
+                {'name': 'Purge Excluded', 'action_id': 'purge_excluded', 'job': 'purge',
+                 'variant': 'danger', 'icon': 'cleaning_services',
+                 'confirm': f'Rewrite every archive in {self.repo} without the files its exclude patterns now '
+                            'drop, then compact? Those files are gone from every archive for good — run Purge '
+                            'Preview first to see which. It holds the repository lock for the whole run, so '
+                            'backups wait until it ends.'},
+            ]
+        if self.allow_delete:
+            actions.append({'name': 'Break Lock', 'action_id': 'break_lock', 'variant': 'danger', 'icon': 'lock_open',
+                            'confirm': f'Break the locks on {self.repo}? Only do this when no borg process is '
+                                       'using it; breaking a live lock can corrupt the repository.'})
         return actions
+
+    def action_state(self, action) -> str:
+        """Break Lock greys out while a job runs, since that job holds the lock it would break."""
+        if action.get('action_id') == 'break_lock' and self._running_job() is not None:
+            return 'disabled'
+        return super().action_state(action)
 
     def plan_action(self, action_id: str, **kwargs):
         planners = {
@@ -1289,33 +1325,6 @@ class Borg(Plugin):
                 'checks_card': {'title': 'REPO CHECKS', 'value_attr': '_checks_text',
                                 'color_attr': '_checks_color'},
             },
-            'buttons': {
-                'tools': [
-                    {'id': 'prune_preview', 'label': 'Prune Preview', 'icon': 'content_cut',
-                     'kind': 'dialog', 'dialog': 'prune_preview', 'visible_if': lambda p: bool(p.retention)},
-                    {'id': 'verify_restore', 'label': 'Verify Restore', 'icon': 'verified',
-                     'visible_if': lambda p: bool(p.canary_path)},
-                    {'id': 'check_repo', 'label': 'Check', 'icon': 'health_and_safety',
-                     'visible_if': lambda p: bool(p.repo)},
-                    {'id': 'compact_repo', 'label': 'Compact', 'icon': 'compress',
-                     'visible_if': lambda p: bool(p.repo)},
-                    {'id': 'prune_repo', 'label': 'Prune', 'icon': 'delete_sweep', 'color': 'negative',
-                     'visible_if': lambda p: p.allow_delete and bool(p.retention),
-                     'confirm': 'Prune {plugin.repo} by its retention policy? Archives it drops are gone for good '
-                                '— run Prune Preview first to see which. Space is freed by a Compact afterwards.'},
-                    {'id': 'purge_preview', 'label': 'Purge Preview', 'icon': 'filter_alt',
-                     'visible_if': lambda p: p.allow_purge},
-                    {'id': 'purge_excluded', 'label': 'Purge Excluded', 'icon': 'cleaning_services', 'color': 'negative',
-                     'visible_if': lambda p: p.allow_purge,
-                     'confirm': 'Rewrite every archive in {plugin.repo} without the files its exclude patterns now drop, '
-                                'then compact? Those files are gone from every archive for good — run Purge Preview first '
-                                'to see which. It holds the repository lock for the whole run, so backups wait until it ends.'},
-                    {'id': 'break_lock', 'label': 'Break Lock', 'icon': 'lock_open', 'color': 'negative',
-                     'visible_if': lambda p: p.allow_delete,
-                     'confirm': 'Break the locks on {plugin.repo}? Only do this when no borg process is using it; '
-                                'breaking a live lock can corrupt the repository.'},
-                ],
-            },
             'dialogs': {
                 'prune_preview': {'kind': 'read', 'title': 'Prune Preview: {plugin.name}',
                                   'action_id': 'prune_preview', 'render': 'textarea_readonly'},
@@ -1328,6 +1337,7 @@ class Borg(Plugin):
             },
             'tables': {
                 'archives': {
+                    'title': 'ARCHIVES',
                     'row_key': 'name',
                     'rows_attr': '_archive_rows',
                     'columns': [
@@ -1349,15 +1359,7 @@ class Borg(Plugin):
                     ],
                 },
             },
-            'job_panel': {
-                'widget': 'jobs',
-                'title': 'JOBS',
-                'run_action_id': 'run_backup', 'run_label': 'Run Backup', 'run_icon': 'play_arrow',
-                'cancel_label': 'Cancel', 'cancel_icon': 'stop',
-                'enabled_if': lambda p: bool(p.source_paths),
-                'disabled_text': 'Run Backup needs source_paths — the other jobs still run from here',
-                'history_limit': 10,
-            },
+            'job_panel': {'widget': 'jobs', 'title': 'JOBS', 'history_limit': 10},
             'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }
 

@@ -259,8 +259,9 @@ class _JobPlugin:
     id = 'host'
     actions = [{'name': 'Rebuild', 'action_id': 'switch', 'job': 'switch'}]
 
-    def __init__(self, state='normal', running=False):
+    def __init__(self, state='normal', running=False, message=''):
         self.state = state
+        self.message = message
         self.ran = []
         self.cancelled = False
         self.jobs = SimpleNamespace(is_running=lambda: running, cancel=self._cancel)
@@ -274,7 +275,7 @@ class _JobPlugin:
 
     async def run_action(self, action_id):
         self.ran.append(action_id)
-        return True, ''
+        return True, self.message
 
     async def present(self):
         return {'actions': self.actions}
@@ -294,8 +295,32 @@ class TestActionState:
         await user.should_see('Rebuild')
         assert 'halon-button-filled' not in _button(user, 'Rebuild').classes
         user.find(kind=ui.button, content='Rebuild').click()
-        await user.should_see('Action completed successfully')
+        await user.should_see('Rebuild succeeded')
         assert plugin.ran == ['switch']
+
+    async def test_an_action_message_is_shown_in_place_of_the_generic_notice(self, user: User):
+        plugin = _JobPlugin(message='Lock broken')
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('Rebuild')
+        user.find(kind=ui.button, content='Rebuild').click()
+        await user.should_see('Lock broken')
+
+    async def test_a_dialog_action_opens_its_dialog_instead_of_running(self, user: User, monkeypatch):
+        opened = []
+
+        async def open_dialog(plugin, name, row=None):
+            opened.append(name)
+
+        monkeypatch.setattr('x_monitor.core.ui.views.plugin_detail.open_dialog_impl', open_dialog)
+        plugin = _JobPlugin()
+        plugin.actions = [{'name': 'Preview', 'action_id': 'preview', 'kind': 'dialog', 'dialog': 'preview'}]
+        _toggle_page(plugin)
+        await user.open('/')
+        await user.should_see('Preview')
+        user.find(kind=ui.button, content='Preview').click()
+        await asyncio.sleep(0.01)
+        assert opened == ['preview'] and plugin.ran == []
 
     async def test_a_disabled_action_is_greyed_out(self, user: User):
         _toggle_page(_JobPlugin(state='disabled'))

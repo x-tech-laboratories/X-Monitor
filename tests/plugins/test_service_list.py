@@ -89,6 +89,13 @@ class TestServiceListPlugin:
         assert columns['enabled']['toggle']['on_action_id'] == 'enable_service'
         assert columns['enabled']['toggle']['off_action_id'] == 'disable_service'
 
+    def test_reload_daemon_is_a_header_action_only(self, plugin):
+        assert [a['action_id'] for a in plugin.get_actions()] == ['daemon_reload']
+        assert 'buttons' not in plugin.UI_SPEC
+
+    def test_services_table_has_a_title(self, plugin):
+        assert plugin.UI_SPEC['tables']['table']['title'] == 'SERVICES'
+
     def test_switched_actions_are_not_also_row_buttons(self, plugin):
         ids = {a['id'] for a in plugin.UI_SPEC['tables']['table']['row_actions']}
         assert not ids & {'start_service', 'stop_service', 'enable_service', 'disable_service'}
