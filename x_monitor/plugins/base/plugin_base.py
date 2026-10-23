@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from x_monitor.core.connectors.types import Request, Result
     from x_monitor.core.connectors.agent_protocol import StreamSpec
 
-from x_monitor.core.coordination.jobs import action_id_of
+from x_monitor.core.coordination.jobs import WATCHED_POLL_SECONDS, action_id_of
 from x_monitor.plugins.base.custom_actions import CustomAction, parse_custom_actions
 from x_monitor.plugins.base.plugin_helpers import PluginConfigMixin, parse_duration
 from x_monitor.core.connectors.ssh_connector import COLLECT_TIMEOUT as SSH_TIMEOUT
@@ -127,8 +127,13 @@ class Plugin(PluginConfigMixin, ABC):
         """Seconds until the engine should run the next cycle when that is sooner than `interval`, else None.
 
         Default: `job_poll_interval` while one of this plugin's jobs runs, so a
-        job finishing minutes into a long interval is seen within seconds."""
-        if self.job_poll_interval is None or not self.jobs:
+        job finishing minutes into a long interval is seen within seconds, and
+        every few seconds while someone has a running job's log open."""
+        if not self.jobs:
+            return None
+        if self.jobs.watched():
+            return min(WATCHED_POLL_SECONDS, self.job_poll_interval or WATCHED_POLL_SECONDS)
+        if self.job_poll_interval is None:
             return None
         if self.jobs.is_running() or any(self.jobs.running_side(kind) for kind in self.SIDE_JOB_KINDS):
             return self.job_poll_interval

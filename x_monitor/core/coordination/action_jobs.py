@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from x_monitor.core.connectors import ssh_connector as detached
 from x_monitor.core.connectors.types import ActionPlan, CmdResult, CollectResult, DispatchResult
-from x_monitor.core.coordination.jobs import action_id_of, action_job_kind
+from x_monitor.core.coordination.jobs import (
+    ACTION_LOOP, WATCHED_POLL_SECONDS, action_id_of, action_job_kind, is_watched, sleep_unless_watched,
+)
 
 if TYPE_CHECKING:
     from x_monitor.core.coordination.engine import XMonitorEngine
@@ -98,8 +100,14 @@ class ActionJobs:
     async def run(self) -> None:
         """Poll every running detached action until the engine stops."""
         while True:
-            await asyncio.sleep(POLL_SECONDS)
+            await sleep_unless_watched(self.poll_seconds(), ACTION_LOOP)
             await self.poll_all()
+
+    def poll_seconds(self) -> float:
+        """Seconds until the next poll: sooner while someone has a running action's log open."""
+        watched = any(is_watched(job['id']) for job in self._engine.db.running_jobs()
+                      if action_id_of(job['kind']) is not None)
+        return WATCHED_POLL_SECONDS if watched else POLL_SECONDS
 
     async def poll_all(self) -> None:
         """Advance every running detached action of a current monitor by one poll."""

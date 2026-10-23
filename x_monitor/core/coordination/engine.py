@@ -47,7 +47,7 @@ from x_monitor.core.coordination.reload import (
     ReloadResult, restart_required, same_monitor, section_changed,
 )
 from x_monitor.core.coordination.action_jobs import ActionJobs
-from x_monitor.core.coordination.jobs import JobsGateway
+from x_monitor.core.coordination.jobs import JobsGateway, sleep_unless_watched
 from x_monitor.core.settings.config_file import ConfigFileManager as XMonitorConfig
 from x_monitor.core.state import changes
 from x_monitor.core.state.changes import CHANGES
@@ -720,7 +720,8 @@ class XMonitorEngine:
                 wait = next_due - now
             sooner = _sooner_cycle(plugin)
             early = sooner is not None and sooner < wait
-            await asyncio.sleep(sooner if early else wait)
+            # A log view opened mid-sleep starts the faster polling at once, and that cycle counts as early.
+            early = await sleep_unless_watched(sooner if early else wait, plugin.id) or early
 
     async def _schedule_loop(self):
         while True:
