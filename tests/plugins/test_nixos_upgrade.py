@@ -363,6 +363,14 @@ class TestCommands:
         assert "build --no-link" in cmd
         assert "switch" not in cmd
 
+    def test_build_root_dir_keeps_one_replaceable_root(self, make_plugin):
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "id": "odin-deploy",
+                                       "build_root_dir": "/var/lib/agent/build roots"})
+        cmd = p._build_command()
+        assert cmd.startswith("mkdir -p '/var/lib/agent/build roots' && ")
+        assert "build --out-link '/var/lib/agent/build roots/odin-deploy'" in cmd
+        assert "--no-link" not in cmd
+
     def test_build_keeps_going_by_default(self, plugin):
         assert "--keep-going" in plugin._build_command()
 

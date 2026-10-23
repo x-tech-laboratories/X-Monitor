@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -90,6 +91,21 @@ class TestRequests:
     def test_probe_reads_the_key_on_the_agent_not_in_the_text(self, plugin):
         assert "testkey" not in plugin.requests()[1].text
         assert "/run/secrets/blockurl_api_key" in plugin.requests()[1].text
+
+    def test_probe_keeps_the_key_off_every_command_line(self, make_plugin, tmp_path):
+        """Arguments are visible to every user in `ps`, so the key may only reach curl on stdin."""
+        log = tmp_path / "curl.log"
+        curl = tmp_path / "curl"
+        curl.write_text(f'#!/bin/sh\necho "argv: $*" >> {log}\necho "stdin: $(cat)" >> {log}\n')
+        curl.chmod(0o755)
+        p = make_plugin(Blockurl, {**BASE_CFG, "api_key": None,
+                                   "api_key_command": "echo secretkey"})
+        subprocess.run(["sh", "-c", p.requests()[1].text], check=True,
+                       env={"PATH": f"{tmp_path}:/usr/bin:/bin:/run/current-system/sw/bin"})
+        lines = log.read_text().splitlines()
+        assert [line for line in lines if line.startswith("argv:")]
+        assert not [line for line in lines if line.startswith("argv:") and "secretkey" in line]
+        assert lines.count("stdin: X-API-Key: secretkey") == 3
 
     def test_write_probe_can_be_disabled(self, make_plugin):
         p = make_plugin(Blockurl, {**BASE_CFG, "write_probe": False})

@@ -43,6 +43,15 @@ class TestIdleInhibitor:
         assert not lock.is_locked
         assert fake_inhibit() == 1
 
+    async def test_concurrent_first_holds_start_one_lock(self, fake_inhibit):
+        lock = inhibit.IdleInhibitor(linger=0)
+        await asyncio.gather(*(lock.acquire() for _ in range(5)))
+        await asyncio.sleep(0.2)
+        assert fake_inhibit() == 1
+        await lock.close()
+        await asyncio.sleep(0.1)
+        assert not lock.is_locked
+
     async def test_a_hold_within_the_linger_keeps_the_same_lock(self, fake_inhibit):
         lock = inhibit.IdleInhibitor(linger=0.2)
         async with lock.held():
