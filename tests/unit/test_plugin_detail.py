@@ -365,6 +365,7 @@ class TestDetachedAction:
 
         plugin.run_action = run_action
         plugin.jobs.log = log
+        plugin.jobs.watch = lambda row: (lambda: None)
         plugin.all_actions = lambda: plugin.actions
         plugin.data = SimpleNamespace(job=lambda job_id: job if job_id == 9 else None)
         _toggle_page(plugin)
