@@ -48,6 +48,7 @@ from x_monitor.core.coordination.reload import (
     ReloadResult, restart_required, same_monitor, section_changed,
 )
 from x_monitor.core.coordination.action_jobs import ActionJobs
+from x_monitor.core.coordination.agent_plans import AgentPlans
 from x_monitor.core.coordination.jobs import JobsGateway, sleep_unless_watched
 from x_monitor.core.settings.config_file import ConfigFileManager as XMonitorConfig
 from x_monitor.core.state import changes
@@ -207,10 +208,17 @@ class XMonitorEngine:
         self.connectors.agents.configure(self.config_loader.agents)
         self.connectors.agents.set_event_sink(self._on_agent_event)
         self.connectors.agents.set_connect_sink(self._on_agent_connected)
+        self.agent_plans = AgentPlans(self)
+        self.connectors.agents.set_sync_sink(self.agent_plans.on_frame)
         self.action_jobs = ActionJobs(self)
         self.notifications = NotificationEngine(
             self.db, self.config_loader.notifications, self.connectors.agents
         )
+
+    def _agent_runs(self, plugin: Plugin) -> bool:
+        """Whether this monitor's agent runs it itself, so the server neither collects, schedules nor acts on it here."""
+        plans = getattr(self, 'agent_plans', None)
+        return plans is not None and plans.runs(plugin)
 
     def _open_database(self, path: str) -> XMonitorDatabase:
         """The database this engine records into; an agent's engine opens one that also keeps an outbox."""
@@ -249,6 +257,9 @@ class XMonitorEngine:
         are never registered and the poll stays the only collection path."""
         net = self._exec_context_for(plugin)
         if net is None or not net.is_agent:
+            return False
+        # A monitor its agent runs keeps a loop here, which watches for the agent going quiet.
+        if self._agent_runs(plugin):
             return False
         # A plugin's broken event_driven() must not stop scheduling; treat it as polled.
         try:
@@ -331,7 +342,7 @@ class XMonitorEngine:
                     if getattr(self._exec_context_for(p), 'conn', None) is not None
                     and getattr(self._exec_context_for(p).conn, 'agent_id', None) == agent_id]
         # A monitor still waiting out its saved result runs when due, so a restart never repeats a daily scan.
-        monitors = [p for p in monitors if p.id not in self._awaiting_due]
+        monitors = [p for p in monitors if p.id not in self._awaiting_due and not self._agent_runs(p)]
         if not monitors:
             return
         log.info(
@@ -542,6 +553,8 @@ class XMonitorEngine:
     async def run_cycle_now(self, plugin: Plugin) -> bool:
         """Single-flight wrapper for out-of-band (dashboard-poll-triggered)
         collection, sharing the same reentrancy guard as the scheduler."""
+        if self._agent_runs(plugin):
+            return await self.agent_plans.poll_now(plugin)
         if self._collecting.get(plugin.id):
             log.debug(f"{plugin.name}: previous collection still running, skipping poll-triggered cycle")
             return False
@@ -585,7 +598,9 @@ class XMonitorEngine:
         return self._cycle_stats.get(plugin_id)
 
     async def dispatch_action(self, plugin: Plugin, action_id: str, **kwargs) -> DispatchResult:
-        """Run one action with the hosts it works on held awake; see _dispatch_action."""
+        """Run one action with the hosts it works on held awake; see _dispatch_action. A monitor its agent runs takes the action there."""
+        if self._agent_runs(plugin):
+            return await self.agent_plans.dispatch(plugin, action_id, **kwargs)
         async with self._targets_held_awake(plugin):
             return await self._dispatch_action(plugin, action_id, **kwargs)
 
@@ -722,7 +737,10 @@ class XMonitorEngine:
         while True:
             # A failing plugin cycle must not kill its polling loop; the next tick retries.
             try:
-                await self.run_cycle_now(plugin)
+                if self._agent_runs(plugin):
+                    self.agent_plans.check_silence(plugin)
+                else:
+                    await self.run_cycle_now(plugin)
             except Exception as e:
                 log.error(f"Plugin execution error ({plugin.name}): {e}")
             # A clock-pinned monitor re-reads the wall clock each cycle, so a suspend or a slow cycle never shifts its slot.
@@ -762,6 +780,9 @@ class XMonitorEngine:
         restart never repeats it, and runs missed while X-Monitor was down collapse
         into one run when it returns."""
         for plugin in self._flatten(self.plugins):
+            # The agent that runs a monitor runs its schedule too.
+            if self._agent_runs(plugin):
+                continue
             for entry in plugin.scheduled_actions:
                 key = entry.state_key(plugin.id)
                 if key in self._scheduled_running:
@@ -919,6 +940,8 @@ class XMonitorEngine:
         if not self.ready:
             await asyncio.get_running_loop().run_in_executor(None, self.load_state)
             self.ready = True
+            # Which monitors their agents run is only known once the store has loaded.
+            polled = [p for p in monitors if not self._is_event_driven(p)]
             holds = {p.id: self._seconds_until_due(p) for p in polled}
             self._awaiting_due = {plugin_id for plugin_id, hold in holds.items() if hold > 0}
             for agent_id in sorted(self._early_agents):
@@ -996,6 +1019,7 @@ class XMonitorEngine:
                 return result
             await self._apply_reload(plan, result)
             self._record_reload(result)
+            self._spawn(self.agent_plans.refresh())
             return result
 
     def _plan_reload(self) -> _ReloadPlan:
