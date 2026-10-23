@@ -182,7 +182,9 @@ cycle, so a slow cycle does not stretch the schedule, and a cycle overrunning
 the whole period re-anchors instead of bursting. A 30s monitor is never
 rounded up to a slower one's schedule — with a random startup stagger
 (`STARTUP_JITTER_SECONDS`) so they don't all fire in the same event-loop
-iteration at boot. Exceptions are caught per-iteration, so one crashing monitor
+iteration at boot. On a restart, a monitor whose saved result is younger than
+its interval waits until that result is one interval old before its first
+cycle, so a redeploy never repeats a daily scan. Exceptions are caught per-iteration, so one crashing monitor
 never stops its own future polls or anyone else's. Group plugins get a loop too;
 they re-read live child status from the DB each cycle.
 
@@ -383,7 +385,8 @@ does, but the agent takes a moment to dial in, so a monitor's first cycle
 normally runs before its transport exists and records a failure. For a 30s
 monitor that is invisible; for the hourly SMART and ZFS checks it meant an hour
 of reporting failed after every restart, which is long enough to be mistaken for
-a real fault.
+a real fault. A monitor still waiting out a current saved result after a restart
+is left out, since its first cycle comes when it is due.
 
 Two conventions matter here:
 

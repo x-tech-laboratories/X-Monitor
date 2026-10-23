@@ -244,6 +244,7 @@ class TestCollectOnConnect:
         engine.ready = True
         engine.plugins = [mine, theirs]
         engine._tasks = set()
+        engine._awaiting_due = set()
         engine._exec_contexts = {
             mine.id: ExecContext(conn=AgentConnection('node-a', 'a.lan'), collect_timeout=30.0),
             theirs.id: ExecContext(conn=AgentConnection('node-b', 'b.lan'), collect_timeout=30.0),
@@ -254,6 +255,33 @@ class TestCollectOnConnect:
         engine._on_agent_connected('node-a')
         await asyncio.sleep(0)
         assert collected == [mine.id]
+
+    async def test_a_monitor_waiting_out_its_saved_result_is_not_recollected(self, make_plugin, db_manager):
+        """A restart must not rerun a monitor whose saved result is still current, such as a daily scan."""
+        from x_monitor.core.connectors.agent_connector import AgentConnection
+        from x_monitor.core.connectors.engine import ExecContext
+        from x_monitor.core.coordination.engine import XMonitorEngine
+        from x_monitor.plugins.uptime import Uptime
+
+        due = make_plugin(Uptime)
+        current = make_plugin(Uptime)
+        current.id = 'current-plugin'
+
+        engine = object.__new__(XMonitorEngine)
+        engine.ready = True
+        engine.plugins = [due, current]
+        engine._tasks = set()
+        engine._awaiting_due = {current.id}
+        engine._exec_contexts = {
+            p.id: ExecContext(conn=AgentConnection('node-a', 'a.lan'), collect_timeout=30.0)
+            for p in (due, current)
+        }
+        collected = []
+        engine._collect_on_connect = lambda p: collected.append(p.id) or _noop()
+
+        engine._on_agent_connected('node-a')
+        await asyncio.sleep(0)
+        assert collected == [due.id]
 
 
 async def _noop():
