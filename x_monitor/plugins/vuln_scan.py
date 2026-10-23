@@ -153,6 +153,7 @@ def _progress(output: str) -> str:
 
 
 class VulnScan(Plugin):
+    RUNS_ON_AGENT = False
     DEFAULT_TIMEOUT = '20m'
 
     def __init__(self, name: str, config):

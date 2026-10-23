@@ -45,6 +45,7 @@ _WAKE_TIMEOUT = 30.0
 
 
 class Uptime(Plugin):
+    RUNS_ON_AGENT = False
     AVAILABILITY = True
 
     def __init__(self, name: str, config: Dict[str, Any]):

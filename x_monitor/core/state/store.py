@@ -92,6 +92,27 @@ class BufferSizes:
     finished_job_output: int = 50
 
 
+def _insert_by_time(buffer: deque, record: Any) -> Tuple[bool, Any]:
+    """Put a record into a time-ordered bounded buffer, returning whether it was kept and the record it pushed out, if any.
+
+    Live records arrive newest and append; a late one, such as an agent's record synced after an
+    offline stretch, goes where its time belongs, so the buffer's last record is always the newest.
+    A late record older than everything a full buffer holds is not kept in memory."""
+    full = buffer.maxlen is not None and len(buffer) == buffer.maxlen
+    if not buffer or record.timestamp >= buffer[-1].timestamp:
+        evicted = buffer[0] if full else None
+        buffer.append(record)
+        return True, evicted
+    if full and record.timestamp < buffer[0].timestamp:
+        return False, None
+    evicted = buffer.popleft() if full else None
+    index = len(buffer)
+    while index > 0 and buffer[index - 1].timestamp > record.timestamp:
+        index -= 1
+    buffer.insert(index, record)
+    return True, evicted
+
+
 class StateStore:
     def __init__(self, buffers: Optional[BufferSizes] = None):
         self._lock = threading.RLock()
@@ -146,8 +167,7 @@ class StateStore:
             timestamp=timestamp or datetime.now(),
         )
         with self._lock:
-            series = self._series(plugin_id, metric_name)
-            series.append(record)
+            _insert_by_time(self._series(plugin_id, metric_name), record)
         return record
 
     def _series(self, plugin_id: str, metric_name: str) -> deque:
@@ -232,7 +252,7 @@ class StateStore:
             timestamp=timestamp or datetime.now(),
         )
         with self._lock:
-            self.events.append(record)
+            _insert_by_time(self.events, record)
         return record
 
     def recent_events(
@@ -322,9 +342,9 @@ class StateStore:
             if dedup_hash in seen:
                 return None
 
-            evicted = buffer[0] if len(buffer) == buffer.maxlen else None
-            buffer.append(record)
-            seen.add(dedup_hash)
+            kept, evicted = _insert_by_time(buffer, record)
+            if kept:
+                seen.add(dedup_hash)
             # The dedup set has to age out with the buffer or it grows without
             # bound; a line that has fallen out of the buffer can no longer be
             # observed as a duplicate anyway.
