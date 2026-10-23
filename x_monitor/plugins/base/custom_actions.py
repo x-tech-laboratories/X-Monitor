@@ -40,6 +40,7 @@ class CustomAction:
     danger: bool = False
     timeout: Optional[float] = None
     agent: Optional[str] = None
+    more: bool = False
 
     def button(self) -> ActionButtonSpec:
         """The header button this action shows as."""
@@ -48,6 +49,8 @@ class CustomAction:
             spec['variant'] = 'danger'
         if self.confirm:
             spec['confirm'] = self.confirm
+        if self.more:
+            spec['more'] = True
         return spec
 
     def plan(self) -> ActionPlan:
@@ -96,5 +99,6 @@ def parse_custom_actions(value: Any) -> List[CustomAction]:
             danger=bool(entry.get('danger', False)),
             timeout=parse_duration(timeout) if timeout is not None else None,
             agent=str(entry['agent']) if entry.get('agent') else None,
+            more=bool(entry.get('more', False)),
         ))
     return actions

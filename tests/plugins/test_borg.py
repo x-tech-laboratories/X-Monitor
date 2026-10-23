@@ -462,6 +462,11 @@ class TestActions:
         assert _action_ids(p) == ["run_backup", "dry_run_backup", "verify_restore", "check_repo", "compact_repo",
                                   "prune_preview", "prune_repo", "purge_preview", "purge_excluded", "break_lock"]
 
+    async def test_occasional_tools_go_in_the_more_menu(self, make_plugin):
+        more = [a['action_id'] for a in make_plugin(Borg, FULL_CFG).get_actions() if a.get('more')]
+        assert more == ["verify_restore", "prune_preview", "prune_repo", "purge_preview", "purge_excluded",
+                        "break_lock"]
+
     async def test_prune_preview_opens_its_dialog(self, make_plugin):
         action = _action(make_plugin(Borg, FULL_CFG), "prune_preview")
         assert action['kind'] == 'dialog' and action['dialog'] in make_plugin(Borg, FULL_CFG).UI_SPEC['dialogs']

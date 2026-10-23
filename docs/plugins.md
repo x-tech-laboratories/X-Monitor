@@ -209,6 +209,7 @@ Every monitor, whatever its type, accepts an `actions` list of your own commands
 | `icon`    | Material icon name (default: `terminal`) |
 | `confirm` | Question asked before it runs; the command runs only on a yes |
 | `danger`  | Shows the button in the danger colour (default: `false`) |
+| `more`    | Puts the action in the header's More menu instead of on a button of its own (default: `false`) |
 | `timeout` | How long the command may run, as seconds or a duration such as `2m` |
 | `agent`   | Run on this agent instead of the monitor's own host |
 

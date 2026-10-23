@@ -743,6 +743,7 @@ a, .q-link { color: var(--accent); }
 
 .q-menu .q-item:hover, .q-menu .q-item.q-manual-focusable--focused { background-color: var(--surface-secondary); }
 .q-menu .q-item.q-item--active { color: var(--accent); }
+.q-menu .q-item.halon-menu-item-danger, .q-menu .q-item.halon-menu-item-danger .q-icon { color: var(--status-danger); }
 .q-menu .q-item .q-icon { color: var(--text-secondary); font-size: var(--icon-size-small); }
 .q-menu .q-item__section--avatar { min-width: 0; padding-right: var(--space-4); }
 .q-menu .q-separator { margin: 5px calc(-1 * 5px); }

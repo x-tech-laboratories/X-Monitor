@@ -76,33 +76,43 @@ async def _render_actions(engine: EngineLike, plugin: Any, actions_row: Any):
         for action in actions:
             if action.get('kind') == 'toggle':
                 _render_toggle(plugin, action, client)
-            else:
+            elif not action.get('more'):
                 _render_action(plugin, action, client)
+        more = [action for action in actions if action.get('more') and action.get('kind') != 'toggle']
+        if more:
+            _render_more(plugin, more, client)
         if getattr(plugin, 'jobs', None) is not None and any(action.get('job') for action in actions):
             _render_cancel(plugin, client)
         render_mute_button(engine, plugin)
 
 
+def _action_state(plugin: Any, action: ActionButtonSpec) -> str:
+    """The action's state now, as plugin.action_state reports it: normal, accent, disabled or hidden."""
+    return plugin.action_state(action) if hasattr(plugin, 'action_state') else 'normal'
+
+
+async def _run_header_action(plugin: Any, action: ActionButtonSpec, client: Any):
+    """Opens the action's dialog, or asks its confirm question and runs it, then tells the viewer how it went."""
+    # An action that is running or greyed out would only be refused.
+    if _action_state(plugin, action) != 'normal':
+        return
+    if action.get('kind') == 'dialog':
+        await open_dialog_impl(plugin, action['dialog'])
+        return
+    if action.get('confirm') and not await confirmed(action['confirm']):
+        return
+    success, content = await plugin.run_action(action['action_id'])
+    notify_client(client, _outcome_notice(action['name'], success, content),
+                  type='positive' if success else 'negative')
+
+
 def _render_action(plugin: Any, action: ActionButtonSpec, client: Any):
     """An action button that follows plugin.action_state: hidden, greyed out, normal, or filled while it runs."""
-    def state() -> str:
-        return plugin.action_state(action) if hasattr(plugin, 'action_state') else 'normal'
-
     async def clicked():
-        # A filled button is already running, so a second click would only be refused.
-        if state() != 'normal':
-            return
-        if action.get('kind') == 'dialog':
-            await open_dialog_impl(plugin, action['dialog'])
-            return
-        if action.get('confirm') and not await confirmed(action['confirm']):
-            return
-        success, content = await plugin.run_action(action['action_id'])
-        notify_client(client, _outcome_notice(action['name'], success, content),
-                      type='positive' if success else 'negative')
+        await _run_header_action(plugin, action, client)
 
     def sync():
-        current = state()
+        current = _action_state(plugin, action)
         button.set_visibility(current != 'hidden')
         button.set_enabled(current != 'disabled')
         filled = current == 'accent'
@@ -111,6 +121,39 @@ def _render_action(plugin: Any, action: ActionButtonSpec, client: Any):
 
     button = action_button(action['name'], on_click=clicked, icon=action.get('icon', 'play_arrow'),
                            danger=action.get('variant') == 'danger')
+    on_data_event(sync)
+
+
+def _render_more(plugin: Any, actions: List[ActionButtonSpec], client: Any):
+    """A More button whose menu holds the less used actions; it is filled while one of them runs."""
+    items = []
+    with action_button('More', icon='more_horiz') as button:
+        with ui.menu():
+            for action in actions:
+                async def clicked(a=action):
+                    await _run_header_action(plugin, a, client)
+
+                with ui.menu_item(on_click=clicked) as item:
+                    with ui.item_section().props('avatar'):
+                        ui.icon(action.get('icon', 'play_arrow'))
+                    ui.item_section(action['name'])
+                if action.get('variant') == 'danger':
+                    item.classes('halon-menu-item-danger')
+                items.append((action, item))
+
+    def sync():
+        states = [_action_state(plugin, action) for action, _ in items]
+        for state, (_, item) in zip(states, items):
+            item.set_visibility(state != 'hidden')
+            item.props(remove='disable active')
+            if state in ('disabled', 'accent'):
+                item.props('disable' if state == 'disabled' else 'active')
+        shown = [state for state in states if state != 'hidden']
+        button.set_visibility(bool(shown))
+        filled = 'accent' in shown
+        button.classes(add='halon-button-filled' if filled else 'halon-button',
+                       remove='halon-button' if filled else 'halon-button-filled')
+
     on_data_event(sync)
 
 
