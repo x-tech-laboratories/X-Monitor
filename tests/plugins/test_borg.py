@@ -489,7 +489,7 @@ class TestActions:
         assert 'buttons' not in spec and 'run_action_id' not in spec['job_panel']
 
     def test_archives_table_has_a_title(self, plugin):
-        assert plugin.UI_SPEC['tables']['archives']['title'] == 'ARCHIVES'
+        assert plugin.UI_SPEC['tables']['archives']['title'] == 'Archives'
 
     async def test_unknown_action_returns_false(self, plugin):
         assert plugin.plan_action("nonsense") is None

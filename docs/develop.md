@@ -18,9 +18,10 @@ projects the same in-memory state the polling loop just wrote to.
 
 **State lives in memory.** Collectors write into a `StateStore`
 (`core/state/`) of plain Python objects and the UI reads from it directly;
-SQLite is a persistence sink behind that, not a read path. Nothing queries the
-database while the process runs — it is written to (asynchronously, off the
-read path) and read exactly once, at startup, to restore the store.
+SQLite is a persistence sink behind that, not a read path. It is written to
+(asynchronously, off the read path) and read once, at startup, to restore the
+store. The one exception is a finished job's full log, read on demand when a
+viewer opens it, on the writer thread so it follows every queued write.
 
 ## Engine model
 
@@ -844,6 +845,15 @@ Two hazards are worth knowing before editing either sheet:
   the scheme the client reported and repaints them when it flips. Those
   literals are parsed out of the token sheet at import, so they are not a
   second copy of the palette.
+
+Text case follows what the text is:
+
+- **Headings** — table, job panel, events and dialog titles — are sentence
+  case: `Jobs`, `Deployment details`, `Unit file: nginx.service`. Acronyms
+  keep their capitals (`GC roots`).
+- **Labels** — card and chart titles — are written in capitals (`LAST SWITCH`);
+  the label style upper-cases them anyway, so the source and the screen agree.
+- **Buttons** are title case: `Poll Now`, `Rebuild & Switch`.
 
 ## The overview's fleet sections
 

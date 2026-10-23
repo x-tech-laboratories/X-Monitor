@@ -239,7 +239,7 @@ class TestProcessesCollection:
 
 class TestUiSpec:
     def test_process_table_has_a_title(self, plugin):
-        assert plugin.UI_SPEC['tables']['table']['title'] == 'PROCESSES'
+        assert plugin.UI_SPEC['tables']['table']['title'] == 'Processes'
 
 
 class TestProcessesKillAction:

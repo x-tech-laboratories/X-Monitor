@@ -1326,7 +1326,7 @@ class Borg(Plugin):
                                 'color_attr': '_checks_color'},
             },
             'dialogs': {
-                'prune_preview': {'kind': 'read', 'title': 'Prune Preview: {plugin.name}',
+                'prune_preview': {'kind': 'read', 'title': 'Prune preview: {plugin.name}',
                                   'action_id': 'prune_preview', 'render': 'textarea_readonly'},
                 'diff': {'kind': 'read', 'title': 'Changes in {row[name]}', 'action_id': 'diff_archive',
                          'params': {'archive': 'name'}, 'render': 'textarea_readonly'},
@@ -1337,7 +1337,7 @@ class Borg(Plugin):
             },
             'tables': {
                 'archives': {
-                    'title': 'ARCHIVES',
+                    'title': 'Archives',
                     'row_key': 'name',
                     'rows_attr': '_archive_rows',
                     'columns': [
@@ -1359,7 +1359,7 @@ class Borg(Plugin):
                     ],
                 },
             },
-            'job_panel': {'widget': 'jobs', 'title': 'JOBS', 'history_limit': 10},
+            'job_panel': {'widget': 'jobs', 'title': 'Jobs', 'history_limit': 10},
             'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }
 
