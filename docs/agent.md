@@ -59,6 +59,32 @@ connect.
 between transports is one line. A monitor with both `agent:` and `ssh_config:` uses the
 agent; drop the `agent:` key to fall back to SSH.
 
+## Running monitors on the agent
+
+With `run_monitors: true` on its `agents:` entry, an agent runs its host's monitors itself and keeps
+running them while it cannot reach X-Monitor:
+
+```yaml
+agents:
+  - id: "odin"
+    public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... odin"
+    run_monitors: true
+```
+
+When the agent connects, X-Monitor sends it a plan: every monitor on that agent whose type runs
+commands on its own host. Checks that need X-Monitor's own view of the network (`http`, `uptime`,
+`dns_record`, `push` and the like), groups, and work across hosts (`nixos_upgrade`, `vuln_scan`)
+stay on the server. The agent polls those monitors, runs their schedules, triggers and detached
+jobs, and records every result in a local outbox under its `state_dir`
+(`/var/lib/x-monitor-agent` with the NixOS module). Records stream to X-Monitor while connected;
+after time offline the agent sends everything it recorded, each with the time it happened.
+
+X-Monitor keeps each monitor's page, history and alerts. Its buttons and Poll Now run on the agent,
+and a monitor whose agent has sent nothing for three intervals (at least five minutes) shows as
+`unavailable` until records arrive again. The agent must run the same X-Monitor code as the server,
+which the NixOS modules ensure when both come from one flake input; an agent on other code keeps
+its monitors on the server. Turning `run_monitors` off gives the monitors back to the server.
+
 ## Installing the agent
 
 ```bash
