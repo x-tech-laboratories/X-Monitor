@@ -5,8 +5,13 @@ describes its UI via UI_SPEC, while the Coordination Engine owns every
 connector, write path, and side effect. Agent-backed targets extend the same
 contract with push: subscriptions() declares event streams, and SAMPLED lets
 the agent run a single-command plugin locally at the monitor's interval and
-push results, suppressing unchanged ones with a five-interval keepalive."""
+push results, suppressing unchanged ones with a five-interval keepalive.
+Any monitor can hold child monitors: polling it from the dashboard polls them
+first, child_statuses() reads their latest statuses, and its page shows them
+under its own UI, which is what lets an aggregating plugin fold them."""
 
+import asyncio
+import logging
 from abc import ABC
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
@@ -24,6 +29,8 @@ from x_monitor.core.connectors.types import (
     ActionOutcome, ActionPlanResult, CmdResult, Command, CollectResult,
 )
 from x_monitor.core.ui.spec_types import UISpec
+
+log = logging.getLogger(__name__)
 
 
 class Plugin(PluginConfigMixin, ABC):
@@ -84,6 +91,11 @@ class Plugin(PluginConfigMixin, ABC):
         self.timeout = parse_duration(config.get('timeout', SSH_TIMEOUT))
         self.custom_actions = parse_custom_actions(config.get('actions'))
         self.data = None  # PluginDataView, injected by engine.bind()
+
+    @property
+    def restates_children(self) -> bool:
+        """Whether this monitor's status only repeats its children's, so it never notifies and is not counted as a monitor of its own."""
+        return False
 
     def bind(self, data: "PluginDataView") -> None:
         """Called once by the Coordination Engine to hand the plugin its
@@ -258,7 +270,18 @@ class Plugin(PluginConfigMixin, ABC):
         success, metadata = await self.engine.dispatch_action(self, action_id, **kwargs)
         return success, str((metadata or {}).get('content') or '')
 
+    def child_statuses(self) -> Dict[str, str]:
+        """Each child's id mapped to its latest stored status, unavailable for one with none yet."""
+        statuses = self.data.latest_statuses()
+        return {child.id: statuses.get(child.id, 'unavailable') for child in self.children}
+
     async def run_cycle(self) -> bool:
+        """Poll this monitor now, polling its children first so it sees their fresh statuses."""
+        outcomes = await asyncio.gather(*(child.run_cycle() for child in self.children),
+                                        return_exceptions=True)
+        for child, outcome in zip(self.children, outcomes):
+            if isinstance(outcome, BaseException):
+                log.error(f"{child.name}: poll from {self.name!r} failed: {outcome}")
         return await self.engine.run_cycle_now(self)
 
     async def present(self) -> Dict[str, Any]:
@@ -269,7 +292,10 @@ class Plugin(PluginConfigMixin, ABC):
         }
 
     def render_ui(self, context: str = 'page'):
-        """Render the declarative UI_SPEC; only bespoke plugins override."""
+        """Render the declarative UI_SPEC, then a card per child; only bespoke plugins override."""
         if getattr(self, 'UI_SPEC', None):
             from x_monitor.core.ui.spec import generic_render
             generic_render(self, context)
+        if self.children:
+            from x_monitor.plugins.base.child_cards import render_child_cards
+            render_child_cards(self)

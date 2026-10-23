@@ -186,6 +186,19 @@ iteration at boot. Exceptions are caught per-iteration, so one crashing monitor
 never stops its own future polls or anyone else's. Group plugins get a loop too;
 they re-read live child status from the DB each cycle.
 
+**Any monitor can hold children.** `children` is a property of every `Plugin`,
+not of `group`: the engine builds it for any config entry, `Plugin.run_cycle`
+(the dashboard's Poll Now) polls the children before the monitor itself, and
+`child_statuses()` reads their latest statuses through the data view, so an
+aggregating plugin folds them in a pure `parse_results()`. The scheduled loop
+calls `run_cycle_now` directly and never cascades, so a parent may read child
+statuses up to one child interval old. The default `render_ui()` draws a
+monitor's own `UI_SPEC` and then one collapsible card per child
+(`plugins/base/child_cards.py`). A monitor whose status only repeats its
+children's sets `restates_children`; `monitor_graph.restates_children()` is
+what notifications, the overview, the fleet tiles and `/api/summary` check to
+leave it out, never a bare `bool(children)`. Only a `worst` group does.
+
 Signals with different costs therefore just get different intervals: `smart` runs
 hourly and `cpu` every minute because they are separate monitors on separate
 loops, not two modules sharing one cycle. A slow check's status is its own, so it
@@ -907,7 +920,8 @@ layout grid, a chart, an events table. A plugin declares that shape as a
 hand-writing widgets. Only genuinely bespoke plugins (`group`,
 `systemd_service`) keep a full hand-written `render_ui()` — a group renders its
 children as collapsible cards, or, when it declares a `layout`, as its own grid
-of their widgets (see below).
+of their widgets (see below). A plugin that overrides `render_ui()` draws no
+child cards unless it calls `render_child_cards` itself.
 
 Format/color/predicate functions are referenced by name from module registries
 (`FORMATTERS`, `COLOR_RULES`, `ITEM_FORMATTERS`, `ITEM_COLOR_RULES`,
@@ -1058,7 +1072,9 @@ The same holds for things a user names and acts on one at a time. `systemd_servi
 per-item actions) but stay separate: each named unit wants its own status line and restart
 button, and systemd, podman, libvirt and `/proc` share no code a merged plugin could reuse.
 Each application plugin (`pihole`, `borg`, `frigate`, …) is likewise its own monitor; a
-"backup" or "media" grouping is a `group` in config, not a plugin.
+"backup" or "media" grouping is a `group` in config, not a plugin. A plugin that
+combines other monitors, such as a quorum or a fleet-wide total, holds them as
+`children` and reads what they stored, rather than collecting their signals again.
 
 ## Testing
 

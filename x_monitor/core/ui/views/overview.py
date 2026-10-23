@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 from nicegui import ui
 from x_monitor.core.contracts import EngineLike
-from x_monitor.core.coordination.monitor_graph import iter_monitors
+from x_monitor.core.coordination.monitor_graph import iter_monitors, restates_children
 from .. import theme
 from ..theme import STATUS_COLORS, ACCENT
 from ..components import LEVEL_CELL_SLOT, STATUS_BADGES, STATUS_CELL_SLOT, card, feed_columns, icon_button, page_header, table_block, table_heading, table_wrap, on_data_event, offload, refresh_rows
@@ -112,8 +112,8 @@ def _treemap_options() -> dict:
 
 
 def _collect_leaf_monitors(plugins) -> list:
-    """Flattens the plugin hierarchy into its leaf monitors, each once however many groups hold it."""
-    return [p for p in iter_monitors(plugins) if not p.children]
+    """Flattens the plugin hierarchy into its monitors, each once however many groups hold it, leaving out plain groups."""
+    return [p for p in iter_monitors(plugins) if not restates_children(p)]
 
 
 def _build_table_rows(monitors, statuses, flt: _ChartFilter) -> list:

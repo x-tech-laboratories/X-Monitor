@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from x_monitor.plugins.group import Group
+from x_monitor.plugins.group import BEST, QUORUM, WORST, Group, aggregate_status, parse_aggregate
 from x_monitor.core.connectors.types import Status
 from x_monitor.core.database.database import db, StatusHistory
 
@@ -28,7 +28,7 @@ def _make_child(plugin_id: str, status: str, db_manager) -> MagicMock:
 
 
 def _aggregated(group, db_manager):
-    return group._aggregate_status(db_manager.latest_statuses())
+    return group._aggregate()[0]
 
 
 class TestSeverityOrder:
@@ -101,6 +101,46 @@ class TestStatusAggregation:
             _make_child("b", "failed", db_manager),
         ]
         assert _aggregated(group, db_manager) == "failed"
+
+
+class TestAggregateSetting:
+    def test_worst_is_the_default(self):
+        assert parse_aggregate(None) == (WORST, 0)
+
+    def test_best_and_quorum_are_read(self):
+        assert parse_aggregate('best') == (BEST, 0)
+        assert parse_aggregate({'quorum': 2}) == (QUORUM, 2)
+
+    @pytest.mark.parametrize('value', ['any', {'quorum': 0}, {'quorum': 'two'}, {'quorum': 2, 'of': 3}])
+    def test_anything_else_falls_back_to_worst(self, value):
+        assert parse_aggregate(value) == (WORST, 0)
+
+    def test_only_a_worst_group_restates_its_children(self, make_plugin):
+        assert make_plugin(Group, GROUP_CFG).restates_children is True
+        assert make_plugin(Group, {**GROUP_CFG, 'aggregate': 'best'}).restates_children is False
+
+
+class TestAggregateRules:
+    def test_best_takes_the_healthiest_child(self):
+        assert aggregate_status(BEST, 0, ['failed', 'online']) == (Status.ONLINE, None)
+        assert aggregate_status(BEST, 0, ['failed', 'unavailable']) == (Status.UNAVAILABLE, None)
+
+    def test_best_with_no_children_is_online(self):
+        assert aggregate_status(BEST, 0, []) == (Status.ONLINE, None)
+
+    def test_quorum_met_is_online_even_with_a_failed_child(self):
+        assert aggregate_status(QUORUM, 2, ['online', 'info', 'failed']) == (Status.ONLINE, None)
+
+    def test_quorum_lost_takes_the_worst_unhealthy_child_and_says_why(self):
+        status, reason = aggregate_status(QUORUM, 2, ['online', 'unavailable', 'failed'])
+        assert status == Status.FAILED
+        assert reason == '1 of 3 healthy, quorum is 2'
+
+    async def test_a_lost_quorum_is_logged_with_the_status(self, make_plugin, db_manager, run_requests):
+        group = make_plugin(Group, {**GROUP_CFG, 'aggregate': {'quorum': 2}})
+        group.children = [_make_child('a', 'online', db_manager), _make_child('b', 'warning', db_manager)]
+        run_requests(group)
+        assert db_manager.latest_status('test-group') == 'warning'
 
 
 class TestOnCollect:

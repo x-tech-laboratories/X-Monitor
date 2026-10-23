@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient
 from x_monitor.core.ui.api import register_api
 
 
-def _plugin(plugin_id, children=()):
+def _plugin(plugin_id, children=(), restates_children=False):
     return SimpleNamespace(id=plugin_id, name=plugin_id, config={'type': 'dummy'},
-                           children=list(children), target=None)
+                           children=list(children), target=None, restates_children=restates_children)
 
 
 def _engine(plugins, statuses):
@@ -44,9 +44,14 @@ class TestSummaryCounts:
         assert body['total'] == 1
 
     def test_groups_are_not_counted(self, client):
-        group = _plugin('group', children=[_plugin('leaf')])
+        group = _plugin('group', children=[_plugin('leaf')], restates_children=True)
         body = client([group], {'group': 'online', 'leaf': 'online'}).get('/api/summary').json()
         assert body['total'] == 1
+
+    def test_a_monitor_with_children_of_its_own_is_counted(self, client):
+        parent = _plugin('parent', children=[_plugin('leaf')])
+        body = client([parent], {'parent': 'failed', 'leaf': 'online'}).get('/api/summary').json()
+        assert (body['total'], body['failed']) == (2, 1)
 
     def test_unhealthy_is_everything_not_online(self, client):
         plugins = [_plugin('a'), _plugin('b'), _plugin('c')]

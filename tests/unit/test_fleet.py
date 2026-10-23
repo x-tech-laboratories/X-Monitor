@@ -10,7 +10,7 @@ from x_monitor.core.ui.views import fleet
 
 def monitor(monitor_id, name=None, kind='group', children=(), **extra):
     return SimpleNamespace(id=monitor_id, name=name or monitor_id, config={'type': kind},
-                           children=list(children), **extra)
+                           children=list(children), restates_children=kind == 'group', **extra)
 
 
 def readings(values):
@@ -54,6 +54,11 @@ class TestLeavesWithPaths:
         shared = monitor('shared', kind='cpu')
         root = monitor('root', children=[monitor('a', children=[shared]), monitor('b', children=[shared])])
         assert [leaf.id for leaf, _ in fleet.leaves_with_paths(root)] == ['shared']
+
+    def test_a_monitor_with_children_of_its_own_is_listed_before_them(self):
+        root = monitor('root', children=[monitor('web', 'Web', 'http', children=[monitor('cert', kind='command')])])
+        paths = [(leaf.id, path) for leaf, path in fleet.leaves_with_paths(root)]
+        assert paths == [('web', []), ('cert', ['Web'])]
 
     def test_a_root_with_no_children_is_its_own_leaf(self):
         lone = monitor('lone', kind='uptime')

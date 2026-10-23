@@ -41,8 +41,9 @@ def _render_schedule(plugin: Any):
 
 def _lede(plugin: Any) -> str:
     """The monitor's type and the host it watches, as one line under its name; a group watches no host of its own."""
-    kind = str(getattr(plugin, 'config', {}).get('type', '')).replace('_', ' ')
-    target = None if getattr(plugin, 'children', None) else getattr(plugin, 'target', None)
+    kind = str(getattr(plugin, 'config', {}).get('type', ''))
+    target = None if kind == 'group' else getattr(plugin, 'target', None)
+    kind = kind.replace('_', ' ')
     return ' · '.join(str(part) for part in (kind, target) if part)
 
 

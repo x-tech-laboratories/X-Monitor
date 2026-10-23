@@ -207,7 +207,10 @@ plugins:
             name: "Heimdall"
 ```
 
-A group's status is the worst of everything it holds, links included. Muting a
+A group's status is the worst of everything it holds, links included, unless
+its `aggregate` setting says otherwise (`best`, or `{quorum: n}`). Any monitor,
+not only a group, can hold `children`: its page shows them under its own, and
+polling it polls them first. Muting a
 group or covering it with a maintenance window reaches every monitor beneath
 it, linked or defined, while `notify:` settings pass down only to the monitors a
 group defines, so each monitor has one notification rule wherever it is shown.
