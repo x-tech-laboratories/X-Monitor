@@ -147,5 +147,5 @@ class TestJobPanel:
             render_job_panel(plugin, plugin.UI_SPEC['job_panel'])
 
         await user.open('/jobs')
-        await user.should_see('JOBS')
+        await user.should_see('Jobs')
         await user.should_not_see('Run Backup')

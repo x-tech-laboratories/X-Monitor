@@ -620,7 +620,7 @@ class NixGc(Plugin):
             },
             'tables': {
                 'profiles': {
-                    'title': 'PROFILES',
+                    'title': 'Profiles',
                     'row_key': 'path',
                     'rows_attr': '_profile_rows',
                     'columns': [
@@ -632,6 +632,6 @@ class NixGc(Plugin):
                 },
             },
             'chart': {'metric': 'store_paths', 'title': f'STORE PATHS — {self.store}'},
-            'job_panel': {'widget': 'jobs', 'title': 'COLLECTION JOBS', 'history_limit': 10},
+            'job_panel': {'widget': 'jobs', 'title': 'Collection jobs', 'history_limit': 10},
             'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }

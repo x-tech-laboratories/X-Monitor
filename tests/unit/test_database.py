@@ -704,6 +704,35 @@ class TestHydration:
             assert list(_distinct_keys(StatusHistory, "plugin_id")) == []
 
 
+class TestJobLog:
+    def test_a_finished_job_reads_its_whole_log_from_disk(self, tmp_path):
+        from x_monitor.core.state import BufferSizes
+        if not db.is_closed():
+            db.close()
+        mgr = DatabaseManager(str(tmp_path / "test.db"), buffers=BufferSizes(finished_job_output=2))
+        job_id = mgr.create_job("p", "h", "switch", "cmd", workdir="/tmp/x")
+        mgr.append_job_output(job_id, ["a", "b", "c", "d"])
+        mgr.finish_job(job_id, "succeeded", exit_code=0)
+        assert [o["message"] for o in mgr.job_output(job_id)] == ["c", "d"]
+        assert [o["message"] for o in mgr.job_log(job_id).result(timeout=1)] == ["a", "b", "c", "d"]
+
+    def test_a_running_job_reads_its_log_from_memory(self, mgr):
+        job_id = mgr.create_job("p", "h", "switch", "cmd", workdir="/tmp/x")
+        mgr.append_job_output(job_id, ["a", "b"])
+        assert [o["message"] for o in mgr.job_log(job_id).result(timeout=1)] == ["a", "b"]
+
+    def test_the_log_read_waits_for_lines_still_queued(self, mgr, monkeypatch):
+        from x_monitor.core.database.database import _writer
+        monkeypatch.setattr(_writer, 'synchronous', False)
+        monkeypatch.setattr(_writer, 'batch_window', 0.01)
+        _writer.start()
+        job_id = mgr.create_job("p", "h", "reboot", "cmd")
+        mgr.append_job_output(job_id, ["queued"], stream="stderr")
+        mgr.finish_job(job_id, "failed", exit_code=1)
+        log = mgr.job_log(job_id).result(timeout=5)
+        assert [(o["stream"], o["message"]) for o in log] == [("stderr", "queued")]
+
+
 class TestReconcileOrphanedJobs:
     def test_pidless_job_is_failed_and_persisted(self, mgr):
         job_id = mgr.create_job("p", "h", "k", "cmd")

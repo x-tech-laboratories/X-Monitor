@@ -415,7 +415,7 @@ class TestUiSpec:
         assert plugin.action_state(action) == 'accent'
 
     def test_profiles_table_has_a_title(self, plugin):
-        assert plugin.UI_SPEC['tables']['profiles']['title'] == 'PROFILES'
+        assert plugin.UI_SPEC['tables']['profiles']['title'] == 'Profiles'
 
     def test_job_controls_live_in_the_header_only(self, plugin):
         assert 'run_action_id' not in plugin.UI_SPEC['job_panel']

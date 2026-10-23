@@ -219,7 +219,7 @@ class ServiceList(Plugin):
             },
             'tables': {
                 'table': {
-                    'title': 'SERVICES',
+                    'title': 'Services',
                     'row_key': 'unit',
                     'columns': [
                         {'name': 'unit', 'label': 'Unit', 'field': 'unit', 'sortable': True, 'align': 'left'},
@@ -243,10 +243,10 @@ class ServiceList(Plugin):
                 'view_status': {'kind': 'read', 'title': 'Status: {row[unit]}',
                                 'action_id': 'view_status', 'params': {'service_name': 'unit'},
                                 'render': 'text'},
-                'view_unit_file': {'kind': 'read', 'title': 'Unit File: {row[unit]}',
+                'view_unit_file': {'kind': 'read', 'title': 'Unit file: {row[unit]}',
                                    'action_id': 'view_unit_file', 'params': {'service_name': 'unit'},
                                    'render': 'textarea_readonly'},
-                'edit_unit_file': {'kind': 'edit', 'title': 'Edit Unit File: {row[unit]}',
+                'edit_unit_file': {'kind': 'edit', 'title': 'Edit unit file: {row[unit]}',
                                    'load_action_id': 'view_unit_file', 'load_params': {'service_name': 'unit'},
                                    'save_action_id': 'write_unit_file', 'save_params': {'service_name': 'unit'},
                                    'save_content_kwarg': 'content',
