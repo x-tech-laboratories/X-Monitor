@@ -81,7 +81,7 @@ class Connections(SignalPlugin):
         return {
             'conn_total_card': {'metric': 'conn_total', 'title': 'CONNECTIONS',
                                 'format': 'int_rounded',
-                                'color': {'warning': self.warning}},
+                                'color': {'warning': self.warning, 'threshold': None}},
             'conn_states_card': {'kind': 'share', 'title': 'BY STATE', 'format': 'int_rounded',
                                  'parts': [
                                      {'metric': 'conn_established', 'label': 'Established',
