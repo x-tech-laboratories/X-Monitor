@@ -1015,6 +1015,7 @@ class TestRestoreCanary:
         _cycle_with(p, run_cycle)
         plan = p.plan_action("verify_restore")
         assert "extract --stdout" in plan.command
+        assert plan.detached and plan.timeout is None
         outcome = p.interpret_action("verify_restore", _framed(p, CmdResult(0, "t", ""), CmdResult(0, "t", "")))
         p.storage.apply(outcome)
         assert outcome.success is True
@@ -1378,6 +1379,12 @@ class TestDiff:
         cmd = p.plan_action("diff_archive", archive="b2").command.replace("'", "")
         assert "diff" in cmd and "::b1 b2" in cmd
 
+    async def test_runs_detached(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, BASE_CFG)
+        _listed(p, run_cycle, "b2", "b1")
+        plan = p.plan_action("diff_archive", archive="b2")
+        assert plan.detached and plan.timeout is None
+
     async def test_the_oldest_archive_has_nothing_to_compare(self, make_plugin, run_cycle):
         p = make_plugin(Borg, BASE_CFG)
         _listed(p, run_cycle, "b2", "b1")
@@ -1387,8 +1394,17 @@ class TestDiff:
         p = make_plugin(Borg, BASE_CFG)
         _listed(p, run_cycle, "b2", "b1")
         out = "added       1.20 kB etc/new\nremoved     0 B etc/old"
-        content = p.interpret_action("diff_archive", _framed(p, CmdResult(0, out, "")), archive="b2").metadata['content']
+        outcome = p.interpret_action("diff_archive", _framed(p, CmdResult(0, out, "")), archive="b2")
+        content = outcome.metadata['content']
         assert content.startswith("Changes from b1 to b2: 2") and "etc/new" in content
+        assert outcome.logs == [("Changes from b1 to b2: 2", "INFO")]
+
+    async def test_a_diff_without_its_archive_still_counts_the_changes(self, make_plugin, run_cycle):
+        p = make_plugin(Borg, BASE_CFG)
+        _listed(p, run_cycle, "b2", "b1")
+        out = "added       1.20 kB etc/new"
+        outcome = p.interpret_action("diff_archive", _framed(p, CmdResult(0, out, "")))
+        assert outcome.logs == [("Changes in the archive: 1", "INFO")]
 
 
 def _sh(script: str) -> subprocess.CompletedProcess:

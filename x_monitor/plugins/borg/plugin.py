@@ -29,6 +29,7 @@ import json
 import shlex
 import time
 from collections import OrderedDict
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -639,7 +640,7 @@ class Borg(Plugin):
             ]
         if self.canary_path:
             actions.append({'name': 'Verify Restore', 'action_id': 'verify_restore', 'more': True,
-                            'variant': 'secondary', 'icon': 'verified'})
+                            'variant': 'secondary', 'icon': 'verified', 'detached': True})
         if self.repo:
             actions += [
                 {'name': 'Check', 'action_id': 'check_repo', 'job': [_check_job_kind(k) for k in _CHECK_KINDS],
@@ -852,8 +853,9 @@ class Borg(Plugin):
         archive = self._canary_archive()
         if not archive:
             return self._refused("Cannot verify a restore: no archive has been listed yet")
+        # Detached, so a restart never cuts it short; the sequence's own deadline still bounds it by `timeout`.
         return ActionPlan(self._sequence_command([command for _, command in self._canary_calls(archive)]),
-                          timeout=self.timeout or None)
+                          detached=True)
 
     def _interpret_verify_restore(self, result: CmdResult, **_):
         by_name = dict(zip(('canary', 'canary_live'), _split_poll(result, 2)))
@@ -1079,7 +1081,7 @@ class Borg(Plugin):
             "--lock-wait", str(self.lock_wait),
             f"{self.repo}::{older}", archive,
         ], persistent_cache=self.cache_dir_configured, bounded=True, wrapped=False)
-        return self._run_one(call, limit=self.browse_limit + 1)
+        return replace(self._run_one(call, limit=self.browse_limit + 1), timeout=None, detached=True)
 
     def _interpret_diff(self, result: CmdResult, archive: Optional[str] = None, **_):
         call = _split_poll(result, 1)[0]
@@ -1089,11 +1091,14 @@ class Borg(Plugin):
             return self._refused(f"borg diff failed (exit {call.exit_code}): {detail[:300]}"
                                  + (f"\n{hint}" if hint else ""))
         lines = [line for line in call.stdout.splitlines() if line.strip()]
-        header = f"Changes from {self._previous_archive(archive)} to {archive}: {len(lines)}"
+        # A run a restart adopted has lost its archive argument, so it names no archives.
+        span = f"from {self._previous_archive(archive)} to {archive}" if archive else "in the archive"
+        header = f"Changes {span}: {len(lines)}"
         if len(lines) > self.browse_limit:
             lines = lines[:self.browse_limit]
             header = f"{header.rsplit(':', 1)[0]}: first {self.browse_limit} (raise browse_limit for more)"
-        return CollectResult(metadata={'content': "\n".join([header, ""] + (lines or ["(no changes)"]))},
+        return CollectResult(logs=[(header, "INFO")],
+                             metadata={'content': "\n".join([header, ""] + (lines or ["(no changes)"]))},
                              success=True)
 
     def _parse_poll(self, job: dict, result: CmdResult) -> CollectResult:

@@ -68,7 +68,9 @@ class ActionButtonSpec(TypedDict, total=False):
     A `confirm` text asks the user first and runs the action only on a yes.
     A `job` names the kind of job the action launches, or a list of kinds when it
     launches one of several, so the header fills it while that job runs, greys it
-    out while another runs, and shows Cancel. Kind 'dialog' opens the plugin's
+    out while another runs, and shows Cancel. `detached` marks an action that runs
+    as a detached job the engine follows, so the header fills it while that run
+    lasts, shows Cancel, and opens its live log. Kind 'dialog' opens the plugin's
     `dialog` instead of running an action. `more` puts the action in the
     header's More menu instead of on a button of its own."""
     action_id: str
@@ -83,6 +85,7 @@ class ActionButtonSpec(TypedDict, total=False):
     job: Union[str, List[str]]
     dialog: str
     more: bool
+    detached: bool
 
 
 @runtime_checkable

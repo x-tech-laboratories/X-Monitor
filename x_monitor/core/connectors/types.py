@@ -97,6 +97,8 @@ class ActionPlan:
     via: Optional[str] = None
     # Run on this agent instead of the monitor's own target, matching Command.agent, e.g. a switch driven from the host that builds it.
     agent: Optional[str] = None
+    # Launch as a detached job the engine follows to its end, so a restart never kills it; timeout then bounds the whole run.
+    detached: bool = False
 
 
 # --- Declarative connector requests/results ---

@@ -435,8 +435,8 @@ SSH channel held open for hours. It is launched *detached on the target* with on
 to `<workdir>/exit`, and is then advanced by ordinary polling commands on the
 owning plugin's normal monitor cycle. A plugin that sets `job_poll_interval` is
 polled that often while one of its jobs runs (`Plugin.next_cycle_in`), without
-moving its regular schedule; `attic_push` launches its check this way from a
-scheduled cycle rather than from an action. The builders/parsers in `ssh_connector.py`
+moving its regular schedule; `attic_push` and `vuln_scan` launch their check and
+scan this way from a scheduled cycle rather than from an action. The builders/parsers in `ssh_connector.py`
 (`launch_command`/`parse_launch`, `poll_command`/`parse_poll`, `cancel_command`,
 `split_lines`) are pure — no runtime, no coroutine, no IO. One poll round-trip
 returns output size, exit code (empty if running), liveness (`kill -0`), and any
@@ -446,6 +446,17 @@ Because the job lives on the target it **survives a X-Monitor restart**:
 `reconcile_orphaned_jobs` only fails jobs with no `pid` (crashed before launch);
 any job with a pid is re-adopted by the owning plugin's next poll (pid alive →
 resume; pid/exit gone → finalize).
+
+A plugin's main job is the one `jobs.running()` returns; side jobs run beside
+it and never grey out its actions. A kind in `Plugin.SIDE_JOB_KINDS` is a side
+job the plugin polls itself. An action whose plan sets `ActionPlan.detached` (a
+custom action with `detached: true`, a container prune, a borg diff or restore
+check) is a side job of kind `action:<action id>` that the plugin never polls:
+the engine launches it, and `ActionJobs` in `coordination/action_jobs.py`
+polls every running one every few seconds. When one ends, its whole output goes
+to the action's interpreter as a `CmdResult`, as if the command had run inline.
+The action's arguments live only in memory, so after a restart a run is
+interpreted without them.
 
 Jobs live in the store like everything else, so **job ids are assigned by the
 store**, not by SQLite's autoincrement — `jobs.create` returns an id

@@ -38,7 +38,7 @@ from typing import Any, List, Optional, Dict, Set
 from peewee import OperationalError
 
 from x_monitor.plugins.base.plugin_base import Plugin
-from x_monitor.core.connectors.types import CmdResult, CollectResult, DispatchResult, Status, unreachable
+from x_monitor.core.connectors.types import ActionPlan, CmdResult, CollectResult, DispatchResult, Status, unreachable
 from x_monitor.core.coordination.cycle_stats import CycleStats, CycleTiming
 from x_monitor.core.coordination.data_view import PluginDataView
 from x_monitor.core.coordination.monitor_graph import Link, iter_monitors, resolve_links
@@ -46,7 +46,8 @@ from x_monitor.core.coordination.plugin_loader import PluginLoader, parse_plugin
 from x_monitor.core.coordination.reload import (
     ReloadResult, restart_required, same_monitor, section_changed,
 )
-from x_monitor.core.coordination.jobs import JobsGateway
+from x_monitor.core.coordination.action_jobs import ActionJobs
+from x_monitor.core.coordination.jobs import JobsGateway, sleep_unless_watched
 from x_monitor.core.settings.config_file import ConfigFileManager as XMonitorConfig
 from x_monitor.core.state import changes
 from x_monitor.core.state.changes import CHANGES
@@ -205,6 +206,7 @@ class XMonitorEngine:
         self.connectors.agents.configure(self.config_loader.agents)
         self.connectors.agents.set_event_sink(self._on_agent_event)
         self.connectors.agents.set_connect_sink(self._on_agent_connected)
+        self.action_jobs = ActionJobs(self)
         self.notifications = NotificationEngine(
             self.db, self.config_loader.notifications, self.connectors.agents
         )
@@ -587,14 +589,14 @@ class XMonitorEngine:
         net = self._exec_context_for(plugin)
 
         def _finish(outcome):
-            if isinstance(outcome, CollectResult):
-                self._apply(plugin, outcome)
-                return outcome.success, (outcome.metadata or None)
-            return bool(outcome), None
+            return self.finish_action(plugin, outcome)
 
         custom = plugin.custom_action(action_id)
         if custom is not None:
             plan = custom.plan()
+            if plan.detached:
+                return await self.action_jobs.launch(plugin, action_id, plan, self._action_context(net, plan),
+                                                     custom.interpret, kwargs)
             result = await self.connectors.execute(self._action_context(net, plan), plan)
             return _finish(custom.interpret(result))
 
@@ -616,8 +618,26 @@ class XMonitorEngine:
             if net is None:
                 missing = CmdResult(-1, "", f"No monitor {plan.via!r} to run this through")
                 return _finish(plugin.interpret_action(action_id, missing, **kwargs))
+        if plan.detached:
+            return await self.action_jobs.launch(
+                plugin, action_id, plan, self._action_context(net, plan),
+                lambda result: plugin.interpret_action(action_id, result, **kwargs), kwargs)
         result = await self.connectors.execute(self._action_context(net, plan), plan)
         return _finish(plugin.interpret_action(action_id, result, **kwargs))
+
+    def finish_action(self, plugin: Plugin, outcome) -> DispatchResult:
+        """Persist an action's outcome when it is a CollectResult, and return it as (success, metadata)."""
+        if isinstance(outcome, CollectResult):
+            self._apply(plugin, outcome)
+            return outcome.success, (outcome.metadata or None)
+        return bool(outcome), None
+
+    def job_context(self, plugin: Plugin, agent: Optional[str] = None):
+        """The connection a job of this monitor runs over, or None when the monitor has none."""
+        net = self._exec_context_for(plugin)
+        if net is None:
+            return None
+        return self._action_context(net, ActionPlan('', agent=agent)) if agent else net
 
     def _action_context(self, net, plan):
         """The connection an ActionPlan runs over: the monitor's own target, or
@@ -700,7 +720,8 @@ class XMonitorEngine:
                 wait = next_due - now
             sooner = _sooner_cycle(plugin)
             early = sooner is not None and sooner < wait
-            await asyncio.sleep(sooner if early else wait)
+            # A log view opened mid-sleep starts the faster polling at once, and that cycle counts as early.
+            early = await sleep_unless_watched(sooner if early else wait, plugin.id) or early
 
     async def _schedule_loop(self):
         while True:
@@ -900,6 +921,7 @@ class XMonitorEngine:
         if any(p.scheduled_actions for p in monitors):
             self._spawn(self._schedule_loop())
         self._spawn(self._prune_loop())
+        self._spawn(self.action_jobs.run())
         self._spawn(self._watch_config())
         if self._handle_signals:
             self._install_signal_handlers()
