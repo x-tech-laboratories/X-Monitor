@@ -89,7 +89,7 @@ class TestUiSpec:
     def test_the_total_card_colours_only_the_warning(self, make_plugin):
         p = make_plugin(Connections, dict(CFG, warning=100, threshold=200))
         card = p.UI_SPEC['cards']['conn_total_card']
-        assert card['color'] == {'warning': 100.0}
+        assert card['color'] == {'warning': 100.0, 'threshold': None}
 
     def test_the_states_share_one_bar(self, plugin):
         card = plugin.UI_SPEC['cards']['conn_states_card']
