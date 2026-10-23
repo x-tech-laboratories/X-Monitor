@@ -193,6 +193,7 @@ class JobPanelSpec(TypedDict, total=False):
     disabled_text: str             # shown while enabled_if is false; default names the config
     run_action_id: str             # without it the panel has no run/cancel buttons
     history_limit: int
+    exclude_kinds: List[str]       # job kinds the history leaves out; they stay in the database
 
 
 # UI_SPEC['layout'] rows: each row is a list of either a bare widget-name

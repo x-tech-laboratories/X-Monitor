@@ -906,7 +906,8 @@ def render_job_panel(plugin, spec: dict):
                     'state': j['state'], 'duration': format_duration(j['duration']),
                     'duration_seconds': j['duration'],
                 }
-                for j in plugin.jobs.recent(limit=history_limit)
+                for j in plugin.jobs.recent(limit=history_limit,
+                                            exclude_kinds=spec.get('exclude_kinds', ()))
             ])
 
         on_data_event(update)

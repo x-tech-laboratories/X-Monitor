@@ -87,3 +87,14 @@ class TestCancel:
         assert await gateway.cancel()
         assert sent and str(100 + job_id) in sent[0]
         assert gateway.action_job('prune') is None
+
+
+class TestHistory:
+    def test_excluded_kinds_stay_out_of_the_history(self, db_manager):
+        _, gateway = _gateway(db_manager)
+        kept = [_start(gateway, 'switch')]
+        for _ in range(3):
+            _start(gateway, 'eval')
+        kept.append(_start(gateway, 'update'))
+        assert [job['id'] for job in gateway.recent(limit=2, exclude_kinds=('eval',))] == kept[::-1]
+        assert len(gateway.recent(limit=99)) == 5
