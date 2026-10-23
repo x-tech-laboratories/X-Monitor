@@ -19,6 +19,7 @@ role in the architecture.
 """
 
 import asyncio
+import json
 import logging
 import importlib
 import inspect
@@ -552,8 +553,10 @@ class XMonitorEngine:
                 self._spawn(self._run_scheduled(plugin, entry, key))
 
     async def _run_scheduled(self, plugin: Plugin, entry, key: str) -> None:
-        """Run one scheduled action through the same path as its button, and log the outcome on the monitor."""
+        """Run one scheduled action through the same path as its button, and record the outcome on the monitor and for the Schedules view."""
         label = f"Scheduled {entry.action} ({entry.cron.expression})"
+        started = int(time.time())
+        success = False
         try:
             success, _ = await self.dispatch_action(plugin, entry.action, **entry.args)
             log = (f"{label} ran", 'INFO') if success else (f"{label} failed", 'ERROR')
@@ -562,6 +565,8 @@ class XMonitorEngine:
             log = (f"{label} failed: {e}", 'ERROR')
         finally:
             self._scheduled_running.discard(key)
+        self.db.set_setting(entry.result_key(plugin.id),
+                            json.dumps({'at': started, 'ok': bool(success), 'message': log[0]}))
         self._apply(plugin, CollectResult(logs=[log]))
 
     async def _prune_loop(self):

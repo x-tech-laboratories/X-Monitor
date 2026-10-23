@@ -43,7 +43,7 @@ dev/demo/shoot.sh --port 8123 --out /tmp/shots              # every page, light 
 dev/demo/shoot.sh --port 8123 --schemes dark overview http  # some pages, one scheme
 ```
 
-The pages are `overview`, `events`, `group`, `http` and `systemd`; any other argument is taken as
+The pages are `overview`, `events`, `schedules`, `group`, `http` and `systemd`; any other argument is taken as
 a path. The first run builds Playwright and its browsers from nixpkgs.
 
 Stop the demo with Ctrl+C, or `pkill -f "x-monitor-demo/<port>"` when it runs in the background.
