@@ -715,7 +715,9 @@ Whether the closures one host builds for the fleet are built from the flake's la
 
 One script, run on the building host, evaluates each tracked target from the flake, checks whether that store path is in the local store, and asks the cache which paths of its closure it lacks. Paths signed by an upstream cache (`upstream_keys`) are left out, since Attic never stores them, so what is counted is exactly what the fleet built itself. Only the first evaluation passes `--refresh`, so every target is judged at the same revision. A target that is not built locally is checked by its root path alone.
 
-The script runs as a detached job on the target, so restarting or redeploying X-Monitor never kills a run in flight; the restarted monitor adopts the running job and keeps polling it. A cycle with no job running launches the check, and while it runs the monitor polls it every `job_poll` rather than every `interval`, keeping the previous snapshot and status on the dashboard. When it finishes, its whole output becomes the new snapshot. Each run, its progress and its output are listed under **Check runs**.
+The script runs as a detached job on the target, so restarting or redeploying X-Monitor never kills a run in flight; the restarted monitor adopts the running job and keeps polling it. A cycle with no job running launches the check, and while it runs the monitor polls it every `job_poll` rather than every `interval`, keeping the previous snapshot and status on the dashboard. When it finishes, its whole output becomes the new snapshot. Each run, its progress and its output are listed under **Runs**.
+
+Each row of **Tracked targets** has a **Build** button, and a **Push** button when `push_command` is set. Both run as detached actions on the building host, listed under **Runs** with their output, and end by checking that one target again, so its row shows the outcome as soon as the action finishes instead of at the next check. Build runs `nix build` on the target from the flake's latest revision. Push runs `push_command` with the store path the row shows appended, and is refused for a target that is not built.
 
 | Option | Description |
 |--------|-------------|
@@ -729,6 +731,10 @@ The script runs as a detached job on the target, so restarting or redeploying X-
 | `timeout` | Time a run may take before it is killed (default: `30m`) |
 | `job_poll` | How often a running check is polled (default: `30s`) |
 | `nix_bin` / `nix_args` | Nix binary and its arguments (defaults: `nix`, `["--extra-experimental-features", "nix-command flakes"]`) |
+| `build_args` | Extra arguments to Build's `nix build` (default: `["--keep-going", "--print-build-logs"]`) |
+| `build_root_dir` | Directory Build links each result into, so it stays a GC root until the next build of that target replaces it; unset builds with `--no-link` |
+| `build_links` | Link name per target under `build_root_dir`, such as the name a nightly build already uses (default: `<monitor id>-<target>`) |
+| `push_command` | Shell command that uploads one store path, given as its last argument, such as `attic push fleet`; unset hides Push |
 
 **Metrics**: `targets_total`, `targets_built`, `targets_pushed`, `missing_paths`
 
@@ -743,6 +749,7 @@ The script runs as a detached job on the target, so restarting or redeploying X-
   flake: "github:example/fleet"
   configurations: ["builder", "laptop", "sbc"]
   cache_url: "https://attic.example/fleet"
+  push_command: "attic push fleet"
   agent: "builder"
 ```
 

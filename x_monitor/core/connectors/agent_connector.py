@@ -24,10 +24,11 @@ can usefully run at once.
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from x_monitor.code_version import code_version
 from x_monitor.core.connectors import agent_protocol as proto
 from x_monitor.core.connectors.agent_protocol import StreamSpec
 from x_monitor_agent import keys
@@ -55,6 +56,11 @@ class AgentConnection:
         self.hostname: Optional[str] = None
         self.version: Optional[str] = None
         self.capabilities: List[str] = []
+        # The agent's code_version(), which must match the server's before it is handed monitors to run.
+        self.code = ''
+        # Set by the `agents:` entry's run_monitors: the agent runs its host's monitors itself.
+        self.run_monitors = False
+        self._actions: Dict[str, asyncio.Future] = {}
         self.connected_at: Optional[float] = None
         self._socket: Any = None
         self._send_lock = asyncio.Lock()
@@ -83,11 +89,23 @@ class AgentConnection:
         self.version = hello.get('version')
         caps = hello.get('caps')
         self.capabilities = [str(c) for c in caps] if isinstance(caps, list) else []
+        self.code = str(hello.get('code') or '')
         self.connected_at = time.time()
         log.info(
             f"agent {self.agent_id!r} connected from {self.hostname or self.host} "
             f"(version {self.version or 'unknown'})"
         )
+        # Only an agent set to run its host's monitors needs the server's code; for the rest it changes nothing.
+        if self.run_monitors and not self.same_code:
+            log.warning(
+                f"agent {self.agent_id!r} runs different X-Monitor code ({self.code or 'unknown'}, "
+                f"server {code_version()}), so its monitors stay on the server until it is updated"
+            )
+
+    @property
+    def same_code(self) -> bool:
+        """Whether the agent runs exactly the server's X-Monitor code, which handing it monitors requires."""
+        return bool(self.code) and self.code == code_version()
 
     def detach(self, socket: Any) -> None:
         """Drop the socket if it is still the current one. The identity check
@@ -105,6 +123,53 @@ class AgentConnection:
             if not future.done():
                 future.set_result((-1, "", reason))
         self._pending.clear()
+        for future in self._actions.values():
+            if not future.done():
+                future.set_result((False, reason))
+        self._actions.clear()
+
+    # --- Monitors the agent runs itself ---
+
+    @property
+    def runs_engine(self) -> bool:
+        """Whether this agent may be handed monitors now: configured to, connected, able to, and on the server's own code."""
+        return (self.run_monitors and self._socket is not None
+                and proto.ENGINE in self.capabilities and self.same_code)
+
+    async def send_plan(self, version: str, config: Dict[str, Any]) -> None:
+        """Hand the agent the monitors it runs itself."""
+        await self._send(proto.plan(version, config))
+
+    async def ack_records(self, through: int) -> None:
+        """Tell the agent every record up to `through` is stored."""
+        await self._send(proto.records_ack(through))
+
+    async def poll_now(self, monitor_id: str) -> None:
+        """Ask the agent for one cycle of a monitor it runs."""
+        await self._send(proto.poll_now(monitor_id))
+
+    async def request_action(self, request_id: str, monitor_id: str, action_id: str,
+                             args: Dict[str, Any], timeout: float) -> Tuple[bool, str]:
+        """Run an action on a monitor the agent runs and return (success, what it reported); never raises."""
+        if self._socket is None:
+            return False, f"Agent {self.agent_id!r} is not connected, so the action cannot reach it"
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._actions[request_id] = future
+        try:
+            await self._send(proto.action(request_id, monitor_id, action_id, args))
+            return await asyncio.wait_for(future, timeout)
+        except asyncio.TimeoutError:
+            return False, f"Agent {self.agent_id!r} did not answer within {timeout:.0f}s"
+        except Exception as e:
+            return False, f"Could not send the action to agent {self.agent_id!r}: {e}"
+        finally:
+            self._actions.pop(request_id, None)
+
+    def resolve_action(self, request_id: str, success: bool, content: str) -> None:
+        """Complete the action an ACTION_RESULT frame answers; a late answer is dropped."""
+        future = self._actions.pop(request_id, None)
+        if future is not None and not future.done():
+            future.set_result((success, content))
 
     # --- Exec RPC (the SSHConnection-shaped surface) ---
 
@@ -228,6 +293,7 @@ class AgentRegistry:
         self._public_keys: Dict[str, Ed25519PublicKey] = {}
         self._event_sink: Optional[Callable[[str, str, float, Dict[str, Any]], None]] = None
         self._connect_sink: Optional[Callable[[str], None]] = None
+        self._sync_sink: Optional[Callable[[str, Dict[str, Any]], Awaitable[None]]] = None
 
     def configure(self, agents_cfg: List[Dict[str, Any]]) -> None:
         """Build the connection objects from config.yaml's ``agents:`` list.
@@ -254,12 +320,12 @@ class AgentRegistry:
             else:
                 self._public_keys[agent_id] = public_key
             host = str(entry.get('host') or agent_id)
-            existing = self._agents.get(agent_id)
-            if existing is not None:
-                existing.host = host
-                continue
-            self._agents[agent_id] = AgentConnection(agent_id, host=host)
-            log.info(f"Registered agent {agent_id!r}")
+            conn = self._agents.get(agent_id)
+            if conn is None:
+                conn = self._agents[agent_id] = AgentConnection(agent_id, host=host)
+                log.info(f"Registered agent {agent_id!r}")
+            conn.host = host
+            conn.run_monitors = bool(entry.get('run_monitors', False))
         for agent_id in sorted(set(self._public_keys) - declared):
             del self._public_keys[agent_id]
             log.warning(f"agent {agent_id!r} is no longer configured and can no longer connect")
@@ -327,6 +393,19 @@ class AgentRegistry:
             self._connect_sink(agent_id)
         except Exception as e:
             log.error(f"agent {agent_id!r}: connect handler failed: {e}")
+
+    def set_sync_sink(self, sink: Callable[[str, Dict[str, Any]], Awaitable[None]]) -> None:
+        """Install the coroutine an agent's RECORDS and PLAN_ACK frames are handed to, as (agent_id, frame)."""
+        self._sync_sink = sink
+
+    async def dispatch_sync(self, agent_id: str, frame: Dict[str, Any]) -> None:
+        if self._sync_sink is None:
+            return
+        # The engine's sync handler must not kill the agent's socket task.
+        try:
+            await self._sync_sink(agent_id, frame)
+        except Exception as e:
+            log.error(f"agent {agent_id!r}: could not handle {frame.get('t')!r}: {e}")
 
     def dispatch_event(self, agent_id: str, stream_id: str,
                        timestamp: float, payload: Dict[str, Any]) -> None:
