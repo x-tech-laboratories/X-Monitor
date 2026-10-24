@@ -66,8 +66,11 @@ _TARGET_ACTIONS = {'build_target': 'Build', 'push_target': 'Push'}
 
 def _check_function(nix: str, cache_url: str, upstream_keys: List[str]) -> str:
     """Shell functions printing `name<TAB>key<TAB>value` lines about one target: `check` evaluates it, then `inspect` reads the closure at $out."""
-    upstream = ' '.join(f'-e {shlex.quote(f" {key}:")}' for key in upstream_keys)
-    own_paths = (f'{nix} path-info -r --sigs "$out" | grep -v -F {upstream} | cut -d" " -f1'
+    # nix pads the path column with spaces and then a tab, so the widest path has only the tab before its signatures.
+    keys = ' '.join(f'{key}:' for key in upstream_keys)
+    skip_upstream = (f'BEGIN {{ n = split("{keys}", up, " ") }} '
+                     '{ for (i = 2; i <= NF; i++) for (k = 1; k <= n; k++) if (index($i, up[k]) == 1) next; print $1 }')
+    own_paths = (f'{nix} path-info -r --sigs "$out" | awk {shlex.quote(skip_upstream)}'
                  if upstream_keys else f'{nix} path-info -r "$out"')
     return '\n'.join([
         'report() { printf "%s\\t%s\\t%s\\n" "$name" "$1" "$(printf "%s" "$2" | tr "\\t\\n" "  ")"; }',

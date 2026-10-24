@@ -65,7 +65,7 @@ class TestScript:
 
     def test_upstream_paths_are_left_out(self):
         script = check_script("/f", [("A", "/f#x")], "https://c", ["cache.nixos.org-1", "other-1"], "nix")
-        assert "grep -v -F -e ' cache.nixos.org-1:' -e ' other-1:'" in script
+        assert 'split("cache.nixos.org-1: other-1:", up, " ")' in script
 
     def test_nothing_to_check_without_a_cache(self, make_plugin):
         plugin = make_plugin(AtticPush, {**CFG, "cache_url": ""})
@@ -80,8 +80,11 @@ class TestScript:
             f"  *eval*) echo -n {ALPHA} ;;\n"
             "  *'path-info --stdin'*) cat >/dev/null; "
             f"echo '{{\"{ALPHA}\":{{\"ca\":null}},\"/nix/store/dddd-dep\":null}}' ;;\n"
-            f"  *'path-info -r --sigs'*) printf '{ALPHA} \\n/nix/store/dddd-dep \\n"
-            "/nix/store/eeee-glibc cache.nixos.org-1:abc\\n' ;;\n"
+            # nix pads the path column with spaces then a tab, so the widest path has only the tab.
+            f"  *'path-info -r --sigs'*) printf '{ALPHA}      \\tultimate\\n"
+            "/nix/store/dddd-dep\\tultimate\\n"
+            "/nix/store/eeee-glibc   \\tcache.nixos.org-1:abc\\n"
+            "/nix/store/ffff-zlib\\tcache.nixos.org-1:def\\n' ;;\n"
             "  *path-info*) exit 0 ;;\n"
             "  *metadata*) echo '{\"revision\":\"abc\"}' ;;\n"
             "esac\n")
