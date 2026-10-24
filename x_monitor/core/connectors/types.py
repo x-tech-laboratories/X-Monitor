@@ -1,5 +1,6 @@
 """Shared connector datatypes: commands, results, the Status ladder and ExecContext."""
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
@@ -195,6 +196,8 @@ class CollectResult:
     status: Optional[str] = None
     snapshot: Any = None
     settings: Dict[str, str] = field(default_factory=dict)
+    timestamp: Optional[datetime] = None
+    """When the result was observed; None means now. An agent's records synced after an offline stretch carry the time they happened."""
     success: bool = False
     """Only consulted when this CollectResult is returned from
     plan_action()/interpret_action() to describe an action outcome (write +

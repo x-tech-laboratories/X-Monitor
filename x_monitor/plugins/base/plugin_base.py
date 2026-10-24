@@ -74,6 +74,9 @@ class Plugin(PluginConfigMixin, ABC):
     # never for one whose commands() varies with state — the stream is built
     # once, when it is registered, so borg switching to a job poll would pin
     # the agent to whichever command happened to be current.
+    RUNS_ON_AGENT: bool = True
+    """Whether a monitor of this type can run on its host's own agent: it only runs commands on that host. A plugin that needs the server's view of the network or works across hosts sets False."""
+
     SAMPLED: bool = False
 
     # Seconds between cycles while one of this plugin's detached jobs runs,

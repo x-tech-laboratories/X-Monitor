@@ -75,6 +75,7 @@ _DEFAULT_LAYOUT = [
 
 
 class Blockurl(Plugin):
+    RUNS_ON_AGENT = False
     def __init__(self, name: str, config: Dict[str, Any]):
         super().__init__(name, config)
         # X-Monitor fetches this URL directly; it must be X-Monitor-reachable, no default.

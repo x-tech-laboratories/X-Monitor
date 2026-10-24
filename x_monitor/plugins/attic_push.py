@@ -8,12 +8,22 @@ restart or redeploy never kills a run in flight: a cycle with no job running
 launches it, later cycles poll it every `job_poll` instead of every interval,
 and the finished run's whole output becomes the new snapshot. While it runs the
 previous snapshot and status stay, and its output and progress show in the
-check runs panel. A target whose evaluation fails is failed; one not yet built,
+runs panel. A target whose evaluation fails is failed; one not yet built,
 or not fully pushed, is `pending_status`. Config: flake, configurations
 (nixosConfigurations names, tracked by their system toplevel), installables
 (name to flake attribute, for any other derivation), cache_url, upstream_keys,
 missing_limit, pending_status, nix_bin, nix_args, timeout (the longest a run
-may take before it is killed), job_poll."""
+may take before it is killed), job_poll, build_args, build_root_dir,
+build_links, push_command.
+
+Each tracked target's row can also be built or pushed by hand. Both run as
+detached actions on the building host and end by checking that one target
+again, so its row shows the outcome as soon as the action finishes. Build
+realises the target from the flake's latest revision with `build_args`; with
+`build_root_dir` its result is linked there (under its name in `build_links`,
+else `<monitor id>-<target>`), so it stays rooted until it is replaced. Push
+runs `push_command` with the target's store path appended, and is offered only
+when `push_command` is set."""
 
 import json
 import shlex
@@ -21,7 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.core.connectors import ssh_connector as detached
-from x_monitor.core.connectors.types import CmdResult, Command, CollectResult, Status
+from x_monitor.core.connectors.types import ActionPlan, CmdResult, Command, CollectResult, Status
 from x_monitor.plugins.base.plugin_helpers import StatusAccumulator, parse_duration
 
 
@@ -46,15 +56,21 @@ _FLAKE_KEY = '@flake'
 # The kind the check's detached job is recorded under.
 _JOB_KIND = 'check'
 
+# The per-target row actions, with the word each one's outcome is logged under.
+_TARGET_ACTIONS = {'build_target': 'Build', 'push_target': 'Push'}
+
 
 # ==================================================================================================
 # Script
 # ==================================================================================================
 
 def _check_function(nix: str, cache_url: str, upstream_keys: List[str]) -> str:
-    """A shell function printing `name<TAB>key<TAB>value` lines about one target."""
-    upstream = ' '.join(f'-e {shlex.quote(f" {key}:")}' for key in upstream_keys)
-    own_paths = (f'{nix} path-info -r --sigs "$out" | grep -v -F {upstream} | cut -d" " -f1'
+    """Shell functions printing `name<TAB>key<TAB>value` lines about one target: `check` evaluates it, then `inspect` reads the closure at $out."""
+    # nix pads the path column with spaces and then a tab, so the widest path has only the tab before its signatures.
+    keys = ' '.join(f'{key}:' for key in upstream_keys)
+    skip_upstream = (f'BEGIN {{ n = split("{keys}", up, " ") }} '
+                     '{ for (i = 2; i <= NF; i++) for (k = 1; k <= n; k++) if (index($i, up[k]) == 1) next; print $1 }')
+    own_paths = (f'{nix} path-info -r --sigs "$out" | awk {shlex.quote(skip_upstream)}'
                  if upstream_keys else f'{nix} path-info -r "$out"')
     return '\n'.join([
         'report() { printf "%s\\t%s\\t%s\\n" "$name" "$1" "$(printf "%s" "$2" | tr "\\t\\n" "  ")"; }',
@@ -69,6 +85,9 @@ def _check_function(nix: str, cache_url: str, upstream_keys: List[str]) -> str:
         '    fi',
         '    refresh=',
         '    report target "$out"',
+        '    inspect',
+        '}',
+        'inspect() {',
         f'    if {nix} path-info "$out" >/dev/null 2>&1; then',
         '        report built 1',
         f'        {own_paths} > "$t/own"',
@@ -104,6 +123,38 @@ def check_script(flake: str, targets: List[Tuple[str, str]], cache_url: str,
                  f'report metadata "$({nix} flake metadata --json --no-write-lock-file '
                  f'{shlex.quote(flake)} 2>/dev/null)"')
     return '\n'.join(lines)
+
+
+def build_script(name: str, build: str, cache_url: str, upstream_keys: List[str], nix: str) -> str:
+    """Run `build`, which prints the path it built, then report on that one target; the build's status is the script's."""
+    return '\n'.join([
+        't=$(mktemp -d)',
+        'trap \'rm -rf "$t"\' EXIT',
+        _check_function(nix, cache_url, upstream_keys),
+        f'name={shlex.quote(name)}',
+        f'out=$({build})',
+        'rc=$?',
+        'out=$(printf "%s\\n" "$out" | tail -n 1)',
+        'if [ -n "$out" ]; then report target "$out"; inspect; fi',
+        'exit $rc',
+    ])
+
+
+def push_script(name: str, path: str, push_command: str, cache_url: str,
+                upstream_keys: List[str], nix: str) -> str:
+    """Push one target's store path, then report on it again; the push's status is the script's."""
+    return '\n'.join([
+        't=$(mktemp -d)',
+        'trap \'rm -rf "$t"\' EXIT',
+        _check_function(nix, cache_url, upstream_keys),
+        f'name={shlex.quote(name)}',
+        f'out={shlex.quote(path)}',
+        f'{push_command} "$out"',
+        'rc=$?',
+        'report target "$out"',
+        'inspect',
+        'exit $rc',
+    ])
 
 
 def _is_remote(flake: str) -> bool:
@@ -163,6 +214,10 @@ class AtticPush(Plugin):
             'nix_args', ['--extra-experimental-features', 'nix-command flakes']))
         self.timeout = parse_duration(config.get('timeout', '30m'))
         self.job_poll_interval = parse_duration(config.get('job_poll', '30s'))
+        self.build_args = list(config.get('build_args', ['--keep-going', '--print-build-logs']))
+        self.build_root_dir = config.get('build_root_dir') or None
+        self.build_links = {str(k): str(v) for k, v in (config.get('build_links') or {}).items()}
+        self.push_command = str(config.get('push_command') or '')
         # One fixed directory per monitor, so finished runs never pile up on the target.
         self.workdir = detached.workdir_for(f'attic_push-{self.id}')
         self._polling_job = None
@@ -177,10 +232,13 @@ class AtticPush(Plugin):
 
     # --- collection ---
 
+    @property
+    def _nix(self) -> str:
+        return ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
+
     def check_script(self) -> str:
         """The script one run executes on the building host."""
-        nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
-        return check_script(self.flake, self.targets(), self.cache_url, self.upstream_keys, nix)
+        return check_script(self.flake, self.targets(), self.cache_url, self.upstream_keys, self._nix)
 
     def commands(self) -> List[Command]:
         self._polling_job = None
@@ -261,15 +319,17 @@ class AtticPush(Plugin):
 
     def _collect(self, facts: Dict[str, Dict[str, Any]], metadata: Dict[str, Any]) -> CollectResult:
         """The finished run's rows, counts and status."""
+        rows = [self._row(name, facts.get(name)) for name, _ in self.targets()]
+        return self._summarise(rows, _flake_revision(metadata))
+
+    def _summarise(self, rows: List[Dict[str, Any]], revision: Optional[str]) -> CollectResult:
+        """The counts, status and snapshot for a whole set of rows."""
         acc = StatusAccumulator()
         logs: List[Tuple[str, str]] = []
-        rows: List[Dict[str, Any]] = []
-        for name, _ in self.targets():
-            row = self._row(name, facts.get(name))
-            rows.append(row)
+        for row in rows:
             acc.escalate(row['status'])
             if row['status'] != 'online':
-                logs.append((f"{name}: {row['summary']}", Status(row['status']).log_level))
+                logs.append((f"{row['name']}: {row['summary']}", Status(row['status']).log_level))
 
         built = sum(1 for r in rows if r['built'] == 'Yes')
         pushed = sum(1 for r in rows if r['pushed_ok'])
@@ -279,7 +339,7 @@ class AtticPush(Plugin):
                      'targets_pushed': float(pushed),
                      'missing_paths': float(sum(r['missing_count'] for r in rows))},
             logs=logs, status=str(acc.status),
-            snapshot={'revision': _flake_revision(metadata), 'targets': rows},
+            snapshot={'revision': revision, 'targets': rows},
         )
 
     def _row(self, name: str, fact: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -318,6 +378,61 @@ class AtticPush(Plugin):
             row.update(status=self.pending_status,
                        summary=f"{len(missing)} of {own} paths are not in the cache")
         return row
+
+    # --- actions ---
+
+    def plan_action(self, action_id: str, **kwargs):
+        if action_id not in _TARGET_ACTIONS:
+            return None
+        name = kwargs.get('target')
+        installable = dict(self.targets()).get(name)
+        if installable is None:
+            return self._refused(f"{name!r} is not a tracked target")
+        if action_id == 'build_target':
+            return ActionPlan(build_script(name, self._build_command(name, installable), self.cache_url,
+                                           self.upstream_keys, self._nix), detached=True)
+        if not self.push_command:
+            return self._refused('No push_command is configured')
+        row = next((r for r in self._rows if r.get('name') == name), None)
+        if row is None or row.get('built') != 'Yes':
+            return self._refused(f"{name} is not built from the latest flake, so there is nothing to push")
+        return ActionPlan(push_script(name, row['target'], self.push_command, self.cache_url,
+                                      self.upstream_keys, self._nix), detached=True)
+
+    def _build_command(self, name: str, installable: str) -> str:
+        """`nix build` of one target from the flake's latest revision, printing the path it built."""
+        args = ' '.join(shlex.quote(a) for a in self.build_args + (['--refresh'] if _is_remote(self.flake) else []))
+        if not self.build_root_dir:
+            return f'{self._nix} build --print-out-paths --no-link {args} {shlex.quote(installable)}'
+        # One fixed link per target, so each build replaces the root the last one held.
+        link = f"{self.build_root_dir.rstrip('/')}/{self.build_links.get(name, f'{self.id}-{name}')}"
+        return (f'mkdir -p {shlex.quote(self.build_root_dir)} && {self._nix} build --print-out-paths '
+                f'--out-link {shlex.quote(link)} {args} {shlex.quote(installable)}')
+
+    def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
+        if action_id not in _TARGET_ACTIONS:
+            return result.exit_code == 0
+        # The report names the target, so an action that finishes after a restart, which loses its arguments, still knows it.
+        facts, _ = parse_report(result.stdout)
+        name = next(iter(facts), None) or kwargs.get('target') or 'the target'
+        verb = _TARGET_ACTIONS[action_id]
+        succeeded = result.exit_code == 0
+        rows = self._rows
+        if facts and rows:
+            outcome = self._summarise([self._row(r['name'], facts[r['name']]) if r['name'] in facts else r
+                                       for r in rows], self._snapshot().get('revision'))
+        else:
+            outcome = CollectResult()
+        outcome.logs.insert(0, (f"{verb} of {name} finished" if succeeded
+                                else f"{verb} of {name} failed (exit {result.exit_code})",
+                                'INFO' if succeeded else 'ERROR'))
+        outcome.success = succeeded
+        return outcome
+
+    @staticmethod
+    def _refused(message: str) -> CollectResult:
+        """An action outcome that reports a problem without touching the monitor's status."""
+        return CollectResult(logs=[(message, 'WARNING')], metadata={'content': message}, success=False)
 
     # --- UI ---
 
@@ -401,6 +516,14 @@ class AtticPush(Plugin):
                         {'name': 'summary', 'label': 'State', 'field': 'summary', 'align': 'left'},
                         {'name': 'target', 'label': 'Store path', 'field': 'target', 'align': 'left'},
                     ],
+                    'row_actions': [
+                        {'id': 'build_target', 'icon': 'build', 'tooltip': 'Build', 'kind': 'dispatch',
+                         'action_id': 'build_target', 'params': {'target': 'name'},
+                         'confirm': 'Build {row[name]} from the latest flake now?'},
+                        {'id': 'push_target', 'icon': 'cloud_upload', 'tooltip': 'Push', 'kind': 'dispatch',
+                         'action_id': 'push_target', 'params': {'target': 'name'},
+                         'visible_if': lambda p: bool(p.push_command)},
+                    ],
                 },
                 'missing': {
                     'title': 'Paths not in the cache',
@@ -412,6 +535,6 @@ class AtticPush(Plugin):
                     ],
                 },
             },
-            'job_panel': {'widget': 'jobs', 'title': 'Check runs', 'history_limit': 10},
+            'job_panel': {'widget': 'jobs', 'title': 'Runs', 'history_limit': 10},
             'events': {'title': 'Events', 'limit': 100},
         }

@@ -520,6 +520,12 @@ async def confirmed(text: str) -> bool:
     return bool(await dialog)
 
 
+async def confirmed_on(client, text: str) -> bool:
+    """Like confirmed, from a task of its own, which has no page to put the dialog on until it enters the viewer's client."""
+    with client:
+        return await confirmed(text)
+
+
 def _outcome_notice(label: str, success: bool, content: str) -> str:
     """What to tell the user after an action: its own short message when it gave one, else whether it worked."""
     if content and len(content) <= 200:
@@ -749,7 +755,7 @@ def render_table_with_actions(plugin, page, table_spec: dict, filter_spec: Optio
         if action.get('kind') == 'dialog':
             await open_dialog_impl(plugin, action['dialog'], row=row)
             return
-        if action.get('confirm') and not await confirmed(_substitute(action['confirm'], row, plugin)):
+        if action.get('confirm') and not await confirmed_on(table.client, _substitute(action['confirm'], row, plugin)):
             return
         params = {kwarg: row.get(field) for kwarg, field in action.get('params', {}).items()}
         action_id = action.get('action_id', action['id'])

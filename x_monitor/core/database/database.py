@@ -168,6 +168,9 @@ class _AsyncWriter:
 
 _writer = _AsyncWriter()
 
+# How long after it happened a status may arrive and still be announced as news.
+LATE_STATUS = timedelta(minutes=2)
+
 
 def flush_writes(timeout: Optional[float] = None):
     """Block until the writer thread has drained its queue; a test seam."""
@@ -536,11 +539,17 @@ class DatabaseManager:
     # ------------------------------------------------------------------
     # Status
     # ------------------------------------------------------------------
-    def insert_status(self, plugin_id: str, state: str):
+    def insert_status(self, plugin_id: str, state: str, timestamp: Optional[datetime] = None):
         record = StatusRecord(
-            plugin_id=plugin_id, state=str(Status.of(state)), timestamp=datetime.now()
+            plugin_id=plugin_id, state=str(Status.of(state)), timestamp=timestamp or datetime.now()
         )
-        self.store.statuses[plugin_id] = record
+        current = self.store.statuses.get(plugin_id)
+        # A late status, synced from an agent after an offline stretch, joins the history without replacing or re-announcing a newer current one.
+        is_current = current is None or record.timestamp >= current.timestamp
+        if is_current:
+            self.store.statuses[plugin_id] = record
+        # A status that happened long before it arrived becomes current silently, so a sync replays no alerts; the agent's next live status is announced.
+        announce = is_current and (timestamp is None or datetime.now() - timestamp <= LATE_STATUS)
         _writer.submit(
             lambda: StatusHistory.create(
                 plugin_id=record.plugin_id,
@@ -548,7 +557,8 @@ class DatabaseManager:
                 timestamp=record.timestamp,
             )
         )
-        CHANGES.publish(changes.STATUS, plugin_id)
+        if announce:
+            CHANGES.publish(changes.STATUS, plugin_id)
 
     def latest_statuses(self) -> Dict[str, str]:
         return {cid: rec.state for cid, rec in self.store.statuses.items()}
@@ -570,8 +580,9 @@ class DatabaseManager:
         message: str,
         target: Optional[str] = None,
         plugin_id: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
     ):
-        record = self.store.add_event(level, message, target, plugin_id)
+        record = self.store.add_event(level, message, target, plugin_id, timestamp=timestamp)
         _writer.submit(
             lambda: Event.create(
                 level=record.level,
@@ -635,10 +646,11 @@ class DatabaseManager:
         level: str,
         message: str,
         log_time: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
     ):
         key = f"{target}\x1f{plugin_id}\x1f{log_time or ''}\x1f{message}"
         dedup_hash = hashlib.sha1(key.encode("utf-8", "replace")).hexdigest()
-        record = self.store.add_log_line(target, plugin_id, level, message, dedup_hash)
+        record = self.store.add_log_line(target, plugin_id, level, message, dedup_hash, timestamp=timestamp)
         if record is None:
             # Already in the buffer — the DB's unique index would reject it too.
             return
@@ -1027,10 +1039,11 @@ class DatabaseManager:
         plugin_name: str,
         message: str,
         level: str = "INFO",
+        timestamp: Optional[datetime] = None,
     ) -> None:
         """A plugin event, prefixed with the plugin name for the events feed."""
         self.insert_event(
-            level, f"[{plugin_name}] {message}", target, plugin_id=plugin_id
+            level, f"[{plugin_name}] {message}", target, plugin_id=plugin_id, timestamp=timestamp
         )
 
     def apply_result(
@@ -1038,11 +1051,13 @@ class DatabaseManager:
     ) -> None:
         """Fan a CollectResult out to the per-datatype writes. The one place
         that translates the plugin-facing CollectResult contract into store
-        updates (each of which mirrors itself to disk)."""
+        updates (each of which mirrors itself to disk). Every write carries the
+        result's own timestamp when it has one."""
+        when = result.timestamp
         metric_rows = []
         for name, value in result.metrics.items():
             record = self.store.add_metric(
-                target, plugin_id, name, value, result.metadata.get(name)
+                target, plugin_id, name, value, result.metadata.get(name), timestamp=when
             )
             metric_rows.append(dict(
                 timestamp=record.timestamp, target=target, plugin_id=plugin_id,
@@ -1051,12 +1066,15 @@ class DatabaseManager:
         if metric_rows:
             _writer.submit(lambda: Metric.insert_many(metric_rows).execute())
             CHANGES.publish(changes.METRIC, plugin_id)
+            # A late metric lands in a day thinning may already have passed, so the next pass starts from that day again.
+            if when is not None and self._thinned_through is not None and when < self._thinned_through:
+                self._thinned_through = when.replace(hour=0, minute=0, second=0, microsecond=0)
         for message, level in result.logs:
-            self.write_event(target, plugin_id, plugin_name, message, level=level)
+            self.write_event(target, plugin_id, plugin_name, message, level=level, timestamp=when)
         for message, level, log_time in result.log_lines:
-            self.insert_log_line(target, plugin_id, level, message, log_time)
+            self.insert_log_line(target, plugin_id, level, message, log_time, timestamp=when)
         if result.status is not None:
-            self.insert_status(plugin_id, result.status)
+            self.insert_status(plugin_id, result.status, timestamp=when)
         if result.snapshot is not None:
             self.set_snapshot(plugin_id, result.snapshot)
         for key, value in result.settings.items():
