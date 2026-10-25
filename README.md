@@ -8,6 +8,8 @@ Hosts you control run the **X-Monitor agent**, which connects outward to X-Monit
 
 Unlike most network and system monitors, X-Monitor is designed to be highly extensible and capable of performing actions on monitored targets, not just observing them.
 
+![The X-Monitor overview page on the demo fleet's sample data](docs/images/overview.png)
+
 ---
 
 ## Features
