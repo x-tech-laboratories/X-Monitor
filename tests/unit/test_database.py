@@ -366,6 +366,17 @@ class TestDownsampling:
         mgr.flush()
         assert sorted(name for name, _, _ in self._rows()) == ["load", "usage"]
 
+    def test_a_late_metric_in_a_thinned_day_is_thinned_on_the_next_pass(self, mgr):
+        hour = (datetime.now() - timedelta(days=10)).replace(minute=0, second=0, microsecond=0)
+        self._insert_at(hour + timedelta(minutes=5), value=1.0)
+        mgr.downsample_metrics(7)
+        mgr.flush()
+        mgr.apply_result("h", "c", "c", CollectResult(metrics={"usage": 2.0}, timestamp=hour + timedelta(minutes=30)))
+        mgr.flush()
+        mgr.downsample_metrics(7)
+        mgr.flush()
+        assert [value for _, _, value in self._rows()] == [1.0]
+
     def test_a_span_of_many_days_is_thinned_day_by_day(self, mgr):
         start = (datetime.now() - timedelta(days=20)).replace(minute=0, second=0, microsecond=0)
         for day in range(12):
@@ -747,3 +758,55 @@ class TestReconcileOrphanedJobs:
         mgr.set_job_pid(job_id, 99)
         assert mgr.reconcile_orphaned_jobs() == 0
         assert mgr.get_job(job_id)["state"] == "running"
+
+
+class TestResultTimestamps:
+    """A result carrying its own time, as an agent's synced records do, is stored at that time."""
+
+    def test_every_write_carries_the_results_time(self, mgr):
+        when = datetime.now().replace(microsecond=0) - timedelta(hours=2)
+        mgr.apply_result("host1", "p", "P", CollectResult(
+            metrics={"v": 1.0}, logs=[("hi", "INFO")], log_lines=[("WARNING", "boom", None)],
+            status="failed", timestamp=when))
+        mgr.flush()
+        with db.connection_context():
+            assert Metric.get(Metric.plugin_id == "p").timestamp == when
+            assert Event.get(Event.plugin_id == "p").timestamp == when
+            assert StatusHistory.get(StatusHistory.plugin_id == "p").timestamp == when
+            assert LogLine.get(LogLine.plugin_id == "p").timestamp == when
+
+    def test_a_late_status_does_not_replace_the_current_one(self, mgr):
+        mgr.apply_result("host1", "p", "P", CollectResult(status="online"))
+        mgr.apply_result("host1", "p", "P", CollectResult(
+            status="failed", timestamp=datetime.now() - timedelta(hours=1)))
+        mgr.flush()
+        assert mgr.latest_status("p") == "online"
+        with db.connection_context():
+            assert StatusHistory.select().where(StatusHistory.plugin_id == "p").count() == 2
+
+    def test_a_late_status_is_not_announced(self, mgr, monkeypatch):
+        mgr.apply_result("host1", "p", "P", CollectResult(status="online"))
+        published = []
+        monkeypatch.setattr("x_monitor.core.database.database.CHANGES.publish",
+                            lambda kind, plugin_id=None: published.append(kind))
+        mgr.apply_result("host1", "p", "P", CollectResult(
+            status="failed", timestamp=datetime.now() - timedelta(hours=1)))
+        assert "status" not in published
+
+    def test_a_status_from_long_ago_becomes_current_without_being_announced(self, mgr, monkeypatch):
+        published = []
+        monkeypatch.setattr("x_monitor.core.database.database.CHANGES.publish",
+                            lambda kind, plugin_id=None: published.append(kind))
+        mgr.apply_result("host1", "p", "P", CollectResult(
+            status="failed", timestamp=datetime.now() - timedelta(hours=1)))
+        assert mgr.latest_status("p") == "failed"
+        assert "status" not in published
+
+    def test_a_status_a_moment_old_is_still_announced(self, mgr, monkeypatch):
+        published = []
+        monkeypatch.setattr("x_monitor.core.database.database.CHANGES.publish",
+                            lambda kind, plugin_id=None: published.append(kind))
+        mgr.apply_result("host1", "p", "P", CollectResult(
+            status="failed", timestamp=datetime.now() - timedelta(seconds=20)))
+        assert "status" in published
+

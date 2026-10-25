@@ -59,6 +59,32 @@ connect.
 between transports is one line. A monitor with both `agent:` and `ssh_config:` uses the
 agent; drop the `agent:` key to fall back to SSH.
 
+## Running monitors on the agent
+
+With `run_monitors: true` on its `agents:` entry, an agent runs its host's monitors itself and keeps
+running them while it cannot reach X-Monitor:
+
+```yaml
+agents:
+  - id: "odin"
+    public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... odin"
+    run_monitors: true
+```
+
+When the agent connects, X-Monitor sends it a plan: every monitor on that agent whose type runs
+commands on its own host. Checks that need X-Monitor's own view of the network (`http`, `uptime`,
+`dns_record`, `push` and the like), groups, and work across hosts (`nixos_upgrade`, `vuln_scan`)
+stay on the server. The agent polls those monitors, runs their schedules, triggers and detached
+jobs, and records every result in a local outbox under its `state_dir`
+(`/var/lib/x-monitor-agent` with the NixOS module). Records stream to X-Monitor while connected;
+after time offline the agent sends everything it recorded, each with the time it happened.
+
+X-Monitor keeps each monitor's page, history and alerts. Its buttons and Poll Now run on the agent,
+and a monitor whose agent has sent nothing for three intervals (at least five minutes) shows as
+`unavailable` until records arrive again. Statuses that arrive more than two minutes after they happened fill in the history without alerting; instead, once the agent's live records resume, each monitor's notification channels get one summary saying how long it was out of reach and every status change it recorded meanwhile. While it cannot reach X-Monitor, an agent with a desktop agent on the same host raises a desktop notification itself for each of its monitors that fails, warns or recovers, through the local socket both agents are given (`/run/x-monitor-agent/notify.sock` with the NixOS module). The agent must run the same X-Monitor code as the server,
+which the NixOS modules ensure when both come from one flake input; an agent on other code keeps
+its monitors on the server. Turning `run_monitors` off gives the monitors back to the server.
+
 ## Installing the agent
 
 ```bash

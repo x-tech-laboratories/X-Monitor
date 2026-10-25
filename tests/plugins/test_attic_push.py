@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from x_monitor.plugins.attic_push import AtticPush, check_script, parse_report
+from x_monitor.plugins.attic_push import AtticPush, build_script, check_script, parse_report
 from x_monitor.core.connectors.types import CmdResult
 
 CFG = {
@@ -65,7 +65,7 @@ class TestScript:
 
     def test_upstream_paths_are_left_out(self):
         script = check_script("/f", [("A", "/f#x")], "https://c", ["cache.nixos.org-1", "other-1"], "nix")
-        assert "grep -v -F -e ' cache.nixos.org-1:' -e ' other-1:'" in script
+        assert 'split("cache.nixos.org-1: other-1:", up, " ")' in script
 
     def test_nothing_to_check_without_a_cache(self, make_plugin):
         plugin = make_plugin(AtticPush, {**CFG, "cache_url": ""})
@@ -80,8 +80,11 @@ class TestScript:
             f"  *eval*) echo -n {ALPHA} ;;\n"
             "  *'path-info --stdin'*) cat >/dev/null; "
             f"echo '{{\"{ALPHA}\":{{\"ca\":null}},\"/nix/store/dddd-dep\":null}}' ;;\n"
-            f"  *'path-info -r --sigs'*) printf '{ALPHA} \\n/nix/store/dddd-dep \\n"
-            "/nix/store/eeee-glibc cache.nixos.org-1:abc\\n' ;;\n"
+            # nix pads the path column with spaces then a tab, so the widest path has only the tab.
+            f"  *'path-info -r --sigs'*) printf '{ALPHA}      \\tultimate\\n"
+            "/nix/store/dddd-dep\\tultimate\\n"
+            "/nix/store/eeee-glibc   \\tcache.nixos.org-1:abc\\n"
+            "/nix/store/ffff-zlib\\tcache.nixos.org-1:def\\n' ;;\n"
             "  *path-info*) exit 0 ;;\n"
             "  *metadata*) echo '{\"revision\":\"abc\"}' ;;\n"
             "esac\n")
@@ -268,11 +271,112 @@ class TestDetachedJob:
 
 
 class TestUiSpec:
-    def test_check_runs_have_a_job_panel(self, plugin):
-        assert plugin.UI_SPEC['job_panel']['title'] == 'Check runs'
+    def test_runs_have_a_job_panel(self, plugin):
+        assert plugin.UI_SPEC['job_panel']['title'] == 'Runs'
         assert ['jobs'] in plugin.UI_SPEC['layout']
 
     def test_table_titles_are_in_sentence_case(self, plugin):
         tables = plugin.UI_SPEC['tables']
         assert tables['targets']['title'] == 'Tracked targets'
         assert tables['missing']['title'] == 'Paths not in the cache'
+
+
+class TestActions:
+    def _built(self, plugin, run_cycle, built="1"):
+        _run(plugin, run_cycle, _report(
+            f"Alpha\ttarget\t{ALPHA}", f"Alpha\tbuilt\t{built}", "Alpha\town\t1", f"Alpha\tmissing\t{ALPHA}",
+            f"Beta\ttarget\t{BETA}", "Beta\tbuilt\t1", "Beta\town\t3", METADATA))
+
+    def test_build_runs_detached_from_the_latest_flake(self, plugin):
+        plan = plugin.plan_action("build_target", target="Alpha")
+        assert plan.detached
+        assert "name=Alpha" in plan.command
+        assert ("build --print-out-paths --no-link --keep-going --print-build-logs --refresh "
+                "'github:owner/fleet#nixosConfigurations.\"Alpha\".config.system.build.toplevel'") in plan.command
+
+    def test_build_is_rooted_under_its_link(self, make_plugin):
+        plugin = make_plugin(AtticPush, {**CFG, "build_root_dir": "/roots/", "build_links": {"Alpha": "alpha-deploy"}})
+        assert "--out-link /roots/alpha-deploy " in plugin.plan_action("build_target", target="Alpha").command
+        assert "--out-link /roots/test-plugin-Beta " in plugin.plan_action("build_target", target="Beta").command
+
+    def test_an_untracked_target_is_refused(self, plugin):
+        result = plugin.plan_action("build_target", target="Gamma")
+        assert result.success is False and "not a tracked target" in result.metadata["content"]
+
+    def test_push_needs_a_push_command(self, plugin, run_cycle):
+        self._built(plugin, run_cycle)
+        assert plugin.plan_action("push_target", target="Alpha").success is False
+
+    def test_push_needs_a_built_target(self, make_plugin, run_cycle):
+        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet"})
+        self._built(plugin, run_cycle, built="0")
+        result = plugin.plan_action("push_target", target="Alpha")
+        assert result.success is False and "not built" in result.metadata["content"]
+
+    def test_push_sends_the_rows_store_path(self, make_plugin, run_cycle):
+        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet"})
+        self._built(plugin, run_cycle)
+        plan = plugin.plan_action("push_target", target="Alpha")
+        assert plan.detached
+        assert f"out={ALPHA}\nattic push fleet \"$out\"" in plan.command
+
+    def test_a_finished_action_updates_only_its_row(self, plugin, run_cycle):
+        self._built(plugin, run_cycle)
+        outcome = plugin.interpret_action("push_target", CmdResult(0, _report(
+            "pushing...", f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t1", "Alpha\town\t1"), ""))
+        assert outcome.success
+        assert outcome.logs[0] == ("Push of Alpha finished", "INFO")
+        rows = {row["name"]: row for row in outcome.snapshot["targets"]}
+        assert rows["Alpha"]["pushed"] == "All 1"
+        assert rows["Beta"]["pushed"] == "All 3"
+        assert outcome.snapshot["revision"] == "0123456789abcdef0123"
+
+    def test_a_failed_build_with_no_report_keeps_the_snapshot(self, plugin, run_cycle):
+        self._built(plugin, run_cycle)
+        outcome = plugin.interpret_action("build_target", CmdResult(1, "error: build failed\n", ""),
+                                          target="Alpha")
+        assert outcome.success is False
+        assert outcome.snapshot is None
+        assert outcome.logs[0] == ("Build of Alpha failed (exit 1)", "ERROR")
+
+    def test_build_script_reports_the_built_target(self, tmp_path):
+        nix = tmp_path / "nix"
+        nix.write_text(
+            "#!/bin/sh\n"
+            'case "$*" in\n'
+            "  *'path-info --stdin'*) cat >/dev/null; echo '{}' ;;\n"
+            f"  *'path-info -r'*) echo {ALPHA} ;;\n"
+            "  *path-info*) exit 0 ;;\n"
+            "esac\n")
+        nix.chmod(0o755)
+        script = build_script("Alpha", f"echo building >&2; echo {ALPHA}; exit 1", "https://c", [], str(nix))
+        run = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+        assert run.returncode == 1
+        facts, _ = parse_report(run.stdout)
+        assert facts["Alpha"] == {"target": ALPHA, "built": "1", "own": "1", "missing": []}
+
+    def test_build_pushes_its_result_before_reporting(self, tmp_path):
+        nix = tmp_path / "nix"
+        nix.write_text("#!/bin/sh\ncase \"$*\" in *'path-info --stdin'*) cat >/dev/null; echo '{}' ;; esac\n")
+        nix.chmod(0o755)
+        script = build_script("Alpha", f"echo {ALPHA}", "https://c", [], str(nix),
+                              push_command="sh -c 'printf \"pushed %s\\n\" \"$1\" >&2; exit 1' push")
+        run = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+        assert run.stderr == f"pushed {ALPHA}\n"
+        # A failed push fails the build action, though the build itself succeeded.
+        assert run.returncode == 1
+        assert parse_report(run.stdout)[0]["Alpha"]["target"] == ALPHA
+
+    def test_a_failed_build_pushes_nothing(self):
+        script = build_script("Alpha", "exit 1", "https://c", [], "nix", push_command="echo pushed >&2")
+        run = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+        assert run.returncode == 1 and "pushed" not in run.stderr
+
+    def test_build_plan_pushes_with_the_push_command(self, make_plugin):
+        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet"})
+        assert 'then attic push fleet "$out" || rc=$?' in plugin.plan_action("build_target", target="Alpha").command
+
+    def test_rows_offer_build_and_push(self, plugin):
+        actions = plugin.UI_SPEC['tables']['targets']['row_actions']
+        assert [a['action_id'] for a in actions] == ['build_target', 'push_target']
+        assert actions[1]['visible_if'](plugin) is False

@@ -37,6 +37,7 @@ def _body_mismatch(body: str, expect: Dict[str, Any]) -> bool:
 
 
 class HttpCheck(Plugin):
+    RUNS_ON_AGENT = False
     AVAILABILITY = True
 
     SAMPLED = True
