@@ -14,7 +14,13 @@ or not fully pushed, is `pending_status`. Config: flake, configurations
 (name to flake attribute, for any other derivation), cache_url, upstream_keys,
 missing_limit, pending_status, nix_bin, nix_args, timeout (the longest a run
 may take before it is killed), job_poll, build_args, build_root_dir,
-build_links, push_command.
+build_links, push_command, drop_pushed.
+
+A target named in `drop_pushed` is kept only in the cache: once a check finds
+it fully pushed, its closure's path list is written beside its build root as
+`<link>.closure` and the root is removed, so garbage collection frees the
+store. Later checks read that list for a target no longer in the local store,
+so it still counts as built and its paths are still checked against the cache.
 
 Each tracked target's row can also be built or pushed by hand. Both run as
 detached actions on the building host and end by checking that one target
@@ -65,7 +71,9 @@ _TARGET_ACTIONS = {'build_target': 'Build', 'push_target': 'Push'}
 # ==================================================================================================
 
 def _check_function(nix: str, cache_url: str, upstream_keys: List[str]) -> str:
-    """Shell functions printing `name<TAB>key<TAB>value` lines about one target: `check` evaluates it, then `inspect` reads the closure at $out."""
+    """Shell functions printing `name<TAB>key<TAB>value` lines about one target: `check` evaluates it, then `inspect` reads the closure at $out.
+
+    `inspect` reads $link and $list, the target's build root and closure list, both empty unless it is kept only in the cache."""
     # nix pads the path column with spaces and then a tab, so the widest path has only the tab before its signatures.
     keys = ' '.join(f'{key}:' for key in upstream_keys)
     skip_upstream = (f'BEGIN {{ n = split("{keys}", up, " ") }} '
@@ -75,7 +83,7 @@ def _check_function(nix: str, cache_url: str, upstream_keys: List[str]) -> str:
     return '\n'.join([
         'report() { printf "%s\\t%s\\t%s\\n" "$name" "$1" "$(printf "%s" "$2" | tr "\\t\\n" "  ")"; }',
         'check() {',
-        '    name=$1',
+        '    name=$1 link=$3 list=$4',
         # nix's stderr reaches the job's log as it evaluates, and is kept for the error report.
         '    out=$(' + detached.stream_stderr(nix + ' eval --raw --no-write-lock-file $refresh "$2"', '"$t/rc"',
                                            keep='"$t/err"', to_stderr=True) + ')',
@@ -91,6 +99,11 @@ def _check_function(nix: str, cache_url: str, upstream_keys: List[str]) -> str:
         f'    if {nix} path-info "$out" >/dev/null 2>&1; then',
         '        report built 1',
         f'        {own_paths} > "$t/own"',
+        # A target dropped from the store is judged by the closure list written when it was dropped.
+        '    elif [ -n "$list" ] && [ "$(head -n 1 "$list" 2>/dev/null)" = "$out" ]; then',
+        '        report built 1',
+        '        report local 0',
+        '        tail -n +2 "$list" > "$t/own"',
         '    else',
         '        report built 0',
         '        echo "$out" > "$t/own"',
@@ -101,15 +114,26 @@ def _check_function(nix: str, cache_url: str, upstream_keys: List[str]) -> str:
         '        report cache_error "$(tail -c 400 "$t/err")"',
         '        return',
         '    fi',
-        '    printf "%s\\n" "$json" | grep -o \'"/nix/store/[^"]*":null\' | cut -d\'"\' -f2 \\',
-        '        | while read -r path; do report missing "$path"; done',
+        '    printf "%s\\n" "$json" | grep -o \'"/nix/store/[^"]*":null\' | cut -d\'"\' -f2 > "$t/missing"',
+        '    while read -r path; do report missing "$path"; done < "$t/missing"',
+        # Only a root still pointing at this closure is dropped, and its list is in place before the root goes.
+        '    if [ ! -s "$t/missing" ] && [ -n "$link" ] && [ "$(readlink "$link")" = "$out" ]; then',
+        '        { echo "$out"; cat "$t/own"; } > "$list.tmp" && mv "$list.tmp" "$list" && rm -f "$link" && report dropped 1',
+        '    fi',
         '}',
     ])
 
 
+def check_line(name: str, installable: str, link: str = '', closure_list: str = '') -> str:
+    """The `check` call for one target, with its build root and closure list when it is kept only in the cache."""
+    args = [name, installable] + ([link, closure_list] if link else [])
+    return 'check ' + ' '.join(shlex.quote(a) for a in args)
+
+
 def check_script(flake: str, targets: List[Tuple[str, str]], cache_url: str,
-                 upstream_keys: List[str], nix: str) -> str:
-    """The whole cycle's script: the flake's metadata, then each target in turn."""
+                 upstream_keys: List[str], nix: str,
+                 roots: Optional[Dict[str, Tuple[str, str]]] = None) -> str:
+    """The whole cycle's script: each target in turn, then the flake's metadata; `roots` maps a target kept only in the cache to its (link, list)."""
     lines = [
         't=$(mktemp -d)',
         'trap \'rm -rf "$t"\' EXIT',
@@ -118,7 +142,7 @@ def check_script(flake: str, targets: List[Tuple[str, str]], cache_url: str,
         _check_function(nix, cache_url, upstream_keys),
     ]
     for name, installable in targets:
-        lines.append(f'check {shlex.quote(name)} {shlex.quote(installable)}')
+        lines.append(check_line(name, installable, *(roots or {}).get(name, ())))
     lines.append(f'name={shlex.quote(_FLAKE_KEY)}; '
                  f'report metadata "$({nix} flake metadata --json --no-write-lock-file '
                  f'{shlex.quote(flake)} 2>/dev/null)"')
@@ -126,13 +150,13 @@ def check_script(flake: str, targets: List[Tuple[str, str]], cache_url: str,
 
 
 def build_script(name: str, build: str, cache_url: str, upstream_keys: List[str], nix: str,
-                 push_command: str = '') -> str:
+                 push_command: str = '', root: Tuple[str, str] = ('', '')) -> str:
     """Run `build`, which prints the path it built, push that path when there is a `push_command`, then report on that one target."""
     lines = [
         't=$(mktemp -d)',
         'trap \'rm -rf "$t"\' EXIT',
         _check_function(nix, cache_url, upstream_keys),
-        f'name={shlex.quote(name)}',
+        f'name={shlex.quote(name)} link={shlex.quote(root[0])} list={shlex.quote(root[1])}',
         f'out=$({build})',
         'rc=$?',
         'out=$(printf "%s\\n" "$out" | tail -n 1)',
@@ -148,13 +172,13 @@ def build_script(name: str, build: str, cache_url: str, upstream_keys: List[str]
 
 
 def push_script(name: str, path: str, push_command: str, cache_url: str,
-                upstream_keys: List[str], nix: str) -> str:
+                upstream_keys: List[str], nix: str, root: Tuple[str, str] = ('', '')) -> str:
     """Push one target's store path, then report on it again; the push's status is the script's."""
     return '\n'.join([
         't=$(mktemp -d)',
         'trap \'rm -rf "$t"\' EXIT',
         _check_function(nix, cache_url, upstream_keys),
-        f'name={shlex.quote(name)}',
+        f'name={shlex.quote(name)} link={shlex.quote(root[0])} list={shlex.quote(root[1])}',
         f'out={shlex.quote(path)}',
         f'{push_command} "$out"',
         'rc=$?',
@@ -225,6 +249,7 @@ class AtticPush(Plugin):
         self.build_root_dir = config.get('build_root_dir') or None
         self.build_links = {str(k): str(v) for k, v in (config.get('build_links') or {}).items()}
         self.push_command = str(config.get('push_command') or '')
+        self.drop_pushed = [str(n) for n in config.get('drop_pushed') or []]
         # One fixed directory per monitor, so finished runs never pile up on the target.
         self.workdir = detached.workdir_for(f'attic_push-{self.id}')
         self._polling_job = None
@@ -237,6 +262,19 @@ class AtticPush(Plugin):
         tracked += [(name, f'{flake}#{attribute}') for name, attribute in self.installables.items()]
         return tracked
 
+    def _link(self, name: str) -> Optional[str]:
+        """The build root a target's build is linked at, when there is a build_root_dir."""
+        if not self.build_root_dir:
+            return None
+        return f"{self.build_root_dir.rstrip('/')}/{self.build_links.get(name, f'{self.id}-{name}')}"
+
+    def _root(self, name: str) -> Tuple[str, str]:
+        """The (build root, closure list) of a target kept only in the cache, else two empty strings."""
+        link = self._link(name)
+        if link is None or name not in self.drop_pushed:
+            return '', ''
+        return link, f'{link}.closure'
+
     # --- collection ---
 
     @property
@@ -245,7 +283,8 @@ class AtticPush(Plugin):
 
     def check_script(self) -> str:
         """The script one run executes on the building host."""
-        return check_script(self.flake, self.targets(), self.cache_url, self.upstream_keys, self._nix)
+        roots = {name: self._root(name) for name, _ in self.targets() if self._root(name)[0]}
+        return check_script(self.flake, self.targets(), self.cache_url, self.upstream_keys, self._nix, roots)
 
     def commands(self) -> List[Command]:
         self._polling_job = None
@@ -360,9 +399,10 @@ class AtticPush(Plugin):
             return row
 
         is_built = fact.get('built') == '1'
+        is_local = fact.get('local') != '0'
         missing = fact.get('missing') or []
         own = int(fact['own']) if str(fact.get('own', '')).isdigit() else 0
-        row.update(target=fact.get('target', '--'), built='Yes' if is_built else 'No',
+        row.update(target=fact.get('target', '--'), built='Yes' if is_built else 'No', local=is_local,
                    missing_count=len(missing), missing=missing[:self.missing_limit])
         if 'cache_error' in fact:
             row.update(pushed='Unknown', status='unavailable',
@@ -378,7 +418,8 @@ class AtticPush(Plugin):
             row['pushed'] = f'All {own}'
         row['pushed_ok'] = is_built and not missing
         if row['pushed_ok']:
-            row.update(status='online', summary='Built and pushed')
+            row.update(status='online', summary='Built and pushed' if is_local and 'dropped' not in fact
+                       else 'Pushed, kept only in the cache')
         elif not is_built:
             row.update(status=self.pending_status, summary='Not built from the latest flake')
         else:
@@ -397,22 +438,25 @@ class AtticPush(Plugin):
             return self._refused(f"{name!r} is not a tracked target")
         if action_id == 'build_target':
             return ActionPlan(build_script(name, self._build_command(name, installable), self.cache_url,
-                                           self.upstream_keys, self._nix, self.push_command), detached=True)
+                                           self.upstream_keys, self._nix, self.push_command, self._root(name)),
+                              detached=True)
         if not self.push_command:
             return self._refused('No push_command is configured')
         row = next((r for r in self._rows if r.get('name') == name), None)
         if row is None or row.get('built') != 'Yes':
             return self._refused(f"{name} is not built from the latest flake, so there is nothing to push")
+        if row.get('local') is False:
+            return self._refused(f"{name} is kept only in the cache, so there is nothing here to push; build it again")
         return ActionPlan(push_script(name, row['target'], self.push_command, self.cache_url,
-                                      self.upstream_keys, self._nix), detached=True)
+                                      self.upstream_keys, self._nix, self._root(name)), detached=True)
 
     def _build_command(self, name: str, installable: str) -> str:
         """`nix build` of one target from the flake's latest revision, printing the path it built."""
         args = ' '.join(shlex.quote(a) for a in self.build_args + (['--refresh'] if _is_remote(self.flake) else []))
-        if not self.build_root_dir:
+        link = self._link(name)
+        if link is None:
             return f'{self._nix} build --print-out-paths --no-link {args} {shlex.quote(installable)}'
         # One fixed link per target, so each build replaces the root the last one held.
-        link = f"{self.build_root_dir.rstrip('/')}/{self.build_links.get(name, f'{self.id}-{name}')}"
         return (f'mkdir -p {shlex.quote(self.build_root_dir)} && {self._nix} build --print-out-paths '
                 f'--out-link {shlex.quote(link)} {args} {shlex.quote(installable)}')
 
