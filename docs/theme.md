@@ -1,10 +1,21 @@
-# Theme Tokens
+# Theme
 
-Per-token overrides for the Halon theme, set under the `theme:` block in
-`config.yaml` — see the [Theme](../README.md#theme) section of the README.
+The dashboard is themed with **Halon**: slate plus a single blue, a recessed
+navigation frame, ghost-first controls and hairline structure, in a light and a
+dark scheme that share one token set. Every color lives in
+`x_monitor/core/ui/static/halon-tokens.css`; the component rules that consume those
+tokens live beside it in `halon.css`, and no Python module states a color.
 
+The scheme follows the browser's `prefers-color-scheme` unless you pin it:
 
-Individual tokens can be overridden from the same block. Each key maps to one
+```yaml
+theme:
+  scheme: dark      # auto (default), light, or dark
+```
+
+## Token overrides
+
+Individual tokens can be overridden from the same `theme:` block. Each key maps to one
 token and applies to **both** schemes, so an override that only suits one of
 them is yours to audit — the shipped values are contrast-audited in both.
 
