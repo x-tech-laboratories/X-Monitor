@@ -101,6 +101,82 @@ class TestScript:
         assert run.stderr == "error: no such attribute\n"
 
 
+class TestKeptOnlyInTheCache:
+    @staticmethod
+    def _nix(tmp_path, local=True, missing=""):
+        """A fake nix whose store holds ALPHA when `local`, and whose cache lacks `missing`."""
+        nix = tmp_path / "nix"
+        absent = f',"{missing}":null' if missing else ''
+        nix.write_text(
+            "#!/bin/sh\n"
+            'case "$*" in\n'
+            f"  *eval*) echo -n {ALPHA} ;;\n"
+            "  *'path-info --stdin'*) cat >/dev/null; "
+            f"echo '{{\"{ALPHA}\":{{}}{absent}}}' ;;\n"
+            f"  *'path-info -r'*) printf '{ALPHA}\\n/nix/store/dddd-dep\\n' ;;\n"
+            f"  *path-info*) exit {0 if local else 1} ;;\n"
+            "esac\n")
+        nix.chmod(0o755)
+        return str(nix)
+
+    @staticmethod
+    def _check(nix, link, closure_list):
+        script = check_script("/f", [("Alpha", "/f#a")], "https://c", [], nix,
+                              {"Alpha": (str(link), str(closure_list))})
+        return parse_report(subprocess.run(["sh", "-c", script], capture_output=True, text=True).stdout)[0]["Alpha"]
+
+    def test_a_fully_pushed_root_is_dropped_after_its_list_is_written(self, tmp_path):
+        link, closure_list = tmp_path / "alpha", tmp_path / "alpha.closure"
+        link.symlink_to(ALPHA)
+        fact = self._check(self._nix(tmp_path), link, closure_list)
+        assert fact["dropped"] == "1"
+        assert not link.is_symlink()
+        assert closure_list.read_text() == f"{ALPHA}\n{ALPHA}\n/nix/store/dddd-dep\n"
+
+    def test_a_root_with_missing_paths_is_kept(self, tmp_path):
+        link, closure_list = tmp_path / "alpha", tmp_path / "alpha.closure"
+        link.symlink_to(ALPHA)
+        fact = self._check(self._nix(tmp_path, missing="/nix/store/dddd-dep"), link, closure_list)
+        assert "dropped" not in fact and link.is_symlink() and not closure_list.exists()
+
+    def test_a_root_for_another_closure_is_kept(self, tmp_path):
+        link, closure_list = tmp_path / "alpha", tmp_path / "alpha.closure"
+        link.symlink_to(BETA)
+        fact = self._check(self._nix(tmp_path), link, closure_list)
+        assert "dropped" not in fact and link.is_symlink()
+
+    def test_a_dropped_target_is_judged_by_its_list(self, tmp_path):
+        closure_list = tmp_path / "alpha.closure"
+        closure_list.write_text(f"{ALPHA}\n{ALPHA}\n/nix/store/dddd-dep\n")
+        fact = self._check(self._nix(tmp_path, local=False, missing="/nix/store/dddd-dep"),
+                           tmp_path / "alpha", closure_list)
+        assert fact == {"target": ALPHA, "built": "1", "local": "0", "own": "2",
+                        "missing": ["/nix/store/dddd-dep"]}
+
+    def test_a_list_for_an_older_closure_counts_for_nothing(self, tmp_path):
+        closure_list = tmp_path / "alpha.closure"
+        closure_list.write_text(f"{BETA}\n{BETA}\n")
+        fact = self._check(self._nix(tmp_path, local=False), tmp_path / "alpha", closure_list)
+        assert fact["built"] == "0" and "local" not in fact
+
+    def test_only_named_targets_are_dropped(self, make_plugin):
+        plugin = make_plugin(AtticPush, {**CFG, "build_root_dir": "/roots", "drop_pushed": ["Alpha"],
+                                         "build_links": {"Alpha": "alpha-deploy"}})
+        text = plugin.check_script()
+        assert ("check Alpha 'github:owner/fleet#nixosConfigurations.\"Alpha\".config.system.build.toplevel' "
+                "/roots/alpha-deploy /roots/alpha-deploy.closure") in text
+        assert "check Beta 'github:owner/fleet#nixosConfigurations.\"Beta\".config.system.build.toplevel'\n" in text
+
+    def test_a_dropped_row_says_so_and_refuses_a_push(self, make_plugin, run_cycle):
+        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet"})
+        _run(plugin, run_cycle, _report(f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t1", "Alpha\tlocal\t0",
+                                        "Alpha\town\t2", METADATA))
+        row = _rows(plugin)["Alpha"]
+        assert row["status"] == "online" and row["summary"] == "Pushed, kept only in the cache"
+        result = plugin.plan_action("push_target", target="Alpha")
+        assert result.success is False and "kept only in the cache" in result.metadata["content"]
+
+
 class TestParse:
     def test_built_and_pushed_is_online(self, plugin, run_cycle):
         result = _run(plugin, run_cycle, _report(

@@ -1,4 +1,5 @@
 import json
+import subprocess
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -404,6 +405,28 @@ class TestCommands:
         assert cmd.startswith("mkdir -p '/var/lib/agent/build roots' && ")
         assert "build --out-link '/var/lib/agent/build roots/odin-deploy'" in cmd
         assert "--no-link" not in cmd
+
+    @pytest.mark.parametrize("local, cached, builds", [
+        (False, True, False),
+        (True, True, True),
+        (False, False, True),
+    ])
+    def test_cache_url_skips_a_build_the_cache_already_holds(self, make_plugin, tmp_path, local, cached, builds):
+        nix = tmp_path / "nix"
+        nix.write_text(
+            "#!/bin/sh\n"
+            'case "$*" in\n'
+            f"  *eval*) echo -n {CURRENT} ;;\n"
+            f"  *'--store https://cache.example'*) exit {0 if cached else 1} ;;\n"
+            f"  *path-info*) exit {0 if local else 1} ;;\n"
+            "  *build*) echo built ;;\n"
+            "esac\n")
+        nix.chmod(0o755)
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "nix_bin": str(nix), "nix_args": [],
+                                       "cache_url": "https://cache.example/fleet"})
+        run = subprocess.run(["sh", "-c", p._build_command()], capture_output=True, text=True)
+        assert run.returncode == 0
+        assert run.stdout == ("built\n" if builds else f"{CURRENT} is already in the cache; not building it\n")
 
     def test_build_keeps_going_by_default(self, plugin):
         assert "--keep-going" in plugin._build_command()
