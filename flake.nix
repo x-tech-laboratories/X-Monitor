@@ -43,6 +43,10 @@
                             paho-mqtt = pyprev.paho-mqtt.overridePythonAttrs (old: {
                                 doCheck = false;
                             });
+                            # httpcore's cancellation and TLS tests time out under qemu, and Hydra caches no aarch64 build of it for Python 3.12.
+                            httpcore = pyprev.httpcore.overridePythonAttrs (old: {
+                                doCheck = false;
+                            });
                         };
                     };
                     python312Packages = final.python312.pkgs;
