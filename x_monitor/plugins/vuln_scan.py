@@ -205,8 +205,9 @@ class VulnScan(Plugin):
     def _run_command(self) -> str:
         """The scan with each stderr line marked as it is written, so a warning shows at once and is told apart from the XML."""
         status = f'"{self.workdir}/status"'
+        # A subshell, since a bare exit would end the launcher's shell before it records the exit file.
         return (detached.stream_stderr(self._scan_command(), status, prefix=_ERR_PREFIX)
-                + f'; exit "$(cat {status})"')
+                + f'; (exit "$(cat {status})")')
 
     def commands(self) -> List[Command]:
         self._polling_job = None

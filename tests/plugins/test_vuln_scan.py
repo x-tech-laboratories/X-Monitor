@@ -326,6 +326,26 @@ class TestDetachedJob:
         assert "@@nmap-stderr Warning: cap hit" in run.stdout.splitlines()
         assert "<nmaprun></nmaprun>" in run.stdout
 
+    def test_a_launched_scan_writes_its_exit_code_for_the_poll(self, make_plugin, tmp_path):
+        import os
+        import subprocess
+        from x_monitor.core.connectors import ssh_connector as detached
+        nmap = tmp_path / "nmap"
+        nmap.write_text("#!/bin/sh\necho '<nmaprun></nmaprun>'\nexit 2\n")
+        nmap.chmod(0o755)
+        p = make_plugin(VulnScan, {**BASE_CFG, "nmap_bin": str(nmap), "require_sudo": False})
+        env = {**os.environ, "HOME": str(tmp_path)}
+        launch = subprocess.run(["sh", "-c", detached.launch_command(p._run_command(), p.workdir)],
+                                capture_output=True, text=True, env=env)
+        pid = detached.parse_launch(launch.stdout)
+        exit_file = tmp_path / ".cache/x_monitor/jobs/vuln_scan-test-vuln-scan/exit"
+        for _ in range(100):
+            if exit_file.exists() or not os.path.exists(f"/proc/{pid}"):
+                break
+            time.sleep(0.05)
+        time.sleep(0.1)
+        assert exit_file.read_text().strip() == "2"
+
     async def test_a_warning_inside_the_xml_is_kept_out_of_it(self, plugin):
         scan = _scan(_port(443, "https", POODLE)).stdout
         middle = scan.index("<host")
