@@ -126,7 +126,8 @@ a, .q-link { color: var(--accent); }
     color: var(--text-body);
 }
 
-.q-drawer .q-drawer__content { padding: 0 var(--space-4); }
+/* Only the monitor tree scrolls; the nav list and its heading stay pinned above it. */
+.q-drawer .q-drawer__content { padding: 0 var(--space-4); overflow: hidden; }
 
 /* A drawer laid over the page on a narrow screen genuinely floats. */
 .q-drawer--on-top { box-shadow: var(--shadow-floating); }
@@ -251,10 +252,11 @@ a, .q-link { color: var(--accent); }
 
 .halon-sidebar-heading {
     width: 100%;
-    padding-top: var(--space-5);
     margin-bottom: var(--space-2);
     gap: 0;
 }
+
+.halon-sidebar-scroll { width: 100%; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
 .halon-sidebar-tools { gap: 0; }
 

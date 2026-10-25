@@ -205,7 +205,8 @@ def _render_monitor_tree(engine: EngineLike, switch_view: Callable):
     with ui.row().classes('halon-sidebar-heading items-center justify-between no-wrap'):
         ui.label('Monitors').classes('halon-sidebar-label').style('padding-top: 0')
         toolbar = ui.row().classes('items-center halon-sidebar-tools no-wrap')
-    tree = ui.tree(nodes=build_tree_nodes(engine, engine.plugins), on_select=handle_select).classes('w-full')
+    with ui.element('div').classes('halon-sidebar-scroll'):
+        tree = ui.tree(nodes=build_tree_nodes(engine, engine.plugins), on_select=handle_select).classes('w-full')
     # A second click on the monitor you are viewing must not take away the mark that says so.
     tree.props('no-selection-unset icon=chevron_right')
     tree.add_slot('default-header', _TREE_HEADER_SLOT)
