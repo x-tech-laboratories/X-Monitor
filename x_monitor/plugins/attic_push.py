@@ -23,7 +23,7 @@ realises the target from the flake's latest revision with `build_args`; with
 `build_root_dir` its result is linked there (under its name in `build_links`,
 else `<monitor id>-<target>`), so it stays rooted until it is replaced. Push
 runs `push_command` with the target's store path appended, and is offered only
-when `push_command` is set."""
+when `push_command` is set; Build also pushes what it built with it."""
 
 import json
 import shlex
@@ -125,9 +125,10 @@ def check_script(flake: str, targets: List[Tuple[str, str]], cache_url: str,
     return '\n'.join(lines)
 
 
-def build_script(name: str, build: str, cache_url: str, upstream_keys: List[str], nix: str) -> str:
-    """Run `build`, which prints the path it built, then report on that one target; the build's status is the script's."""
-    return '\n'.join([
+def build_script(name: str, build: str, cache_url: str, upstream_keys: List[str], nix: str,
+                 push_command: str = '') -> str:
+    """Run `build`, which prints the path it built, push that path when there is a `push_command`, then report on that one target."""
+    lines = [
         't=$(mktemp -d)',
         'trap \'rm -rf "$t"\' EXIT',
         _check_function(nix, cache_url, upstream_keys),
@@ -135,9 +136,15 @@ def build_script(name: str, build: str, cache_url: str, upstream_keys: List[str]
         f'out=$({build})',
         'rc=$?',
         'out=$(printf "%s\\n" "$out" | tail -n 1)',
+    ]
+    if push_command:
+        # Pushed here rather than left to a store watcher, so the report that follows never races the upload.
+        lines.append(f'if [ "$rc" = 0 ] && [ -n "$out" ]; then {push_command} "$out" || rc=$?; fi')
+    lines += [
         'if [ -n "$out" ]; then report target "$out"; inspect; fi',
         'exit $rc',
-    ])
+    ]
+    return '\n'.join(lines)
 
 
 def push_script(name: str, path: str, push_command: str, cache_url: str,
@@ -390,7 +397,7 @@ class AtticPush(Plugin):
             return self._refused(f"{name!r} is not a tracked target")
         if action_id == 'build_target':
             return ActionPlan(build_script(name, self._build_command(name, installable), self.cache_url,
-                                           self.upstream_keys, self._nix), detached=True)
+                                           self.upstream_keys, self._nix, self.push_command), detached=True)
         if not self.push_command:
             return self._refused('No push_command is configured')
         row = next((r for r in self._rows if r.get('name') == name), None)
