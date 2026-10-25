@@ -117,7 +117,7 @@ def _check_function(nix: str, cache_url: str, upstream_keys: List[str]) -> str:
         '    printf "%s\\n" "$json" | grep -o \'"/nix/store/[^"]*":null\' | cut -d\'"\' -f2 > "$t/missing"',
         '    while read -r path; do report missing "$path"; done < "$t/missing"',
         # Only a root still pointing at this closure is dropped, and its list is in place before the root goes.
-        '    if [ ! -s "$t/missing" ] && [ -n "$link" ] && [ "$(readlink -f "$link")" = "$out" ]; then',
+        '    if [ ! -s "$t/missing" ] && [ -n "$link" ] && [ "$(readlink "$link")" = "$out" ]; then',
         '        { echo "$out"; cat "$t/own"; } > "$list.tmp" && mv "$list.tmp" "$list" && rm -f "$link" && report dropped 1',
         '    fi',
         '}',
