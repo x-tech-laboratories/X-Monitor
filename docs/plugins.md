@@ -273,14 +273,14 @@ The inverse of every other monitor: instead of X-Monitor reaching out to a targe
 | Option      | Description                                                                 |
 |-------------|------------------------------------------------------------------------------|
 | `max_age`   | Seconds since the last heartbeat before reporting `failed` (default: `interval * 2`) |
-| `token`     | Shared secret the caller must present when pushing through `/api/push/{id}/{token}`. Generate with `openssl rand -hex 20`. Optional when a push-scoped [API token](../README.md#api-tokens) covers the monitor; with neither, nothing can push to it. |
+| `token`     | Shared secret the caller must present when pushing through `/api/push/{id}/{token}`. Generate with `openssl rand -hex 20`. Optional when a push-scoped [API token](configuration.md#api-tokens) covers the monitor; with neither, nothing can push to it. |
 | `interval`  | How often the staleness check itself runs (default: `60`)                    |
 
 **Metrics**: `last_push_epoch` (Unix timestamp of the last heartbeat), `reported_up` (1/0, the caller's own status), `value` (optional, if the caller supplies one)
 
-To push a heartbeat, hit `GET` or `POST /api/push/{id}/{token}`, optionally with `status` (`up` or `down`, default `up`), `msg`, and `value` query parameters. This endpoint is not covered by the dashboard's sign-in (see [Authentication](../README.md#authentication)) — the per-monitor token is its credential instead.
+To push a heartbeat, hit `GET` or `POST /api/push/{id}/{token}`, optionally with `status` (`up` or `down`, default `up`), `msg`, and `value` query parameters. This endpoint is not covered by the dashboard's sign-in (see [Authentication](configuration.md#authentication)) — the per-monitor token is its credential instead.
 
-Alternatively, push to `/api/push/{id}` with a push-scoped [API token](../README.md#api-tokens) in an `Authorization: Bearer` header. One such token can cover several monitors (or all of them), it stays out of URLs and so out of proxy access logs, and each heartbeat's event names the token that sent it. Both routes work side by side.
+Alternatively, push to `/api/push/{id}` with a push-scoped [API token](configuration.md#api-tokens) in an `Authorization: Bearer` header. One such token can cover several monitors (or all of them), it stays out of URLs and so out of proxy access logs, and each heartbeat's event names the token that sent it. Both routes work side by side.
 
 ```yaml
 - name: "Nightly Backup Job"
@@ -1867,7 +1867,7 @@ A logical container for other monitors. Folds its children's statuses into its o
 
 | Option          | Description                                                                                     |
 |-----------------|-------------------------------------------------------------------------------------------------|
-| `children`      | A list of nested plugin definitions, or links (`ref: <id>`, optional `name`) to monitors defined elsewhere — see [Links](../README.md#links) |
+| `children`      | A list of nested plugin definitions, or links (`ref: <id>`, optional `name`) to monitors defined elsewhere — see [Links](configuration.md#links) |
 | `aggregate`     | How the group's status comes from its children's (default: `worst`) — see below                 |
 | `layout`        | Rows of widget references. Present ⇒ composite layout; absent ⇒ collapsible cards.               |
 | `grid_min_width`| Card mode only: minimum width of a child card before it wraps (default: `"320px"`)               |

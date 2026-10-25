@@ -26,7 +26,7 @@ And a few that act, the same things the dashboard's buttons do:
 | `POST /api/monitors/{id}/actions/{action_id}` | Runs one of the monitor's header actions, e.g. `restart` |
 | `POST /api/notifications/{channel_id}/test` | Sends a test notification through one channel |
 
-Each action taken through the API is written to the monitor's events, naming the account or [API token](../README.md#api-tokens) that asked for it.
+Each action taken through the API is written to the monitor's events, naming the account or [API token](configuration.md#api-tokens) that asked for it.
 
 ```bash
 curl http://localhost:8080/api/monitors
