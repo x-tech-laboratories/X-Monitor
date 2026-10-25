@@ -355,6 +355,27 @@ class TestActions:
         facts, _ = parse_report(run.stdout)
         assert facts["Alpha"] == {"target": ALPHA, "built": "1", "own": "1", "missing": []}
 
+    def test_build_pushes_its_result_before_reporting(self, tmp_path):
+        nix = tmp_path / "nix"
+        nix.write_text("#!/bin/sh\ncase \"$*\" in *'path-info --stdin'*) cat >/dev/null; echo '{}' ;; esac\n")
+        nix.chmod(0o755)
+        script = build_script("Alpha", f"echo {ALPHA}", "https://c", [], str(nix),
+                              push_command="sh -c 'printf \"pushed %s\\n\" \"$1\" >&2; exit 1' push")
+        run = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+        assert run.stderr == f"pushed {ALPHA}\n"
+        # A failed push fails the build action, though the build itself succeeded.
+        assert run.returncode == 1
+        assert parse_report(run.stdout)[0]["Alpha"]["target"] == ALPHA
+
+    def test_a_failed_build_pushes_nothing(self):
+        script = build_script("Alpha", "exit 1", "https://c", [], "nix", push_command="echo pushed >&2")
+        run = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+        assert run.returncode == 1 and "pushed" not in run.stderr
+
+    def test_build_plan_pushes_with_the_push_command(self, make_plugin):
+        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet"})
+        assert 'then attic push fleet "$out" || rc=$?' in plugin.plan_action("build_target", target="Alpha").command
+
     def test_rows_offer_build_and_push(self, plugin):
         actions = plugin.UI_SPEC['tables']['targets']['row_actions']
         assert [a['action_id'] for a in actions] == ['build_target', 'push_target']
