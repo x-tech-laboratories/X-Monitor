@@ -8,6 +8,71 @@
 - [x] Add X-Monitor to the website's projects and home pages, and rescore readiness.
 - [x] Update TechNet: flake input `github:x-tech-laboratories/X-Monitor`, `services.x-monitor*` options, hard-coded `vigil`/`vigil-agent` users and sudo rules, persisted `/var/lib/vigil`, and move the old database across.
 
+# TODO — X-Monitor as the fleet's only backup tool
+
+Decided 2026-10-21: retire Vorta and borgmatic and run every borg backup from X-Monitor. Ready-made
+web UIs were ruled out: Borg UI is open-core, Borg Backup Server runs maintenance from its server and
+has no repo on the client's own disk, and Backrest or Zerobyte would mean moving to restic.
+The rules the work follows:
+
+1. **Nix decides, X-Monitor acts.** Sources, excludes, targets, schedules, retention and check cadence
+   are declared in the flake; X-Monitor's database holds only runtime state.
+2. **The agent runs its own schedule**, catches up on missed runs and keeps going while the server is down.
+3. **Jobs on one repo queue** instead of racing each other on `--lock-wait`.
+4. **Small core, narrow privileges**: backup stays a plugin, and the agent may run only what it needs.
+5. **Something outside X-Monitor watches X-Monitor.**
+6. **Canary restores and stale-backup alerts stay.**
+
+### Done
+
+- [x] Cron schedules with catch-up of missed runs, and triggers ([schedule.py](x_monitor/core/coordination/schedule.py), [triggers.py](x_monitor/core/coordination/triggers.py)).
+- [x] `run_backup` chains prune and compact, skips on a failed preflight, and takes local-path or `ssh://` repos.
+- [x] Agents can run their monitors without the server (`run_monitors`, [local_engine.py](x_monitor/core/coordination/local_engine.py)).
+- [x] Canary extracts, `max_age` and `check_kinds` on every backup monitor.
+- [x] TechNet: borgmatic removed from Heimdall (2026-10-22) and Odin (2026-10-23); X-Monitor schedules all five of their backups.
+
+### Gaps
+
+- [ ] **Turn on `run_monitors` for the backup agents.** TechNet sets it nowhere, so every schedule
+      fires from Heimdall: with the server down nothing backs up, and a slot that comes up while Odin is
+      offline is used up rather than deferred. Prove it end to end before relying on it.
+- [ ] **Start the schedule loop on reload.** `engine.py` spawns `_schedule_loop` only at start-up and
+      only when some monitor already has a schedule; `_apply_reload` never starts it.
+- [ ] **Retry skipped and failed runs** within a window, instead of waiting for the next slot or for
+      `max_age` to trip the `failed` trigger a day later.
+- [ ] **Agent-side plan source.** An agent runs only a plan the server has sent it, so a host whose
+      agent has never connected backs up nothing, and a plan change made while the server is down never
+      reaches it. Consider letting `agent-module.nix` write the host's plan from Nix.
+- [ ] **A per-repo job queue** that also covers polls, canary, browse, diff and Verify Restore, which
+      today rely on `--lock-wait`. The `flock` is one per host with no time limit and does nothing
+      across hosts writing to the same server.
+- [ ] **Backup plans as one unit**: one plan with several targets and per-target retention, instead of
+      one monitor per target repeating the same sources.
+- [ ] **Narrow the agent.** It runs any shell string it is sent; add a per-action allowlist. In TechNet,
+      `borg *` with SETENV (`borg with-lock`, `BORG_RSH`) and `systemctl start|stop *` are effectively
+      root, and `ProtectHome` is off.
+- [ ] **Keep secrets out of `plan.yaml`.** The agent stores its whole plan at
+      `/var/lib/x-monitor-agent/plan.yaml`, so an inline `passphrase` would land there; and
+      `borgPassphraseFile` names a server path that breaks under `run_monitors`.
+- [ ] **Dead-man check from outside.** Nothing alerts if X-Monitor itself goes silent; for example a
+      timer on Ragnarok that probes the X-Monitor API and notifies on its own.
+- [ ] **Retire Vorta (TechNet).** Turn Odin's three Vorta monitors into scheduled monitors with
+      `archive_prefix`/`prune_match` set to keep pruning the `Odin-*` archives (the shared default is
+      `backup`), and check their `source_paths` against Vorta's `settings.db` first. Then remove
+      `vorta.nix` and its overlay patch, the `vorta_*` secrets, the three `borg-compact.vorta` units
+      and the Vorta entries in `steam.nix`.
+- [ ] **Ragnarok's checks (TechNet).** Its own `borg-check` units and Heimdall's scheduled checks both
+      check the server repo. Keep one: run them through an X-Monitor agent on Ragnarok (local reads,
+      no network), or watch the units with `check_units`.
+- [ ] **Per-target retention (TechNet).** Vorta kept fewer archives on-disk and on Heimdall than on
+      Ragnarok; the X-Monitor monitors use one policy for all targets.
+- [ ] **Leftover names and comments (TechNet).** `borgmatic.yaml`, `borgmatic-repo-group-read`,
+      "Borgmatic" repo paths, `backups-*-borgmatic` ids, `.vigil-canary`, and comments in
+      `x-monitor.nix`, `vorta.nix` and `backups/borg.nix` that still describe Vorta and borgmatic.
+- [ ] **Docs.** [plugins.md](docs/plugins.md) still says borg runs over SSH from the server; finish
+      phase 7 of [offline-agents-plan.md](docs/offline-agents-plan.md) and add a page on running backups
+      with X-Monitor.
+
 # TODO — Chart follow-ups
 
 - [ ] Count erroring feeds in FreshRSS. Its Fever API has no per-feed error field, so the freshness share shows fresh and stale only; find another endpoint that reports feed errors.
