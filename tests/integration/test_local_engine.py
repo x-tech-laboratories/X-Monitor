@@ -122,7 +122,7 @@ class TestLocalRunner:
         try:
             first = await runner.run_action("r1", "answer", "custom:x", {})
             again = await runner.run_action("r1", "answer", "custom:x", {})
-            assert first == again == (True, "done") and calls == ["custom:x"]
+            assert first == again == (True, {"content": "done"}) and calls == ["custom:x"]
         finally:
             runner.stop()
 
@@ -131,7 +131,7 @@ class TestLocalRunner:
         runner = LocalRunner("odin", str(tmp_path))
         await runner.start()
         try:
-            success, content = await runner.run_action("r2", "nope", "run", {})
-            assert not success and "nope" in content
+            success, metadata = await runner.run_action("r2", "nope", "run", {})
+            assert not success and "nope" in metadata["content"]
         finally:
             runner.stop()

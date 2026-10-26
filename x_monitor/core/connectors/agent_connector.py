@@ -125,7 +125,7 @@ class AgentConnection:
         self._pending.clear()
         for future in self._actions.values():
             if not future.done():
-                future.set_result((False, reason))
+                future.set_result((False, {'content': reason}))
         self._actions.clear()
 
     # --- Monitors the agent runs itself ---
@@ -149,27 +149,27 @@ class AgentConnection:
         await self._send(proto.poll_now(monitor_id))
 
     async def request_action(self, request_id: str, monitor_id: str, action_id: str,
-                             args: Dict[str, Any], timeout: float) -> Tuple[bool, str]:
-        """Run an action on a monitor the agent runs and return (success, what it reported); never raises."""
+                             args: Dict[str, Any], timeout: float) -> Tuple[bool, Dict[str, str]]:
+        """Run an action on a monitor the agent runs and return (success, the metadata it reported); never raises."""
         if self._socket is None:
-            return False, f"Agent {self.agent_id!r} is not connected, so the action cannot reach it"
+            return False, {'content': f"Agent {self.agent_id!r} is not connected, so the action cannot reach it"}
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._actions[request_id] = future
         try:
             await self._send(proto.action(request_id, monitor_id, action_id, args))
             return await asyncio.wait_for(future, timeout)
         except asyncio.TimeoutError:
-            return False, f"Agent {self.agent_id!r} did not answer within {timeout:.0f}s"
+            return False, {'content': f"Agent {self.agent_id!r} did not answer within {timeout:.0f}s"}
         except Exception as e:
-            return False, f"Could not send the action to agent {self.agent_id!r}: {e}"
+            return False, {'content': f"Could not send the action to agent {self.agent_id!r}: {e}"}
         finally:
             self._actions.pop(request_id, None)
 
-    def resolve_action(self, request_id: str, success: bool, content: str) -> None:
+    def resolve_action(self, request_id: str, success: bool, metadata: Dict[str, str]) -> None:
         """Complete the action an ACTION_RESULT frame answers; a late answer is dropped."""
         future = self._actions.pop(request_id, None)
         if future is not None and not future.done():
-            future.set_result((success, content))
+            future.set_result((success, metadata))
 
     # --- Exec RPC (the SSHConnection-shaped surface) ---
 

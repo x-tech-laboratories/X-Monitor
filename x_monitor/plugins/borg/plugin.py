@@ -910,7 +910,7 @@ class Borg(Plugin):
             return self._refused("A path may not contain '.' or '..' components")
         cached = self.listing(archive, member)
         if cached is not None:
-            return CollectResult(metadata={'content': self._listing_text(archive, member, cached)}, success=True)
+            return self._listing_result(archive, member, cached)
         args = [
             self.borg_bin, "list",
             "--format", _LIST_FORMAT,
@@ -932,11 +932,27 @@ class Borg(Plugin):
                                  + (f"\n{hint}" if hint else ""))
         member = _archive_member(path or '') or ''
         entries = _parse_listing(call.stdout)
+        self._remember_listing(archive, member, entries)
+        return self._listing_result(archive, member, entries)
+
+    def _remember_listing(self, archive: str, member: str, entries: List[Dict[str, Any]]) -> None:
         # A listing longer than browse_limit is kept one entry over it, which is how the browser knows it was cut short.
         self._listings[(archive, member)] = entries
         while len(self._listings) > _LISTING_CACHE:
             self._listings.popitem(last=False)
-        return CollectResult(metadata={'content': self._listing_text(archive, member, entries)}, success=True)
+
+    def _listing_result(self, archive: str, member: str, entries: List[Dict[str, Any]]) -> CollectResult:
+        """A folder's listing as the dialog's text, and as data the server's copy of this monitor caches when its agent listed it."""
+        listing = json.dumps({'archive': archive, 'member': member, 'entries': entries})
+        return CollectResult(metadata={'content': self._listing_text(archive, member, entries), 'listing': listing},
+                             success=True)
+
+    def absorb_remote_action(self, action_id: str, metadata: Dict[str, str], **kwargs: Any) -> None:
+        """Cache a folder listing the monitor's agent made, so the archive browser on the server can show it."""
+        if action_id != 'browse_archive' or not metadata.get('listing'):
+            return
+        listing = json.loads(metadata['listing'])
+        self._remember_listing(str(listing['archive']), str(listing['member']), list(listing['entries']))
 
     def _listing_text(self, archive: str, member: str, entries: List[Dict[str, Any]]) -> str:
         where = f"{archive}:/{member}"

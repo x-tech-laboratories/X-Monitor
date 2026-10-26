@@ -31,7 +31,7 @@ class LocalRunner:
         self.agent_id = agent_id
         self.state_dir = Path(state_dir)
         self.engine = None
-        self._actions: "OrderedDict[str, Tuple[bool, str]]" = OrderedDict()
+        self._actions: "OrderedDict[str, Tuple[bool, Dict[str, str]]]" = OrderedDict()
 
     # ===== Plan =====
 
@@ -98,20 +98,20 @@ class LocalRunner:
         return next((p for p in self.engine.all_monitors() if p.id == monitor_id), None)
 
     async def run_action(self, request_id: str, monitor_id: str, action_id: str,
-                         args: Dict[str, Any]) -> Tuple[bool, str]:
-        """Run an action on one of the agent's monitors and return (success, what it reported); a repeated request id returns its first answer."""
+                         args: Dict[str, Any]) -> Tuple[bool, Dict[str, str]]:
+        """Run an action on one of the agent's monitors and return (success, the metadata it reported); a repeated request id returns its first answer."""
         if request_id in self._actions:
             return self._actions[request_id]
         plugin = self._monitor(monitor_id)
         if plugin is None:
-            answer = (False, f"This agent does not run monitor {monitor_id!r}")
+            answer = (False, {'content': f"This agent does not run monitor {monitor_id!r}"})
         else:
             try:
                 success, metadata = await self.engine.dispatch_action(plugin, action_id, **args)
-                answer = (bool(success), _content(metadata))
+                answer = (bool(success), _as_metadata(metadata))
             # The server asked for this action; its failure is the answer, not a reason to drop the connection.
             except Exception as e:
-                answer = (False, f"{action_id} failed on the agent: {e}")
+                answer = (False, {'content': f"{action_id} failed on the agent: {e}"})
         self._actions[request_id] = answer
         while len(self._actions) > _REMEMBERED_ACTIONS:
             self._actions.popitem(last=False)
@@ -124,12 +124,11 @@ class LocalRunner:
             await self.engine.run_cycle_now(plugin)
 
 
-def _content(metadata: Any) -> str:
-    """The text an action reported, as the server's dialogs show it."""
-    if isinstance(metadata, dict):
-        content = metadata.get('content', '')
-        return content if isinstance(content, str) else json.dumps(content)
-    return ''
+def _as_metadata(metadata: Any) -> Dict[str, str]:
+    """What an action reported, as plain strings that travel in a frame."""
+    if not isinstance(metadata, dict):
+        return {}
+    return {str(key): value if isinstance(value, str) else json.dumps(value) for key, value in metadata.items()}
 
 
 def _write_atomically(path: Path, text: str) -> None:

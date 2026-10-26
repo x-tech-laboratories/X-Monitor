@@ -273,6 +273,9 @@ class Plugin(PluginConfigMixin, ABC):
         for an unhandled action_id."""
         return None
 
+    def absorb_remote_action(self, action_id: str, metadata: Dict[str, str], **kwargs: Any) -> None:
+        """Take in what an action run on the monitor's agent reported, for a plugin whose dashboard reads state that action sets on its own copy."""
+
     def job_agent(self, job: dict) -> Optional[str]:
         """The agent a launched detached job runs on, when it is not the monitor's own target, so a cancel reaches it."""
         custom = self.custom_action(action_id_of(job.get('kind') or '') or '')

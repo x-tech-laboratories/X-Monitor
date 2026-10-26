@@ -260,8 +260,13 @@ class AgentPlans:
         conn = self.engine.connectors.agents.get(_agent_of(plugin))
         if conn is None:
             return False, {'content': f"No agent runs {plugin.name}"}
-        success, content = await conn.request_action(uuid.uuid4().hex, plugin.id, action_id, kwargs, ACTION_TIMEOUT)
-        return success, ({'content': content} if content else None)
+        success, metadata = await conn.request_action(uuid.uuid4().hex, plugin.id, action_id, kwargs, ACTION_TIMEOUT)
+        # A broken absorb must not lose the action's answer.
+        try:
+            plugin.absorb_remote_action(action_id, metadata, **kwargs)
+        except Exception as e:
+            log.error(f"{plugin.name}: could not take in what {action_id} reported: {e}")
+        return success, (metadata or None)
 
     async def poll_now(self, plugin: 'Plugin') -> bool:
         """Ask the agent for a cycle now; the result arrives as a record."""

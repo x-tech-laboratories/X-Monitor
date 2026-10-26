@@ -204,10 +204,10 @@ class AgentClient:
                 self._runner.acknowledge(int(frame.get('through') or 0))
             elif tag == proto.ACTION:
                 args = frame.get('args')
-                success, content = await self._runner.run_action(
+                success, metadata = await self._runner.run_action(
                     str(frame.get('id') or ''), str(frame.get('monitor') or ''),
                     str(frame.get('action') or ''), args if isinstance(args, dict) else {})
-                await self._send(proto.action_result(str(frame.get('id') or ''), success, content))
+                await self._send(proto.action_result(str(frame.get('id') or ''), success, metadata))
             elif tag == proto.POLL_NOW:
                 await self._runner.poll_now(str(frame.get('monitor') or ''))
         # A request that fails is logged; the connection and the monitors carry on.

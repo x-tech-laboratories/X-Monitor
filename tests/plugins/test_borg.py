@@ -1179,6 +1179,24 @@ class TestBrowse:
         outcome = plugin.plan_action("browse_archive", archive="a1", path="Storage/System")
         assert outcome.success is True and "3 entries" in outcome.metadata['content']
 
+    async def test_a_listing_made_on_the_agent_fills_the_servers_browser(self, make_plugin):
+        agent_copy = make_plugin(Borg, BASE_CFG)
+        server_copy = make_plugin(Borg, BASE_CFG)
+        outcome = agent_copy.interpret_action("browse_archive", _framed(agent_copy, CmdResult(0, LISTING, "")),
+                                              archive="a1", path="Storage/System")
+        server_copy.absorb_remote_action("browse_archive", outcome.metadata, archive="a1", path="Storage/System")
+        assert [e['name'] for e in server_copy.listing("a1", "Storage/System")] == ["etc", "var", "notes.txt"]
+
+    async def test_a_listing_served_from_the_agents_cache_still_carries_its_entries(self, plugin):
+        plugin.interpret_action("browse_archive", _framed(plugin, CmdResult(0, LISTING, "")),
+                                archive="a1", path="Storage/System")
+        outcome = plugin.plan_action("browse_archive", archive="a1", path="Storage/System")
+        assert len(json.loads(outcome.metadata['listing'])['entries']) == 3
+
+    async def test_other_actions_leave_the_browser_alone(self, plugin):
+        plugin.absorb_remote_action("diff_archive", {"content": "x", "listing": "{}"})
+        assert plugin._listings == {}
+
     async def test_a_real_item_beats_a_made_up_folder(self):
         from x_monitor.plugins.borg.parsing import _parse_listing
         entries = _parse_listing("d\t\t\tx/etc\nd\t0\t2026-09-20T10:00:00\tx/etc")
