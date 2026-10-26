@@ -97,7 +97,8 @@ async def _serve(websocket: Any, registry: AgentRegistry, conn: Any, agent_id: s
         elif tag in (proto.RECORDS, proto.PLAN_ACK):
             await registry.dispatch_sync(agent_id, frame)
         elif tag == proto.ACTION_RESULT:
+            metadata = frame.get('metadata')
             conn.resolve_action(str(frame.get('id') or ''), bool(frame.get('success')),
-                                str(frame.get('content') or ''))
+                                {str(k): str(v) for k, v in metadata.items()} if isinstance(metadata, dict) else {})
         elif tag == proto.PING:
             await websocket.send_text(proto.encode({'t': proto.PONG, 'id': frame.get('id')}))

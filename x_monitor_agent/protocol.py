@@ -235,9 +235,9 @@ def action(request_id: str, monitor: str, action_id: str, args: Dict[str, Any]) 
     return {'t': ACTION, 'id': request_id, 'monitor': monitor, 'action': action_id, 'args': args}
 
 
-def action_result(request_id: str, success: bool, content: str = '') -> Dict[str, Any]:
-    """Build the agent's ACTION_RESULT frame for the action with that request id."""
-    return {'t': ACTION_RESULT, 'id': request_id, 'success': success, 'content': content}
+def action_result(request_id: str, success: bool, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Build the agent's ACTION_RESULT frame for the action with that request id, carrying the metadata the action reported."""
+    return {'t': ACTION_RESULT, 'id': request_id, 'success': success, 'metadata': metadata or {}}
 
 
 def poll_now(monitor: str) -> Dict[str, Any]:

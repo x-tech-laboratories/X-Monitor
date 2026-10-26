@@ -149,3 +149,28 @@ class TestOfflineSummary:
         engine.agent_plans._apply_record("node-a", "result", _result_record("disk", "failed", 20))
         engine.agent_plans._apply_record("node-a", "result", _result_record("disk", "online", 0))
         assert sent == []
+
+
+class TestRemoteActions:
+    async def test_what_the_agent_reports_reaches_the_servers_copy_of_the_monitor(self, tmp_path):
+        engine = _engine(tmp_path)
+        _take(engine, "node-a", ["disk"])
+        plugin = _monitor(engine, "disk")
+        absorbed = []
+        plugin.absorb_remote_action = lambda action_id, metadata, **kwargs: absorbed.append((action_id, metadata, kwargs))
+
+        class Conn:
+            agent_id = "node-a"
+            host = "node-a"
+            run_monitors = True
+            is_connected = True
+            capabilities = []
+
+            async def request_action(self, request_id, monitor_id, action_id, args, timeout):
+                return True, {"content": "listed", "listing": "{}"}
+
+        engine.connectors.agents._agents["node-a"] = Conn()
+        success, metadata = await engine.dispatch_action(plugin, "browse_archive", archive="a1", path="etc")
+        assert success and metadata["content"] == "listed"
+        assert absorbed == [("browse_archive", {"content": "listed", "listing": "{}"}, {"archive": "a1", "path": "etc"})]
+
