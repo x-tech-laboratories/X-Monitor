@@ -26,7 +26,7 @@ After this work the agent is a small X-Monitor engine of its own:
 | Question | Decision |
 |---|---|
 | Opt-in | Per agent, with `run_monitors: true` on its `agents:` entry. |
-| Which monitors move | Host-local ones, by the plugin's `RUNS_ON_AGENT`: every monitor whose commands run on that agent's own host. Checks that need the server's view of the network (HTTP, DNS, ping, push), groups and links, and cross-host work (`switch_agent`, `build_agent`, `scan_host`, `via`, `Command.agent`) stay on the server. |
+| Which monitors move | Host-local ones, by the plugin's `RUNS_ON_AGENT`: every monitor whose commands run on that agent's own host. Checks that need the server's view of the network (HTTP, DNS, ping, push), groups and links, and cross-host work (`eval_agent`, `scan_host`, `via`, `Command.agent`) stay on the server. |
 | Who runs them while connected | The agent, always. |
 | Plugin code | Shipped to the agent. The agent package is the full X-Monitor package without the dashboard. |
 | Offline storage | A local SQLite database: plugin state plus an outbox of numbered records, trimmed once the server acknowledges them. |

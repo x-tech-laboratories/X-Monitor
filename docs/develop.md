@@ -436,7 +436,7 @@ verified against a real sshd:
 
 ## Job control
 
-A long-running job (a borg backup, a `nixos-rebuild switch`) is **not** a live
+A long-running job (a borg backup, a flake evaluation) is **not** a live
 SSH channel held open for hours. It is launched *detached on the target* with one ordinary command
 (`setsid sh -c '…' &`), writing its output to `<workdir>/out` and its exit code
 to `<workdir>/exit`, and is then advanced by ordinary polling commands on the
@@ -894,7 +894,7 @@ Text case follows what the text is:
   keep their capitals (`GC roots`).
 - **Labels** — card and chart titles — are written in capitals (`LAST SWITCH`);
   the label style upper-cases them anyway, so the source and the screen agree.
-- **Buttons** are title case: `Poll Now`, `Rebuild & Switch`.
+- **Buttons** are title case: `Poll Now`, `Shut Down`.
 
 ## The overview's fleet sections
 

@@ -176,18 +176,14 @@ class TestFormInputs:
 
 
 class TestHostControlPage:
-    async def test_renders_its_cards_buttons_and_boot_table(self, user: User, make_plugin):
+    async def test_renders_its_cards_and_buttons(self, user: User, make_plugin):
         from nicegui.elements.button import Button
-        from nicegui.elements.table import Table
         from x_monitor.core.connectors.types import CmdResult
         from x_monitor.plugins.host_control import HostControl
         control = make_plugin(HostControl, {"name": "host1 control", "id": "host1-control",
-                                            "allow": ["reboot", "next_boot"],
+                                            "allow": ["reboot", "suspend"],
                                             "ssh_config": {"host": "host1"}})
-        boot = ('loader=efi\n@@entries\nBootOrder: 0001\n'
-                'Boot0001* Linux Boot Manager\tHD(1)\nBoot0003* Windows Boot Manager\tHD(1)\n')
-        control.storage.apply(control.parse([CmdResult(0, "backend=none", ""), CmdResult(0, boot, ""),
-                                             CmdResult(0, "mem", "")]))
+        control.storage.apply(control.parse([CmdResult(0, "backend=none", ""), CmdResult(0, "mem", "")]))
         built = {}
 
         @ui.page('/control')
@@ -197,14 +193,11 @@ class TestHostControlPage:
             built['client'] = context.client
 
         await _ticked(user, built, '/control')
-        await user.should_see('Linux Boot Manager')
+        await user.should_see('POWER PROFILE')
         elements = list(built['client'].elements.values())
         labels = [e.text for e in elements if isinstance(e, Button) and getattr(e, 'text', '')]
-        assert 'Reboot' in labels and 'Next Boot' in labels
-        assert 'Shut Down' not in labels
-        table = next(e for e in elements if isinstance(e, Table)
-                     and any(c['name'] == 'next' for c in e.columns))
-        assert [r['id'] for r in table.rows] == ['0001', '0003']
+        assert 'Reboot' in labels and 'Suspend' in labels
+        assert 'Shut Down' not in labels and 'Next Boot' not in labels
 
 
 @pytest.fixture

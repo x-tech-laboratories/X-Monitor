@@ -299,131 +299,28 @@ class TestProfiles:
         assert rows[0]["generation"] == "236" and rows[0]["count"] == "59"
 
 
-async def _launch(plugin, pid=4242):
-    """Drive plan_action -> ActionPlan (launch) -> interpret_action, mirroring
-    XMonitorEngine.dispatch_action for a launched detached job."""
-    plan = plugin.plan_action("collect")
-    if plan is None:
-        return None
-    if hasattr(plan, "success"):        # CollectResult (refused) — no launch
-        plugin.storage.apply(plan)
-        return plan
-    outcome = plugin.interpret_action("collect", CmdResult(0, f"{pid}\n", ""))
-    plugin.storage.apply(outcome)
-    return outcome
+class TestReadOnly:
+    async def test_offers_no_actions(self, plugin):
+        assert plugin.get_actions() == []
+        assert plugin.plan_action("collect") is None
 
-
-def _poll(size, exit_code, alive, out):
-    """Build the raw stdout one poll_command produces on the target."""
-    return CmdResult(0, (
-        f"===XMONITOR_SIZE===\n{size}\n"
-        f"===XMONITOR_EXIT===\n{exit_code if exit_code is not None else ''}\n"
-        f"===XMONITOR_ALIVE===\n{1 if alive else 0}\n"
-        f"===XMONITOR_OUT===\n{out}"
-    ), "")
-
-
-def _poll_once(plugin, poll_result):
-    commands = plugin.commands()
-    assert len(commands) == 1            # a running job polls with one command
-    result = plugin.parse([poll_result])
-    plugin.storage.apply(result)
-    return result
-
-
-class TestAction:
-    async def test_the_collect_action_is_exposed(self, plugin):
-        assert [a["action_id"] for a in plugin.get_actions()] == ["collect"]
-
-    async def test_the_collect_command_carries_the_configured_arguments(self, make_plugin):
-        p = make_plugin(NixGc, {**BASE_CFG, "gc_args": ["--delete-older-than", "14d"]})
-        assert p._collect_command() == "sudo -n nix-collect-garbage --delete-older-than 14d"
-
-    async def test_sudo_can_be_turned_off(self, make_plugin):
-        p = make_plugin(NixGc, {**BASE_CFG, "require_sudo": False})
-        assert p._collect_command().startswith("nix-collect-garbage ")
-
-    async def test_launching_records_a_running_job(self, plugin):
-        outcome = await _launch(plugin, pid=1234)
-        assert outcome.success is True
-        job = plugin.jobs.running()
-        assert job["kind"] == "collection" and job["pid"] == 1234
-        assert "nix-collect-garbage" in job["command"]
-
-    async def test_a_failed_launch_records_no_job(self, plugin):
-        plugin.plan_action("collect")
-        outcome = plugin.interpret_action("collect", CmdResult(1, "", "sudo: a password is required"))
-        plugin.storage.apply(outcome)
-        assert outcome.success is False
-        assert plugin.jobs.running() is None
-
-    async def test_a_second_collection_is_refused_while_one_runs(self, plugin):
-        await _launch(plugin)
-        refused = plugin.plan_action("collect")
-        assert any("already running" in message for message, _ in refused.logs)
-
-    async def test_an_unknown_action_is_not_handled(self, plugin):
-        assert plugin.plan_action("nope") is None
-
-
-class TestJobPolling:
-    async def test_a_running_job_is_polled_instead_of_probed(self, plugin):
-        await _launch(plugin)
-        assert "4242" in plugin.commands()[0].text
-
-    async def test_poll_while_running_keeps_the_job_running(self, plugin):
-        await _launch(plugin)
-        _poll_once(plugin, _poll(10, None, True, "deleting unused links...\n"))
-        assert plugin.jobs.running()["progress"] == "deleting unused links..."
-
-    async def test_completion_marks_succeeded(self, plugin):
-        await _launch(plugin)
-        _poll_once(plugin, _poll(20, 0, False, "21482 store paths deleted, 44.4 GiB freed\n"))
-        assert plugin.jobs.running() is None
-        assert plugin.jobs.recent()[0]["state"] == "succeeded"
-
-    async def test_nonzero_exit_is_failure(self, plugin):
-        await _launch(plugin)
-        _poll_once(plugin, _poll(5, 1, False, ""))
-        assert plugin.jobs.recent()[0]["state"] == "failed"
-
-    async def test_vanished_process_is_failure(self, plugin):
-        await _launch(plugin)
-        _poll_once(plugin, _poll(5, None, False, ""))
-        assert plugin.jobs.recent()[0]["state"] == "failed"
-
-    async def test_unanswered_poll_leaves_the_job_running(self, plugin):
-        await _launch(plugin)
-        result = _poll_once(plugin, CmdResult(-1, "", "Agent 'x' is not connected"))
-        assert plugin.jobs.running() is not None
-        assert any("Could not poll" in message for message, _ in result.logs)
-
-    async def test_a_job_started_mid_cycle_does_not_swallow_the_probe(self, plugin):
-        assert len(plugin.commands()) == 1                  # asked for a probe: no job yet
-        await _launch(plugin)                               # the button lands before parse
-        result = plugin.parse([_probe()])
-        plugin.storage.apply(result)
-        assert plugin.jobs.running() is not None            # the job was not judged by probe output
-        assert result.metrics["store_paths"] == 111121.0    # and the probe was still read as a probe
+    async def test_removed_collection_keys_are_ignored(self, make_plugin):
+        p = make_plugin(NixGc, {**BASE_CFG, "gc_bin": "nix-collect-garbage",
+                                "gc_args": ["-d"], "require_sudo": False})
+        commands = p.commands()
+        assert len(commands) == 1 and "nix-collect-garbage" not in commands[0].text
 
 
 class TestUiSpec:
-    async def test_collect_fills_while_its_job_runs(self, plugin):
-        action = plugin.get_actions()[0]
-        assert plugin.action_state(action) == 'normal'
-        await _launch(plugin)
-        assert plugin.action_state(action) == 'accent'
-
     def test_profiles_table_has_a_title(self, plugin):
         assert plugin.UI_SPEC['tables']['profiles']['title'] == 'Profiles'
 
-    def test_job_controls_live_in_the_header_only(self, plugin):
-        assert 'run_action_id' not in plugin.UI_SPEC['job_panel']
+    def test_shows_no_job_panel(self, plugin):
+        assert 'job_panel' not in plugin.UI_SPEC
 
     def test_every_laid_out_widget_has_a_definition(self, plugin):
         spec = plugin.UI_SPEC
         defined = set(spec['cards']) | set(spec['tables']) | {'host_card', 'chart', 'events'}
-        defined.add(spec['job_panel']['widget'])
         laid_out = {cell for row in spec['layout'] for cell in row}
         assert laid_out - defined == set()
 
@@ -459,31 +356,13 @@ class TestUiSpec:
         assert plugin._last_gc_color == "failed"
 
 
-class TestManualRunIsTheLastCollection:
-    async def test_a_finished_job_becomes_the_last_collection(self, plugin):
-        old = int(time.time()) - 16 * 86400
-        _collect(plugin, _probe(last_gc=old, freed="359.3 MiB", deleted=101))
-        await _launch(plugin)
-        _poll_once(plugin, _poll(20, 0, False, "7529 store paths deleted, 3.3 GiB freed\n"))
-        state = _state(plugin)
-        assert state["epoch"] >= int(time.time()) - 5
-        assert state["deleted"] == 7529 and state["succeeded"] is True
-        assert _latest_metric("last_gc_freed_gb") == pytest.approx(3.3)
-
-    async def test_the_journal_does_not_roll_back_to_the_timer_run(self, plugin):
-        old = int(time.time()) - 16 * 86400
-        await _launch(plugin)
-        _poll_once(plugin, _poll(20, 0, False, "7529 store paths deleted, 3.3 GiB freed\n"))
-        _collect(plugin, _probe(last_gc=old, freed="359.3 MiB", deleted=101))
+class TestNewerRecordWins:
+    async def test_the_journal_does_not_roll_back_to_an_older_run(self, plugin):
+        recent = int(time.time()) - 3600
+        _collect(plugin, _probe(last_gc=recent, freed="3.3 GiB", deleted=7529))
+        _collect(plugin, _probe(last_gc=int(time.time()) - 16 * 86400, freed="359.3 MiB", deleted=101))
         assert _state(plugin)["deleted"] == 7529
         assert _latest_status() == "online"
-
-    async def test_a_failed_job_is_a_failed_last_collection(self, plugin):
-        await _launch(plugin)
-        _poll_once(plugin, _poll(5, 1, False, ""))
-        _collect(plugin, _probe(last_gc=int(time.time()) - 86400))
-        assert _latest_status() == "failed"
-        assert _latest_metric("last_gc_success") == 0.0
 
 
 class TestOptionalStoreLimits:

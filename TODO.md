@@ -204,7 +204,7 @@ or hardware controls. All four map cleanly onto the existing
 - [x] **Next-boot selection** — LNXlink `boot_select` picks the OS for the next boot. Niche; pairs
       with the reboot action for dual-boot or kernel-testing hosts.
       Done: in `host_control`, through `bootctl`, `grub-reboot` or `efibootmgr`, optionally
-      rebooting at once.
+      rebooting at once; since moved to X-Nix.
 
 ### 1d. Engine and platform capabilities
 
@@ -352,3 +352,5 @@ X-Backups. X-Monitor keeps only the job of watching X-Nix itself.
       the NixOS half of `reboot_required` and `host_control`, `base/nixos_boot.py`, the Fleet view's
       "NixOS deployments" tiles and the NixOS parts of `nix/agent-module.nix`, with their tests and docs.
 - [ ] Add an X-Nix health check, as there is for X-Backups.
+- [x] Every NixOS action, job, schedule, build, push, update and switch is gone from `nixos_upgrade`,
+      `nix_gc` and `attic_push`, and the boot entries from `host_control`; the checks stay read-only.
