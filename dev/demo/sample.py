@@ -251,12 +251,10 @@ def sessions(plugin, tick, seed) -> CollectResult:
 
 
 def host_control(plugin, tick, seed) -> CollectResult:
-    """A host with power-profiles-daemon, two boot entries and suspend support."""
+    """A host with power-profiles-daemon and suspend support."""
     power = ('backend=ppd\n  performance:\n    CpuDriver:\tintel_pstate\n* balanced:\n'
              '    CpuDriver:\tintel_pstate\n  power-saver:\n    CpuDriver:\tintel_pstate\n')
-    boot = ('loader=efi\n@@entries\nBootOrder: 0001,0003\n'
-            'Boot0001* Linux Boot Manager\tHD(1)\nBoot0003* Windows Boot Manager\tHD(1)\n')
-    return parsed(plugin, power, boot, 'freeze mem disk')
+    return parsed(plugin, power, 'freeze mem disk')
 
 
 def syncthing(plugin, tick, seed) -> Reading:

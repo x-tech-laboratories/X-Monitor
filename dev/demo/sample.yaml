@@ -34,7 +34,7 @@ plugins:
           - name: "Host Control"
             id: "heimdall-control"
             type: "host_control"
-            allow: ["reboot", "shutdown", "suspend", "power_profile", "next_boot", "identify"]
+            allow: ["reboot", "shutdown", "suspend", "power_profile", "identify"]
             identify_device: "/dev/sda"
             interval: 10
             <<: *ssh

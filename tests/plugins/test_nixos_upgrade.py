@@ -1,5 +1,4 @@
 import json
-import subprocess
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -41,8 +40,7 @@ def _latest_metric(plugin_id: str, metric: str):
 
 
 def _probe(current=CURRENT, booted=None, switched=None, generation=210,
-           version="26.11.20260826.9fbb54b", kernels=(KERNEL, KERNEL),
-           created=None) -> CmdResult:
+           version="26.11.20260826.9fbb54b", kernels=(KERNEL, KERNEL)) -> CmdResult:
     """The stdout the probe script produces on a NixOS target."""
     booted_kernel, current_kernel = kernels
     switched = int(time.time()) - 3600 if switched is None else switched
@@ -52,7 +50,6 @@ def _probe(current=CURRENT, booted=None, switched=None, generation=210,
         f"booted={booted or current}",
         f"switched={switched}",
         f"profile=system-{generation}-link",
-        f"profile_created={int(time.time()) - 3 * 86400 if created is None else created}",
         f"version={version}",
         f'version_json={{"nixosVersion":"{version}"}}',
     ]
@@ -349,162 +346,27 @@ class TestCommands:
         assert p._eval_command().startswith("timeout 1200 sh -c ")
         assert "timeout 1200" in p.commands()[1].text
 
-    def test_switch_targets_the_flake(self, plugin):
-        assert plugin._switch_command() == "sudo -n nixos-rebuild switch --flake /etc/nixos"
-
-    def test_switch_names_the_configuration_when_set(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "github:owner/config",
-                                       "configuration": "ragnarok"})
-        assert "'github:owner/config#ragnarok'" in p._switch_command()
-
-    def test_switch_honours_require_sudo(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "require_sudo": False})
-        assert not p._switch_command().startswith("sudo")
-
-    def test_rebuild_args_are_appended(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "rebuild_args": ["--use-remote-sudo"]})
-        assert "--use-remote-sudo" in p._switch_command()
-
-    def test_build_host_sends_compilation_elsewhere(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_host": "heimdall"})
-        assert "--build-host heimdall" in p._switch_command()
-
-    def test_build_host_is_unset_by_default(self, plugin):
-        assert "--build-host" not in plugin._switch_command()
-
-    def test_build_host_precedes_rebuild_args(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_host": "heimdall",
-                                       "rebuild_args": ["--max-jobs", "0"]})
-        cmd = p._switch_command()
-        assert cmd.index("--build-host") < cmd.index("--max-jobs")
-
-    def test_target_host_activates_elsewhere(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "target_host": "root@thor.technet"})
-        assert "--target-host root@thor.technet" in p._switch_command()
-
-    def test_target_host_is_unset_by_default(self, plugin):
-        assert "--target-host" not in plugin._switch_command()
-
-    def test_switch_agent_runs_the_launch_elsewhere(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "switch_agent": "heimdall"})
-        plan = p.plan_action("switch")
-        assert plan.agent == "heimdall"
-
-    def test_switch_agent_is_unset_by_default(self, plugin):
-        assert plugin.plan_action("switch").agent is None
-
-    def test_build_realises_without_activating(self, plugin):
-        cmd = plugin._build_command()
-        assert "build --no-link" in cmd
-        assert "switch" not in cmd
-
-    def test_build_root_dir_keeps_one_replaceable_root(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "id": "odin-deploy",
-                                       "build_root_dir": "/var/lib/agent/build roots"})
-        cmd = p._build_command()
-        assert cmd.startswith("mkdir -p '/var/lib/agent/build roots' && ")
-        assert "build --out-link '/var/lib/agent/build roots/odin-deploy'" in cmd
-        assert "--no-link" not in cmd
-
-    @pytest.mark.parametrize("local, cached, builds", [
-        (False, True, False),
-        (True, True, True),
-        (False, False, True),
-    ])
-    def test_cache_url_skips_a_build_the_cache_already_holds(self, make_plugin, tmp_path, local, cached, builds):
-        nix = tmp_path / "nix"
-        nix.write_text(
-            "#!/bin/sh\n"
-            'case "$*" in\n'
-            f"  *eval*) echo -n {CURRENT} ;;\n"
-            f"  *'--store https://cache.example'*) exit {0 if cached else 1} ;;\n"
-            f"  *path-info*) exit {0 if local else 1} ;;\n"
-            "  *build*) echo built ;;\n"
-            "esac\n")
-        nix.chmod(0o755)
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "nix_bin": str(nix), "nix_args": [],
-                                       "cache_url": "https://cache.example/fleet"})
-        run = subprocess.run(["sh", "-c", p._build_command()], capture_output=True, text=True)
-        assert run.returncode == 0
-        assert run.stdout == ("built\n" if builds else f"{CURRENT} is already in the cache; not building it\n")
-
-    def test_build_keeps_going_by_default(self, plugin):
-        assert "--keep-going" in plugin._build_command()
-
-    def test_build_args_are_configurable(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_args": ["--max-jobs", "2"]})
-        cmd = p._build_command()
-        assert "--max-jobs 2" in cmd
-        assert "--keep-going" not in cmd
-
-    def test_build_targets_this_hosts_closure(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "github:owner/config",
-                                       "configuration": "ragnarok"})
-        assert "nixosConfigurations" in p._build_command()
-        assert "ragnarok" in p._build_command()
-
-    def test_build_runs_on_the_switch_agent(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "switch_agent": "heimdall"})
-        assert p.plan_action("build").agent == "heimdall"
-
-    def test_update_targets_the_flake(self, plugin):
-        assert "flake update --flake /etc/nixos" in plugin._update_command()
 
 
-GITHUB_PUSH = {"flake": "github:owner/config", "push_ssh_key": "/run/secrets/deploy_key"}
+class TestReadOnly:
+    def test_offers_no_actions(self, plugin):
+        assert plugin.get_actions() == []
+        for action_id in ("update_flake", "switch", "build", "reboot"):
+            assert plugin.plan_action(action_id) is None
 
+    async def test_removed_management_keys_are_ignored(self, make_plugin):
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "auto_switch": True, "build_at": "02:30",
+                                       "switch_agent": "builder", "push_ssh_key": "/run/key"})
+        cmds = p.commands()
+        assert len(cmds) == 2 and all(c.agent is None for c in cmds)
+        assert not any("nixos-rebuild" in c.text or "flake update" in c.text for c in cmds)
 
-class TestGithubUpdate:
-    @pytest.mark.parametrize("ref,expected", [
-        ("github:owner/config", ("git@github.com:owner/config.git", None)),
-        ("github:owner/config/dev", ("git@github.com:owner/config.git", "dev")),
-        ("github:owner/config?ref=dev", ("git@github.com:owner/config.git", "dev")),
-        ("github:owner", None),
-        ("/etc/nixos", None),
-    ])
-    def test_github_refs_are_recognised(self, make_plugin, ref, expected):
-        assert make_plugin(NixosUpgrade, {**BASE_CFG, "flake": ref}).github_repo == expected
-
-    def test_update_runs_unprivileged(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, **GITHUB_PUSH})
-        assert "sudo" not in p._update_command()
-
-    def test_pushes_over_ssh_with_the_key_and_pinned_host_keys(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, **GITHUB_PUSH})
-        command = p._update_command()
-        assert "git@github.com:owner/config.git" in command
-        assert "-i /run/secrets/deploy_key" in command and "StrictHostKeyChecking=yes" in command
-        assert "https://" not in command
-
-    def test_branch_is_cloned(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, **GITHUB_PUSH, "flake": "github:owner/config/dev"})
-        assert "--branch dev" in p._update_command()
-
-    def test_commit_uses_the_configured_author_and_message(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, **GITHUB_PUSH,
-                                       "commit_author": "Bot <bot@example.com>",
-                                       "commit_message": "build: bump inputs"})
-        command = p._update_command()
-        assert "user.name=Bot" in command and "user.email=bot@example.com" in command
-        assert "'build: bump inputs'" in command
-
-    @pytest.mark.parametrize("status,expected", [(0, 0), (3, 1)])
-    def test_the_update_prints_its_log_once_and_keeps_its_status(self, make_plugin, tmp_path, status, expected):
-        import os
-        import subprocess
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        (bin_dir / "nix").write_text(f"#!/bin/sh\necho \"Updated input 'nixpkgs'\" >&2\nexit {status}\n")
-        # A clone makes its target folder, and diff says the lock is unchanged.
-        (bin_dir / "git").write_text('#!/bin/sh\ncase "$*" in clone*) eval mkdir -p "\\${$#}";; esac\nexit 0\n')
-        for tool in ("nix", "git"):
-            (bin_dir / tool).chmod(0o755)
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, **GITHUB_PUSH, "nix_bin": str(bin_dir / "nix"), "nix_args": []})
-        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
-        run = subprocess.run(["sh", "-c", p._update_command()], capture_output=True, text=True, env=env)
-        assert run.returncode == expected
-        assert run.stdout.count("Updated input 'nixpkgs'") == 1
-        assert ("Every input is already current" in run.stdout) == (status == 0)
+    async def test_drift_never_launches_anything_but_the_evaluation(self, make_plugin):
+        p = make_plugin(NixosUpgrade, {**BASE_CFG, "auto_switch": True, "auto_switch_after": "0s"})
+        _collect(p)                                         # drift against TARGET
+        _rewind_eval(p, 7200)
+        cmds = p.commands()
+        assert len(cmds) == 2 and "nixos-rebuild" not in cmds[1].text
 
 
 class TestLocalPath:
@@ -521,25 +383,6 @@ class TestLocalPath:
         assert make_plugin(NixosUpgrade, {**BASE_CFG, "flake": ref}).local_path == expected
 
 
-def _state(plugin, action_id):
-    """The header state of one of the plugin's own actions."""
-    return plugin.action_state(next(a for a in plugin.get_actions() if a['action_id'] == action_id))
-
-
-async def _launch(plugin, action_id="switch", pid=4242):
-    """Drive plan_action -> ActionPlan (launch) -> interpret_action, mirroring
-    XMonitorEngine.dispatch_action for a launched detached job."""
-    plan = plugin.plan_action(action_id)
-    if plan is None:
-        return None
-    if hasattr(plan, "success"):        # CollectResult (refused) — no launch
-        plugin.storage.apply(plan)
-        return plan
-    outcome = plugin.interpret_action(action_id, CmdResult(0, f"{pid}\n", ""))
-    plugin.storage.apply(outcome)
-    return outcome
-
-
 def _poll(size, exit_code, alive, out):
     """Build the raw stdout one poll_command produces on the target."""
     return CmdResult(0, (
@@ -548,166 +391,6 @@ def _poll(size, exit_code, alive, out):
         f"===XMONITOR_ALIVE===\n{1 if alive else 0}\n"
         f"===XMONITOR_OUT===\n{out}"
     ), "")
-
-
-def _poll_once(plugin, poll_result):
-    cmds = plugin.commands()
-    assert len(cmds) == 1                # a running job polls with one command
-    result = plugin.parse([poll_result])
-    plugin.storage.apply(result)
-    return result
-
-
-class TestActions:
-    def test_every_action_exposed(self, plugin):
-        assert {a['action_id'] for a in plugin.get_actions()} == {"update_flake", "switch", "reboot"}
-
-    def test_reboot_asks_first(self, plugin):
-        reboot = next(a for a in plugin.get_actions() if a['action_id'] == "reboot")
-        assert reboot['confirm'] and reboot['variant'] == "danger"
-
-    def test_reboot_runs_on_the_target_as_root(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "switch_agent": "builder"})
-        plan = p.plan_action("reboot")
-        assert plan.command == "sudo -n systemctl reboot" and plan.agent is None
-
-    def test_reboot_honours_require_sudo(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "require_sudo": False})
-        assert p.plan_action("reboot").command == "systemctl reboot"
-
-    async def test_reboot_starts_no_job(self, plugin):
-        outcome = await _launch(plugin, "reboot")
-        assert outcome.success is True
-        assert plugin.jobs.running() is None
-
-    async def test_failed_reboot_logs_why(self, plugin):
-        plugin.plan_action("reboot")
-        outcome = plugin.interpret_action("reboot", CmdResult(1, "", "sudo: a password is required"))
-        assert outcome.success is False
-        assert any("password is required" in m for m, _ in outcome.logs)
-
-    async def test_reboot_refused_while_a_job_runs(self, plugin):
-        await _launch(plugin)
-        refused = plugin.plan_action("reboot")
-        assert any("already running" in m for m, _ in refused.logs)
-
-    def test_unknown_action_is_unhandled(self, plugin):
-        assert plugin.plan_action("nonsense") is None
-
-    async def test_switch_launch_records_running_job(self, plugin):
-        outcome = await _launch(plugin, pid=1234)
-        assert outcome.success is True
-        job = plugin.jobs.running()
-        assert job['kind'] == 'switch' and job['pid'] == 1234
-        assert "nixos-rebuild switch --flake /etc/nixos" in job['command']
-
-    async def test_update_launch_records_its_kind(self, plugin):
-        await _launch(plugin, "update_flake")
-        assert plugin.jobs.running()['kind'] == 'update'
-
-    async def test_update_refused_for_a_non_github_remote_flake(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "git+https://example.com/config"})
-        refused = await _launch(p, "update_flake")
-        assert refused.success is False
-        assert any("github: flake" in m for m, _ in refused.logs)
-        assert p.jobs.running() is None
-
-    async def test_update_refused_for_a_github_flake_without_a_key(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "github:owner/config"})
-        refused = await _launch(p, "update_flake")
-        assert refused.success is False and any("push_ssh_key" in m for m, _ in refused.logs)
-
-    async def test_update_launched_for_a_github_flake(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, **GITHUB_PUSH})
-        assert (await _launch(p, "update_flake")).success is True
-        assert "git" in p.jobs.running()['command'] and "push origin HEAD" in p.jobs.running()['command']
-
-    async def test_switch_allowed_for_a_remote_flake(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "github:owner/config"})
-        assert (await _launch(p, "switch")).success is True
-
-    async def test_launch_failure_records_no_job(self, plugin):
-        plugin.plan_action("switch")
-        outcome = plugin.interpret_action("switch", CmdResult(1, "", "setsid: not found"))
-        plugin.storage.apply(outcome)
-        assert outcome.success is False
-        assert plugin.jobs.running() is None
-
-    async def test_launch_failure_is_kept_in_the_history_with_its_output(self, plugin):
-        plugin.plan_action("switch")
-        plugin.interpret_action("switch", CmdResult(1, "", "setsid: not found"))
-        job = plugin.jobs.recent(limit=1)[0]
-        assert (job['kind'], job['state'], job['error']) == ("switch", "failed", "The job could not be launched")
-        assert [line['message'] for line in await plugin.jobs.log(job['id'])] == ["setsid: not found"]
-
-    async def test_reboot_is_kept_in_the_history(self, plugin):
-        plugin.plan_action("reboot")
-        plugin.interpret_action("reboot", CmdResult(0, "", ""))
-        job = plugin.jobs.recent(limit=1)[0]
-        assert (job['kind'], job['state'], job['command']) == ("reboot", "succeeded", "sudo -n systemctl reboot")
-
-    async def test_failed_reboot_keeps_its_output(self, plugin):
-        plugin.plan_action("reboot")
-        plugin.interpret_action("reboot", CmdResult(1, "", "sudo: a password is required"))
-        job = plugin.jobs.recent(limit=1)[0]
-        assert (job['state'], job['exit_code']) == ("failed", 1)
-        log = await plugin.jobs.log(job['id'])
-        assert [(line['stream'], line['message']) for line in log] == [("stderr", "sudo: a password is required")]
-
-    def test_job_panel_is_titled_jobs(self, plugin):
-        assert plugin.UI_SPEC['job_panel']['title'] == 'Jobs'
-
-    async def test_second_job_refused_while_one_runs(self, plugin):
-        await _launch(plugin)
-        refused = plugin.plan_action("update_flake")
-        assert any("already running" in m for m, _ in refused.logs)
-
-
-class TestJobPolling:
-    async def test_poll_while_running_keeps_job_running(self, plugin):
-        await _launch(plugin)
-        _poll_once(plugin, _poll(10, None, True, "building...\n"))
-        assert plugin.jobs.running() is not None
-        assert plugin.jobs.running()['progress'] == "building..."
-
-    async def test_completion_marks_succeeded(self, plugin):
-        await _launch(plugin)
-        _poll_once(plugin, _poll(20, 0, False, "activating the configuration...\n"))
-        assert plugin.jobs.running() is None
-        assert plugin.jobs.recent()[0]['state'] == 'succeeded'
-
-    async def test_nonzero_exit_is_failure(self, plugin):
-        await _launch(plugin)
-        _poll_once(plugin, _poll(5, 2, False, ""))
-        assert plugin.jobs.recent()[0]['state'] == 'failed'
-
-    async def test_vanished_process_is_failure(self, plugin):
-        await _launch(plugin)
-        _poll_once(plugin, _poll(5, None, False, ""))
-        assert plugin.jobs.recent()[0]['state'] == 'failed'
-
-    async def test_job_started_mid_cycle_does_not_swallow_the_probe(self, plugin):
-        cmds = plugin.commands()                           # asked for a probe and an evaluation: no job yet
-        assert len(cmds) == 2
-        await _launch(plugin, pid=1111)                    # the button lands before parse
-        result = plugin.parse([_probe(), CmdResult(0, "2222\n", "")])
-        plugin.storage.apply(result)
-        assert plugin.jobs.running()["pid"] == 1111        # the job was not judged by probe output
-        assert plugin.jobs.running_side("eval")["pid"] == 2222
-        assert result.snapshot["current"] == CURRENT       # and the probe was still read as a probe
-
-    async def test_unanswered_poll_leaves_the_job_running(self, plugin):
-        await _launch(plugin)
-        result = _poll_once(plugin, CmdResult(-1, "", "Agent 'x' is not connected"))
-        assert plugin.jobs.running() is not None
-        assert any("Could not poll" in msg for msg, _ in result.logs)
-
-    async def test_finished_job_forces_a_re_evaluation(self, plugin):
-        _collect(plugin)                                   # evaluation is now fresh
-        assert not _launches_eval(plugin)
-        await _launch(plugin)
-        _poll_once(plugin, _poll(20, 0, False, "done\n"))
-        assert _launches_eval(plugin)
 
 
 def _launch_eval(plugin, pid=4343):
@@ -740,11 +423,6 @@ class TestDetachedEvaluation:
         assert (job["kind"], job["pid"]) == ("eval", 4343)
         assert job["workdir"] == plugin.eval_workdir and job["command"] == command
         assert plugin.jobs.running() is None                # never the main job
-
-    async def test_a_running_evaluation_blocks_no_action(self, plugin):
-        _launch_eval(plugin)
-        assert {_state(plugin, a) for a in ("update_flake", "switch", "reboot")} == {'normal'}
-        assert (await _launch(plugin, "switch")).success is True
 
     async def test_the_workdir_is_fixed_per_monitor(self, plugin, make_plugin):
         assert plugin.eval_workdir == make_plugin(NixosUpgrade, BASE_CFG).eval_workdir
@@ -834,21 +512,6 @@ class TestDetachedEvaluation:
         assert restarted.jobs.recent(limit=1)[0]["id"] == job["id"]
         assert restarted.jobs.running_side("eval") is None
 
-    async def test_the_evaluation_waits_while_a_main_job_runs(self, plugin):
-        _launch_eval(plugin)
-        await _launch(plugin, "switch")
-        _poll_once(plugin, _poll(5, None, True, "switching\n"))   # only the switch is polled
-        _poll_once(plugin, _poll(5, 0, False, "done\n"))
-        _poll_eval(plugin, _finished())
-        assert plugin.jobs.running_side("eval") is None
-
-    async def test_a_job_finishing_during_an_evaluation_evaluates_again_after(self, plugin):
-        _launch_eval(plugin)
-        await _launch(plugin, "update_flake")
-        _poll_once(plugin, _poll(5, 0, False, "done\n"))         # the flake moved under the evaluation
-        _poll_eval(plugin, _finished())
-        assert _launches_eval(plugin)
-
     async def test_the_evaluation_is_polled_on_the_eval_agent(self, make_plugin):
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "eval_agent": "big-host", "configuration": "host"})
         job = _launch_eval(p)
@@ -861,12 +524,6 @@ class TestDetachedEvaluation:
         assert plugin.next_cycle_in() == 30
         p = make_plugin(NixosUpgrade, {**BASE_CFG, "job_poll": "1m"})
         assert p.next_cycle_in() == 60
-
-    async def test_evaluations_stay_out_of_the_job_panel(self, plugin):
-        _launch_eval(plugin)
-        await _launch(plugin, "switch")
-        excluded = plugin.UI_SPEC["job_panel"]["exclude_kinds"]
-        assert [j["kind"] for j in plugin.jobs.recent(exclude_kinds=excluded)] == ["switch"]
 
     def test_the_script_splits_back_into_both_results(self, make_plugin, tmp_path):
         import os
@@ -897,313 +554,6 @@ class TestDetachedEvaluation:
         parts = _split_eval_output("@@x-monitor-eval eval stdout\n" + TARGET + "\n", "killed")
         assert parts["eval"] == CmdResult(1, "", "killed")
         assert parts["metadata"] == CmdResult(1, "", "killed")
-
-
-AUTO_CFG = {**BASE_CFG, "auto_switch": True, "auto_switch_after": "30m"}
-
-
-def _age_drift(plugin, seconds: int) -> None:
-    """Move the stored start of the current drift `seconds` into the past."""
-    state = json.loads(plugin.data.latest_metric("flake_eval_epoch").metadata)
-    state["drift_since"] -= seconds
-    plugin.storage.apply(CollectResult(
-        metrics={"flake_eval_epoch": float(state["evaluated_epoch"])},
-        metadata={"flake_eval_epoch": json.dumps(state)},
-    ))
-
-
-def _launch_auto(plugin, pid=5151, result=None):
-    """Run the cycle that launches the automatic switch, returning its command."""
-    cmds = plugin.commands()
-    assert len(cmds) == 1 and "setsid" in cmds[0].text
-    outcome = plugin.parse([result if result is not None else CmdResult(0, f"{pid}\n", "")])
-    plugin.storage.apply(outcome)
-    return outcome
-
-
-class TestAutoSwitch:
-    async def test_off_by_default(self, plugin):
-        _collect(plugin)
-        _age_drift(plugin, 7200)
-        _collect(plugin)
-        assert plugin._auto_switch_due is None
-
-    async def test_waits_out_the_grace_period(self, make_plugin):
-        p = make_plugin(NixosUpgrade, AUTO_CFG)
-        result = _collect(p)
-        assert p._auto_switch_due is None
-        assert any("once the drift has lasted" in m for m, _ in result.logs)
-
-    async def test_launches_after_the_grace_period(self, make_plugin):
-        p = make_plugin(NixosUpgrade, AUTO_CFG)
-        _collect(p)
-        _age_drift(p, 1801)
-        _collect(p)
-        assert p._auto_switch_due == TARGET
-        _launch_auto(p, pid=5151)
-        job = p.jobs.running()
-        assert job["kind"] == "switch" and job["pid"] == 5151
-        assert "nixos-rebuild switch --flake /etc/nixos" in job["command"]
-
-    async def test_same_target_is_never_retried(self, make_plugin):
-        p = make_plugin(NixosUpgrade, AUTO_CFG)
-        _collect(p)
-        _age_drift(p, 1801)
-        _collect(p)
-        _launch_auto(p)
-        _poll_once(p, _poll(5, 1, False, "error: build failed\n"))
-        _collect(p)
-        assert p._auto_switch_due is None
-
-    async def test_a_new_target_restarts_the_grace_period(self, make_plugin):
-        p = make_plugin(NixosUpgrade, AUTO_CFG)
-        _collect(p)
-        _age_drift(p, 1801)
-        _collect(p)
-        _launch_auto(p)
-        _poll_once(p, _poll(5, 1, False, ""))
-        newer = "/nix/store/ffffffffffffffffffffffffffffffff-nixos-system-host-26.11"
-        _collect(p, eval_result=CmdResult(0, newer + "\n", ""))
-        assert p._auto_switch_due is None
-        _age_drift(p, 1801)
-        _rewind_eval(p, 0)
-        _collect(p)
-        assert p._auto_switch_due == newer
-
-    async def test_generation_newer_than_the_flake_is_left_alone(self, make_plugin):
-        p = make_plugin(NixosUpgrade, AUTO_CFG)
-        result = _collect(p, probe=_probe(created=int(time.time()) - 60))
-        _age_drift(p, 7200)
-        result = _collect(p, probe=_probe(created=int(time.time()) - 60))
-        assert p._auto_switch_due is None
-        assert any("newer than the flake" in m for m, _ in result.logs)
-
-    async def test_failed_evaluation_never_switches(self, make_plugin):
-        p = make_plugin(NixosUpgrade, AUTO_CFG)
-        _collect(p)
-        _rewind_eval(p, 7200)
-        _collect(p, eval_result=CmdResult(1, "", "error: undefined variable"))
-        _age_drift(p, 7200)
-        _collect(p)
-        assert p._auto_switch_due is None
-
-    async def test_matching_closure_clears_the_drift(self, make_plugin):
-        p = make_plugin(NixosUpgrade, AUTO_CFG)
-        _collect(p)
-        _collect(p, probe=_probe(current=TARGET))
-        _rewind_eval(p, 7200)
-        _collect(p, probe=_probe(current=TARGET), eval_result=CmdResult(0, TARGET + "\n", ""))
-        state = json.loads(p.data.latest_metric("flake_eval_epoch").metadata)
-        assert state["drift_since"] is None
-
-    async def test_unreachable_agent_retries_the_launch(self, make_plugin):
-        p = make_plugin(NixosUpgrade, AUTO_CFG)
-        _collect(p)
-        _age_drift(p, 1801)
-        _collect(p)
-        _launch_auto(p, result=CmdResult(-1, "", "Agent 'x' is not connected"))
-        assert p.jobs.running() is None
-        _collect(p)
-        assert p._auto_switch_due == TARGET
-
-    async def test_failed_launch_is_not_retried(self, make_plugin):
-        p = make_plugin(NixosUpgrade, AUTO_CFG)
-        _collect(p)
-        _age_drift(p, 1801)
-        _collect(p)
-        outcome = _launch_auto(p, result=CmdResult(1, "", "setsid: not found"))
-        assert outcome.status == "failed"
-        _collect(p)
-        assert p._auto_switch_due is None
-
-
-SCHEDULE_CFG = {**BASE_CFG, "update_at": "02:00", "build_at": "02:30"}
-
-
-def _rewind_schedule(plugin, kind: str, days: int = 1) -> None:
-    """Move a schedule's handled slot `days` back, as if its slots since had passed unrun."""
-    state = json.loads(plugin.data.latest_metric("flake_eval_epoch").metadata)
-    state["scheduled"][kind] -= days * 86400
-    plugin.storage.apply(CollectResult(
-        metrics={"flake_eval_epoch": float(state["evaluated_epoch"])},
-        metadata={"flake_eval_epoch": json.dumps(state)},
-    ))
-
-
-def _launch_scheduled(plugin, pid=6161, result=None):
-    """Run the cycle that launches a scheduled job, returning its outcome."""
-    cmds = plugin.commands()
-    assert len(cmds) == 1 and "setsid" in cmds[0].text
-    outcome = plugin.parse([result if result is not None else CmdResult(0, f"{pid}\n", "")])
-    plugin.storage.apply(outcome)
-    return outcome
-
-
-class TestSchedule:
-    async def test_off_by_default(self, plugin):
-        _collect(plugin)
-        assert plugin._scheduled_due() is None
-
-    async def test_enabling_never_fires_at_once(self, make_plugin):
-        p = make_plugin(NixosUpgrade, SCHEDULE_CFG)
-        _collect(p)
-        assert p._scheduled_due() is None
-        assert len(p.commands()) == 1 and "setsid" not in p.commands()[0].text
-
-    async def test_a_passed_slot_launches_the_job(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "02:30"})
-        _collect(p)
-        _rewind_schedule(p, "build")
-        outcome = _launch_scheduled(p, pid=6161)
-        job = p.jobs.running()
-        assert job["kind"] == "build" and job["pid"] == 6161
-        assert "build --no-link" in job["command"]
-        assert any("Scheduled build started" in m for m, _ in outcome.logs)
-
-    async def test_update_runs_before_build(self, make_plugin):
-        p = make_plugin(NixosUpgrade, SCHEDULE_CFG)
-        _collect(p)
-        _rewind_schedule(p, "update")
-        _rewind_schedule(p, "build")
-        _launch_scheduled(p)
-        assert p.jobs.running()["kind"] == "update"
-        _poll_once(p, _poll(5, 0, False, "done\n"))
-        _launch_scheduled(p)
-        assert p.jobs.running()["kind"] == "build"
-
-    async def test_a_handled_slot_survives_a_restart(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "02:30"})
-        _collect(p)
-        _rewind_schedule(p, "build")
-        _launch_scheduled(p)
-        _poll_once(p, _poll(5, 0, False, "done\n"))
-        restarted = make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "02:30"})
-        assert restarted._scheduled_due() is None
-
-    async def test_several_missed_slots_run_once(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "02:30"})
-        _collect(p)
-        _rewind_schedule(p, "build", days=3)
-        _launch_scheduled(p)
-        _poll_once(p, _poll(5, 0, False, "done\n"))
-        assert p._scheduled_due() is None
-
-    async def test_a_running_job_holds_the_schedule(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "02:30"})
-        _collect(p)
-        await _launch(p)
-        _rewind_schedule(p, "build")
-        _poll_once(p, _poll(5, None, True, "switching\n"))
-        assert p.jobs.running()["kind"] == "switch"
-        _poll_once(p, _poll(5, 0, False, "done\n"))
-        _launch_scheduled(p)
-        assert p.jobs.running()["kind"] == "build"
-
-    async def test_unreachable_agent_retries_the_launch(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "02:30"})
-        _collect(p)
-        _rewind_schedule(p, "build")
-        _launch_scheduled(p, result=CmdResult(-1, "", "Agent 'x' is not connected"))
-        assert p.jobs.running() is None
-        assert p._scheduled_due() is not None
-
-    async def test_failed_launch_is_not_retried(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "02:30"})
-        _collect(p)
-        _rewind_schedule(p, "build")
-        outcome = _launch_scheduled(p, result=CmdResult(1, "", "setsid: not found"))
-        assert outcome.status == "failed"
-        assert p._scheduled_due() is None
-
-    async def test_launch_runs_on_the_switch_agent(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "02:30", "switch_agent": "builder"})
-        _collect(p)
-        _rewind_schedule(p, "build")
-        assert p.commands()[0].agent == "builder"
-
-    async def test_unwritable_flake_never_updates_and_says_so(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "github:owner/config", "update_at": "02:00"})
-        _collect(p)
-        _rewind_schedule(p, "update")
-        result = _collect(p)
-        assert p._scheduled_due() is None
-        assert result.status == "warning"
-        assert any("Scheduled update never runs" in m for m, _ in result.logs)
-
-    def test_malformed_time_is_rejected(self, make_plugin):
-        with pytest.raises(ValueError, match="build_at"):
-            make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "half past two"})
-
-    def test_latest_slot_is_never_in_the_future(self):
-        from datetime import datetime, time as tod
-        from x_monitor.plugins.nixos_upgrade import _latest_slot
-        now = datetime(2026, 10, 10, 1, 0).timestamp()
-        assert _latest_slot(tod(2, 30), now) == datetime(2026, 10, 9, 2, 30).timestamp()
-        assert _latest_slot(tod(0, 30), now) == datetime(2026, 10, 10, 0, 30).timestamp()
-
-    async def test_detail_rows_show_each_schedule(self, make_plugin):
-        p = make_plugin(NixosUpgrade, SCHEDULE_CFG)
-        _collect(p)
-        rows = {r["label"]: r["value"] for r in p._detail_rows}
-        assert rows["Scheduled update"].startswith("Daily at 02:00")
-        assert rows["Scheduled build"].startswith("Daily at 02:30")
-
-
-class TestBuildAgent:
-    def test_defaults_to_the_switch_agent(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "switch_agent": "builder"})
-        assert p.plan_action("build").agent == "builder"
-
-    def test_runs_the_build_apart_from_the_switch(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_agent": "builder"})
-        assert p.plan_action("build").agent == "builder"
-        p._pending_launch = None
-        assert p.plan_action("switch").agent is None
-        p._pending_launch = None
-        assert p.plan_action("update_flake").agent is None
-
-    async def test_a_build_is_polled_where_it_runs(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_agent": "builder"})
-        await _launch(p, "build")
-        assert p.commands()[0].agent == "builder"
-
-    async def test_a_switch_is_polled_on_the_target(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_agent": "builder"})
-        await _launch(p, "switch")
-        assert p.commands()[0].agent is None
-
-    async def test_a_scheduled_build_launches_on_the_build_agent(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_at": "02:30", "build_agent": "builder"})
-        _collect(p)
-        _rewind_schedule(p, "build")
-        assert p.commands()[0].agent == "builder"
-
-    async def test_cancel_reaches_the_build_agent(self, make_plugin):
-        from x_monitor.core.coordination.jobs import JobsGateway
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "build_agent": "builder"})
-        sent = []
-
-        async def cancel_exec(command, agent=None):
-            sent.append((command, agent))
-
-        p.jobs = JobsGateway(p.jobs._db, p, cancel_exec=cancel_exec)
-        await _launch(p, "build", pid=7171)
-        assert await p.jobs.cancel() is True
-        assert len(sent) == 1 and sent[0][1] == "builder" and "7171" in sent[0][0]
-
-
-class TestSwitchWrapping:
-    def test_wrapper_runs_outside_sudo(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "switch_wrapper": ["systemd-inhibit", "--what=sleep"]})
-        assert p._switch_command().startswith("systemd-inhibit --what=sleep sudo -n nixos-rebuild switch")
-
-    def test_post_switch_keeps_the_switch_exit_status(self, make_plugin):
-        import subprocess
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "rebuild_bin": "false", "require_sudo": False,
-                                       "post_switch": "echo after"})
-        run = subprocess.run(["sh", "-c", "{ " + p._switch_command() + "; }"],
-                             capture_output=True, text=True)
-        assert run.stdout == "after\n" and run.returncode == 1
 
 
 class TestUI:
@@ -1244,40 +594,11 @@ class TestUI:
         _collect(plugin, probe=_probe(kernels=(KERNEL, NEW_KERNEL)))
         assert plugin._reboot_text == 'REQUIRED'
 
-    async def test_update_button_hidden_for_a_non_github_remote_flake(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "git+https://example.com/config"})
-        assert _state(p, "update_flake") == 'hidden'
-
-    async def test_update_button_hidden_for_a_github_flake_without_a_key(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, "flake": "github:owner/config"})
-        assert _state(p, "update_flake") == 'hidden'
-
-    async def test_update_button_shown_for_a_github_flake(self, make_plugin):
-        p = make_plugin(NixosUpgrade, {**BASE_CFG, **GITHUB_PUSH})
-        assert _state(p, "update_flake") == 'normal'
-
-    async def test_every_action_is_normal_while_no_job_runs(self, plugin):
-        assert {_state(plugin, a) for a in ("update_flake", "switch", "reboot")} == {'normal'}
-
-    async def test_a_running_switch_fills_its_button_and_greys_out_the_rest(self, plugin):
-        await _launch(plugin, "switch")
-        assert _state(plugin, "switch") == 'accent'
-        assert _state(plugin, "update_flake") == 'disabled'
-        assert _state(plugin, "reboot") == 'disabled'
-
-    async def test_a_running_update_fills_its_own_button(self, plugin):
-        await _launch(plugin, "update_flake")
-        assert _state(plugin, "update_flake") == 'accent'
-        assert _state(plugin, "switch") == 'disabled'
-
-    async def test_a_running_build_greys_out_every_button(self, plugin):
-        await _launch(plugin, "build")
-        assert {_state(plugin, a) for a in ("update_flake", "switch", "reboot")} == {'disabled'}
-
     def test_details_table_has_a_title(self, plugin):
         assert plugin.UI_SPEC['tables']['details']['title'] == 'Deployment details'
 
-    async def test_job_controls_live_in_the_header_only(self, plugin):
+    async def test_shows_no_job_panel(self, plugin):
         spec = plugin.UI_SPEC
-        assert 'run_action_id' not in spec['job_panel'] and 'buttons' not in spec
+        assert 'job_panel' not in spec and 'buttons' not in spec
+        assert all('jobs' not in row for row in spec['layout'])
         assert spec['cards']['flake_card']['value'] == "/etc/nixos"

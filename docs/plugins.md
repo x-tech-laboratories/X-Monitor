@@ -73,8 +73,8 @@ config examples. For what X-Monitor is and how to run it, see the
 | [`ddns_updater`](#ddns_updater)         | Dynamic DNS record kept current       | Public IP lookup + DNS query (in-process)        | `in_sync`, `last_update_epoch`                   | Force Update |
 | [`systemd_service`](#systemd_service)   | systemd unit state / last run         | SSH (`systemctl`)                                | `active` *or* `last_run_epoch`, `last_run_success` | Restart, Stop, Enable, Disable |
 | [`service_list`](#service_list)         | Systemd unit browser and control      | SSH (`systemctl`)                                | `services_total`, `services_active`, `services_failed` | Start, Stop, Restart, Enable, Disable, View Status |
-| [`nixos_upgrade`](#nixos_upgrade)       | NixOS system vs. the flake it deploys from | SSH (`nix eval`, `nix flake metadata`)      | `up_to_date`, `reboot_required`, `flake_reachable` | Update Flake, Rebuild & Switch, Reboot |
-| [`nix_gc`](#nix_gc)                     | Nix store garbage collection           | SSH (`df`, `systemctl`, `journalctl`)             | `last_gc_epoch`, `last_gc_freed_gb`, `store_used_pct` | Collect Garbage |
+| [`nixos_upgrade`](#nixos_upgrade)       | NixOS system vs. the flake it deploys from | SSH (`nix eval`, `nix flake metadata`)      | `up_to_date`, `reboot_required`, `flake_reachable` | — |
+| [`nix_gc`](#nix_gc)                     | Nix store garbage collection           | SSH (`df`, `systemctl`, `journalctl`)             | `last_gc_epoch`, `last_gc_freed_gb`, `store_used_pct` | — |
 | [`attic_push`](#attic_push)             | Fleet closures built and pushed to Attic | SSH (`nix eval`, `nix path-info`)                 | `targets_built`, `targets_pushed`, `missing_paths` | — |
 | [`vuln_scan`](#vuln_scan)               | Network-facing vulnerabilities of a host | SSH (`nmap --script vuln`, run from the scanning host) | `vulnerable`, `suspected`, `open_ports`      | — |
 | [`smart`](#smart)                       | SMART health of every physical disk    | SSH (`smartctl`)                                | `disks_total`, `disks_ok`, `disks_failed`       | — |
@@ -106,7 +106,7 @@ config examples. For what X-Monitor is and how to run it, see the
 | [`filesystems`](#filesystems)           | All mounted filesystems (auto-discovered) | SSH (`df`)                                    | `worst_used_pct`, `fs_<mount>_used_pct`         | — |
 | [`folders`](#folders)                   | Sizes of arbitrary directories        | SSH (`du`)                                        | `worst_folder_gb`, `folder_<path>_gb`           | — |
 | [`vms`](#vms)                           | libvirt/KVM virtual machines          | SSH (`virsh`)                                     | `vms_total`, `vms_running`, `vms_stopped`       | Running toggle (per expected VM) |
-| [`host_control`](#host_control)         | Host power, boot and identify controls | SSH (`powerprofilesctl`, `bootctl`/GRUB/`efibootmgr`, `/sys/power`) | `power_profiles`, `boot_entries`, `suspend_supported` | Reboot, Shut Down, Suspend, Power Profile, Next Boot, Identify (each opt-in) |
+| [`host_control`](#host_control)         | Host power and identify controls | SSH (`powerprofilesctl`, `/sys/power`) | `power_profiles`, `suspend_supported` | Reboot, Shut Down, Suspend, Power Profile, Identify (each opt-in) |
 | [`cloud`](#cloud)                       | Cloud instance metadata (AWS/GCP/Azure) | SSH (metadata endpoint)                         | `on_cloud`                                      | — |
 | [`x_monitor_self`](#x_monitor_self)             | X-Monitor itself: memory, CPU, late and slow monitors | Local (`/proc/self`, engine state)     | `memory_mb`, `monitors_late`, `monitors_slow`, `slowest_cycle_seconds` | — |
 | [`group`](#group)                       | Container for nested monitors         | — (aggregates children)                          | —                                               | — |
@@ -181,7 +181,7 @@ An action can also run because of what a monitor sees rather than the time. Each
 
 Every cycle the monitor records, polled or pushed by its agent, is checked against its triggers. An entry runs once each time its condition becomes true and has held for `for`, and it is armed again only once a cycle shows the condition cleared, so a monitor that stays failed runs the action once, not every cycle. A cycle that does not report what the entry watches, such as one without that metric, neither starts nor clears it. The run is recorded before the action starts, so a restart never repeats it, and the time the condition started holding survives a restart too. A triggered run goes through the same path as the button, logs its outcome on the monitor, and appears on the monitor's page and on the Schedules page next to the scheduled ones. Changing an entry's condition, `for` or `args` starts it afresh.
 
-A metric's name is the one shown in the monitor's metrics and exports. The NixOS monitor's own `auto_switch` is the better way to switch on drift, since it also refuses to roll back a generation newer than the flake.
+A metric's name is the one shown in the monitor's metrics and exports.
 
 ### Custom actions
 
@@ -562,62 +562,35 @@ The service browser renders a sortable table of all units. Its Active and Enable
 ### `nixos_upgrade`
 Tracks a NixOS host against the flake it is deployed from: whether the running system *is* the one that flake currently evaluates to, how old the flake and its locked inputs are, and whether the booted kernel is still the current one.
 
+It only reads: updating the flake, building, switching and rebooting are X-Nix's, and the old management keys (`auto_switch`, `update_at`, `switch_agent` and the rest) are ignored if a config still has them.
+
 Drift is a comparison of two store paths — `readlink -f /run/current-system` against what `nix eval` says `…config.system.build.toplevel` is — so it is exact rather than inferred from a `configurationRevision` that a config may never set.
 
 Two cadences share one monitor. Every `interval` it runs one cheap script (`readlink`, `stat`, `nixos-version`) and re-checks drift against the last evaluation, so a completed switch clears the flag on the next cycle. Every `eval_interval` it additionally runs `nix eval` and `nix flake metadata` — the expensive half. The last evaluation is stored with the monitor, so a X-Monitor restart resumes that schedule instead of re-evaluating. A failed evaluation is not held for the whole `eval_interval`: it is retried after `retry_interval`, so a fixed flake or a restored network clears the error promptly. A poll from the dashboard runs the full evaluation, unless one is already running.
 
-The evaluation runs as one detached job on the evaluating host, so restarting or redeploying X-Monitor never kills an evaluation in flight; the restarted monitor adopts the running job and keeps polling it. While it runs, every cycle still runs the probe and judges drift against the stored evaluation, and the monitor polls every `job_poll` rather than every `interval`. When it finishes, its result replaces the stored one. `eval_timeout` bounds the whole run. An evaluation never blocks an action, and while a build, switch or update runs it is polled only once that job has ended. Each evaluation is kept in the job history with its output, but left out of the **Jobs** table so the hourly runs never push out the actions. When the running closure changes between evaluations — a deploy landed — the monitor re-evaluates before judging drift, so a system that is *newer* than the stored target is not reported as out of date.
-
-Both actions launch a **detached** job on the target, polled to completion by this monitor's own cycle (see [Job control](develop.md#job-control)), so a `nixos-rebuild switch` survives a dropped SSH connection and a X-Monitor restart. A running job is polled every `job_poll`. Every update, build, switch and reboot is listed in the **Jobs** table, a launch that failed included, and its Log button opens the command and its output, following new lines while the job runs.
+The evaluation runs as one detached job on the evaluating host, so restarting or redeploying X-Monitor never kills an evaluation in flight; the restarted monitor adopts the running job and keeps polling it. While it runs, every cycle still runs the probe and judges drift against the stored evaluation, and the monitor polls every `job_poll` rather than every `interval`. When it finishes, its result replaces the stored one. `eval_timeout` bounds the whole run. Each evaluation is kept in the job history with its output. When the running closure changes between evaluations — a deploy landed — the monitor re-evaluates before judging drift, so a system that is *newer* than the stored target is not reported as out of date.
 
 | Option | Description |
 |--------|-------------|
 | `flake` | Flake reference the host is deployed from (default: `/etc/nixos`). Either a local path (`/etc/nixos`, `path:…`, `git+file://…`) or a remote ref (`github:owner/config`) |
 | `configuration` | `nixosConfigurations` attribute to compare against (default: the target's own hostname, resolved on the target) |
-| `eval_agent` | Run `nix eval` and `nix flake metadata` on this agent's host instead of the target (default: unset, evaluate on the target). For a target too small to evaluate its own flake — a 2 GB SBC will swap itself to death doing it. The probe and both actions still run on the target |
+| `eval_agent` | Run `nix eval` and `nix flake metadata` on this agent's host instead of the target (default: unset, evaluate on the target). For a target too small to evaluate its own flake — a 2 GB SBC will swap itself to death doing it. The probe still runs on the target |
 | `eval_interval` | How often to evaluate the flake and read its metadata (default: `1h`) |
 | `retry_interval` | How soon to re-evaluate after a failed evaluation (default: `15m`, never longer than `eval_interval`) |
 | `eval_timeout` | Time an evaluation may take before it is killed (default: `10m`) — a cold evaluation of a large config is not fast |
-| `job_poll` | How often a running evaluation or job is polled (default: `30s`) |
+| `job_poll` | How often a running evaluation is polled (default: `30s`) |
 | `max_input_age` | Warn once the oldest locked input is older than this (default: unset, never warns) |
 | `drift_status` | Status when the system is out of date: `warning` (default) or `failed` |
 | `reboot_status` | Status when a reboot is pending: `warning` (default), `failed`, or `online` to ignore it |
-| `require_sudo` | Prefix every action with `sudo -n` (default: `true`) |
-| `nix_bin` / `rebuild_bin` | Binaries to invoke (defaults: `nix` / `nixos-rebuild`) |
+| `nix_bin` | Nix binary to invoke (default: `nix`) |
 | `nix_args` | Extra arguments on every `nix` call (default: `["--extra-experimental-features", "nix-command flakes"]`; set `[]` to drop them) |
-| `rebuild_args` | Extra arguments on `nixos-rebuild switch`, e.g. `["--use-remote-sudo"]` |
-| `build_host` | Compile the switch on this host instead of the target, as `nixos-rebuild --build-host` (default: unset, build on the target). For a target that cannot build its own closure; pairs with `rebuild_args: ["--max-jobs", "0"]` to stop it building at all. Needs SSH from the target's root to a nix-trusted user on that host |
-| `build_args` | Arguments for the `build` action (default: `["--keep-going", "--print-build-logs"]`). `--keep-going` so one unbuildable package costs its own path rather than the rest of the closure, while the job still exits non-zero |
-| `build_root_dir` | Keep the `build` action's result as a GC root at `<dir>/<id>`, replaced by the next successful build (default: unset, `--no-link`). The directory must be writable by the user the build runs as. A root lets a cache pusher that walks `/nix/var/nix/gcroots/auto` find the closure, and stops a garbage collection deleting it before it is deployed |
-| `build_agent` | Run the build job on this agent's host instead (default: `switch_agent`). Lets one host build every other host's closure to warm a shared cache while each switch stays where it is; the build reads the flake itself, so it needs no access to the target |
-| `switch_agent` | Run the switch and update jobs on this agent's host instead of the target (default: unset, run on the target). The probe stays on the target, so drift is still read from the machine it describes. With `target_host` this lets one host build and activate every other's closure |
-| `target_host` | The machine the closure is copied to and activated on, as `nixos-rebuild --target-host`, e.g. `root@thor.technet` (default: unset, activate locally). Only meaningful with `switch_agent`, and needs SSH from that agent's root to this host |
-| `auto_switch` | Launch Rebuild & Switch without being asked once drift outlasts `auto_switch_after` (default: `false`) |
-| `auto_switch_after` | How long drift must last before an automatic switch (default: `30m`), so a deploy of your own lands first |
-| `update_at` | Launch Update Flake every day at this local time, e.g. `"02:00"` (default: unset). Needs a flake Update Flake can write; otherwise the monitor warns and never runs it |
-| `build_at` | Launch the build action every day at this local time, e.g. `"02:30"` (default: unset) |
-| `switch_wrapper` | Command the switch runs under, outside `sudo`, e.g. `["systemd-inhibit", "--what=idle:sleep", "--mode=block"]` to keep a laptop or phone awake through it |
-| `push_ssh_key` | Private key, on the host Update Flake runs on, that can push to a `github:` flake's repo, such as a write deploy key. Update Flake is offered for a `github:` flake only when this is set. `github.com` must already be in that host's known_hosts, since the host key is checked strictly (default: unset) |
-| `commit_author` | Author of the commit Update Flake pushes to a `github:` flake (default: `X-Monitor <x-monitor@localhost>`) |
-| `commit_message` | Subject of that commit; the updated inputs are listed below it (default: `chore(flake): update inputs`) |
-| `post_switch` | Shell run after every switch, whether it succeeded or not, e.g. to restart a session the switch stopped; the job keeps the switch's own exit status |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
 
 **Metrics**: `up_to_date` (1/0), `reboot_required` (1/0), `flake_reachable` (1/0), `generation`, `last_switch_epoch`, `flake_last_modified_epoch`, `inputs_last_modified_epoch`, `flake_eval_epoch`
 
-**Actions**: Update Flake (`nix flake update`), Rebuild & Switch (`nixos-rebuild switch --flake`), Reboot (`systemctl reboot`, after a confirmation)
-
-Reboot runs on the target itself, never on `switch_agent`, and is refused while a job is running so it cannot cut a switch short.
-
 **Status**: `failed` when the flake evaluates and errors — a config that no longer builds is a real failure, and the error is logged; `drift_status` when the two closures differ; `reboot_status` when the booted `initrd`/`kernel`/`kernel-modules`/`systemd` are not the current ones; `warning` when the oldest locked input exceeds `max_input_age`; `unavailable` when the target is unreachable, `/run/current-system` cannot be read, `nix flake metadata` fails, or the evaluation host never answered. An evaluation that timed out or ended without reporting counts as one that errored.
 
-With `auto_switch`, drift that has lasted `auto_switch_after` launches the same job the button does, and the job panel shows it. Each target closure gets one attempt: a switch that fails, or succeeds without converging, is not repeated until the flake evaluates to something new. It never runs off a failed evaluation, and it never runs when the running generation was created after the flake last changed, because that system came from somewhere else (an unpushed checkout, a local test build) and switching would roll it back. That case still reports drift.
-
-With `update_at` or `build_at`, that job launches once a day at the given local time, on `switch_agent`'s host like the button. Each slot runs once: the slot is stored with the monitor when the job launches, so a restart never repeats it, and a slot missed while X-Monitor was down runs once when it returns, however many days it missed. Turning a schedule on never fires at once; it first runs at its next slot. A running job holds it until the job finishes, and when both are due the update goes first. Stagger the clocks of monitors that depend on one another, such as the monitor that updates a shared flake and those that build from it: a monitor runs one job at a time, but nothing orders jobs across monitors.
-
-Update Flake works on a local flake path in place, as root. On a `github:owner/repo[/branch]` flake with a `push_ssh_key` it runs as the monitoring user in a fresh shallow clone over SSH: `nix flake update`, a commit of `flake.lock` if anything moved, and a push back to the same branch. A branch that moved in the meantime rejects the push and the job fails, with nothing left behind. The pushed revision is new drift for every monitor on that flake, so with `auto_switch` one button updates the whole fleet. Any other remote ref is not offered the button: update it where it lives and X-Monitor picks up the new revision on its next evaluation. Checking never mutates anything: `--no-write-lock-file` is passed to both commands, and `--refresh` only for a remote ref, where a mutable branch would otherwise be served from Nix's tarball cache.
-
-> Both actions run as root by default (`require_sudo`), so the SSH user needs passwordless sudo for `nixos-rebuild`, `nix` and `systemctl reboot`. Set `require_sudo: false` when X-Monitor already connects as root, or add `--use-remote-sudo` to `rebuild_args` for the build-locally-activate-remotely arrangement.
+Checking never mutates anything: `--no-write-lock-file` is passed to both commands, and `--refresh` only for a remote ref, where a mutable branch would otherwise be served from Nix's tarball cache. Nothing it runs needs root.
 
 ```yaml
 # Local checkout on the host, with a staleness limit on its inputs
@@ -655,7 +628,7 @@ The last collection's epoch, outcome and yield are stored with the monitor, so a
 
 Profiles are discovered rather than configured: every symlink under `/nix/var/nix/profiles/` and `/nix/var/nix/profiles/per-user/*/` whose target is its own generation link. Their generation counts and the age of the oldest generation still on disk are what a `--delete-older-than` collection is supposed to be bounding, so they are the direct evidence that it is working.
 
-The action launches a **detached** `nix-collect-garbage` on the target, polled to completion by this monitor's own cycle (see [Job control](develop.md#job-control)), so a collection that runs for an hour survives a dropped connection and a X-Monitor restart.
+It only reads: collecting on demand is X-Nix's, and the old `require_sudo`, `gc_bin` and `gc_args` keys are ignored.
 
 | Option | Description |
 |--------|-------------|
@@ -668,14 +641,9 @@ The action launches a **detached** `nix-collect-garbage` on the target, polled t
 | `warning` / `threshold` | Store filesystem percent used at which to warn / fail (defaults: `80` / `90`) |
 | `max_generations` | Warn once any one profile keeps more than this many generations (default: unset, never warns) |
 | `max_generation_age` | Warn once the oldest generation on disk is older than this (default: unset, never warns) |
-| `require_sudo` | Prefix the action with `sudo -n` (default: `true`) |
-| `gc_bin` | Binary the action invokes (default: `nix-collect-garbage`) |
-| `gc_args` | Arguments it is given (default: `["--delete-older-than", "7d"]`) |
 | `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
 
 **Metrics**: `last_gc_epoch`, `last_gc_success` (1/0), `last_gc_freed_gb`, `last_gc_deleted`, `next_gc_epoch`, `timer_active` (1/0), `store_used_pct`, `store_size_gb`, `store_used_gb`, `store_avail_gb`, `store_paths`, `gc_roots`, `profiles`, `generations`, `oldest_generation_epoch`
-
-**Actions**: Collect Garbage (`nix-collect-garbage`)
 
 **Status**: `failed` when the last collection failed, when it is older than `max_age` (`stale_status`), or when the store filesystem is at `threshold`; `warning` at the `warning` mark, past `max_generations` or `max_generation_age`, and when the timer is inactive (`timer_status`); `unavailable` when the store cannot be read at all, when the probe returned nothing, or when nothing on the host records that a collection ever ran.
 
@@ -683,7 +651,7 @@ A collection currently in flight is never counted as stale, so a run that overru
 
 > The journal, not the unit, is what dates a run and decides whether it succeeded: systemd drops an inactive unit's `InactiveEnterTimestamp` and resets its `Result` to `success` across a daemon re-exec — which is exactly what a NixOS switch does — so `systemctl show` alone reports a run that failed hours ago as a healthy unit that has never run. `Result` is consulted only as a fallback, when the journal holds no outcome line at all. A failed run is reported with the `error:` line the journal recorded for it, and keeps whatever it did manage to free before failing.
 >
-> The SSH user therefore needs journal read access (`systemd-journal`) for the freshness check, and passwordless `sudo` for `nix-collect-garbage` if the action is to be used.
+> The SSH user therefore needs journal read access (`systemd-journal`) for the freshness check.
 
 ```yaml
 # The stock NixOS weekly collection, alarming if two pass without one
@@ -703,7 +671,6 @@ A collection currently in flight is never counted as stale, so a run that overru
   warning: 70
   threshold: 85
   max_generation_age: 30d
-  gc_args: ["--delete-older-than", "3d"]
   ssh_config:
     host: "sbc.example.com"
 ```
@@ -717,7 +684,7 @@ One script, run on the building host, evaluates each tracked target from the fla
 
 The script runs as a detached job on the target, so restarting or redeploying X-Monitor never kills a run in flight; the restarted monitor adopts the running job and keeps polling it. A cycle with no job running launches the check, and while it runs the monitor polls it every `job_poll` rather than every `interval`, keeping the previous snapshot and status on the dashboard. When it finishes, its whole output becomes the new snapshot. Each run, its progress and its output are listed under **Runs**.
 
-Each row of **Tracked targets** has a **Build** button, and a **Push** button when `push_command` is set. Both run as detached actions on the building host, listed under **Runs** with their output, and end by checking that one target again, so its row shows the outcome as soon as the action finishes instead of at the next check. Build runs `nix build` on the target from the flake's latest revision, then, when `push_command` is set, pushes what it built, so the check that follows never races a store watcher's upload. Push runs `push_command` with the store path the row shows appended, and is refused for a target that is not built.
+It only reads: building and pushing the targets are X-Nix's, and the check never writes to the build-root folder. A target named in `drop_pushed` is one X-Nix keeps only in the cache: once it is fully pushed, X-Nix writes its closure's path list beside its build root as `<link>.closure` and removes the root. The check reads that list for a target no longer in the local store, so it still counts as built and its paths are still checked against the cache. The old `build_args` and `push_command` keys are ignored.
 
 | Option | Description |
 |--------|-------------|
@@ -731,10 +698,9 @@ Each row of **Tracked targets** has a **Build** button, and a **Push** button wh
 | `timeout` | Time a run may take before it is killed (default: `30m`) |
 | `job_poll` | How often a running check is polled (default: `30s`) |
 | `nix_bin` / `nix_args` | Nix binary and its arguments (defaults: `nix`, `["--extra-experimental-features", "nix-command flakes"]`) |
-| `build_args` | Extra arguments to Build's `nix build` (default: `["--keep-going", "--print-build-logs"]`) |
-| `build_root_dir` | Directory Build links each result into, so it stays a GC root until the next build of that target replaces it; unset builds with `--no-link` |
-| `build_links` | Link name per target under `build_root_dir`, such as the name a nightly build already uses (default: `<monitor id>-<target>`) |
-| `push_command` | Shell command that uploads one store path, given as its last argument, such as `attic push fleet`; unset hides Push |
+| `build_root_dir` | Directory X-Nix keeps each target's build root in, where the closure lists of `drop_pushed` targets are read from (default: unset, no lists are read) |
+| `build_links` | Link name per target under `build_root_dir` (default: `<monitor id>-<target>`) |
+| `drop_pushed` | Targets kept only in the cache, judged by their `<link>.closure` list once they are gone from the local store |
 
 **Metrics**: `targets_total`, `targets_built`, `targets_pushed`, `missing_paths`
 
@@ -749,7 +715,6 @@ Each row of **Tracked targets** has a **Build** button, and a **Push** button wh
   flake: "github:example/fleet"
   configurations: ["builder", "laptop", "sbc"]
   cache_url: "https://attic.example/fleet"
-  push_command: "attic push fleet"
   agent: "builder"
 ```
 
@@ -1732,14 +1697,13 @@ Monitors libvirt/KVM virtual machines over SSH via `virsh list --all`, counting 
 ---
 
 ### `host_control`
-A host's power and boot controls, one monitor per host. It shows the current power profile and the ones available, the boot entries with the default and the one-shot next-boot entry, and whether the host can suspend, and offers the actions below. It is a control surface rather than a health check: it is **online** whenever the host answers, and a host without one of the tools simply shows that control as `n/a`.
+A host's power controls, one monitor per host. It shows the current power profile and the ones available, and whether the host can suspend, and offers the actions below. Boot entries and the one-shot next boot are X-Nix's; an old `next_boot` in `allow:` is ignored. It is a control surface rather than a health check: it is **online** whenever the host answers, and a host without one of the tools simply shows that control as `n/a`.
 
 What it reads, and from where:
 
 | Control | Read with | Fallbacks |
 |---------|-----------|-----------|
 | Power profile | `powerprofilesctl list` (power-profiles-daemon) | `tuned-adm list`, then `/sys/firmware/acpi/platform_profile` |
-| Boot entries | `bootctl list --json=short` (systemd-boot), with the one-shot entry from the `LoaderEntryOneShot` EFI variable | `grub-editenv list` plus the `menuentry` titles in `grub.cfg` (GRUB), then `efibootmgr` (`BootOrder` / `BootNext`) |
 | Suspend | `/sys/power/state` (`mem` or `freeze`) | — |
 
 **Every action is off** unless it is listed under `allow:`. The dashboard only shows the buttons of allowed actions, and asks for confirmation, naming the host, before each one. An action that is not allowed is refused and logged (`… refused: not in allow`); every attempt, allowed or refused, is logged to the monitor's events with the action and its outcome.
@@ -1750,47 +1714,43 @@ What it reads, and from where:
 | Shut Down | `shutdown` | `sudo -n systemctl poweroff` |
 | Suspend | `suspend` | `sudo -n systemctl suspend` (shown only when the host can suspend) |
 | Power Profile | `power_profile` | `powerprofilesctl set <profile>`, `tuned-adm profile <profile>`, or writes `platform_profile` through `tee`, each through `sudo -n` |
-| Next Boot | `next_boot` | `bootctl set-oneshot <entry>`, `grub-reboot <entry>` (`grub2-reboot` on Fedora-style hosts), or `efibootmgr --bootnext <entry>`, through `sudo -n`; with **Reboot now** ticked (offered only when `reboot` is allowed too) it reboots straight afterwards |
 | Identify / Stop Identify | `identify` | `ledctl locate=<identify_device>` / `ledctl locate_off=<identify_device>`, or with `identify_method: beep`, `beep -r 5`, falling back to a bell on `/dev/console` |
 
 Reboot, shutdown and suspend take the host away mid-command, so a connection that drops after the command was sent counts as success; a host that could not be reached at all is a failure. The SSH connection is re-dialled on the next poll, and an agent reconnects by itself when the host is back.
 
 | Option            | Description |
 |-------------------|-------------|
-| `allow`           | Actions to offer: any of `reboot`, `shutdown`, `suspend`, `power_profile`, `next_boot`, `identify` (default: none) |
+| `allow`           | Actions to offer: any of `reboot`, `shutdown`, `suspend`, `power_profile`, `identify` (default: none) |
 | `privilege`       | `sudo` (default) runs each action as `sudo -n …`, which fails at once with a clear message instead of waiting for a password; `none` runs it as the SSH or agent user, for a root login or a polkit rule |
 | `identify_method` | `ledctl` (default when `identify_device` is set) or `beep` (the default otherwise) |
 | `identify_device` | The drive whose enclosure LED `ledctl` blinks, e.g. `/dev/sda` |
 | `ssh_config`      | SSH connection details — see [SSH Config](#ssh-config) below |
 
-**Metrics**: `power_profiles`, `boot_entries`, `suspend_supported` (1/0)
+**Metrics**: `power_profiles`, `suspend_supported` (1/0)
 
 ```yaml
 - name: "host1 control"
   id: "host1-control"
   type: "host_control"
   interval: 5m
-  allow: [reboot, shutdown, suspend, power_profile, next_boot, identify]
+  allow: [reboot, shutdown, suspend, power_profile, identify]
   identify_device: "/dev/sda"
   ssh_config:
     host: "host1"
 ```
 
-With `privilege: sudo`, the X-Monitor user needs passwordless sudo for exactly the commands it runs, and nothing else. Keep only the lines for the actions you allow; boot-entry reads fall back to running unprivileged, so their lines are needed only where the ESP or `grub.cfg` is root-only. Command paths vary by distribution (`command -v systemctl` on the host shows yours), and sudo matches the arguments exactly:
+With `privilege: sudo`, the X-Monitor user needs passwordless sudo for exactly the commands it runs, and nothing else. Keep only the lines for the actions you allow. Command paths vary by distribution (`command -v systemctl` on the host shows yours), and sudo matches the arguments exactly:
 
 ```
 # /etc/sudoers.d/x-monitor — edit with: visudo -f /etc/sudoers.d/x-monitor
 x-monitor ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl suspend
 x-monitor ALL=(root) NOPASSWD: /usr/bin/powerprofilesctl set *, /usr/sbin/tuned-adm profile *
 x-monitor ALL=(root) NOPASSWD: /usr/bin/tee /sys/firmware/acpi/platform_profile
-x-monitor ALL=(root) NOPASSWD: /usr/bin/bootctl list --json=short, /usr/bin/bootctl set-oneshot *
-x-monitor ALL=(root) NOPASSWD: /usr/bin/cat /boot/grub/grub.cfg, /usr/bin/cat /boot/grub2/grub.cfg, /usr/sbin/grub-reboot *, /usr/sbin/grub2-reboot *
-x-monitor ALL=(root) NOPASSWD: /usr/bin/efibootmgr --bootnext *
 x-monitor ALL=(root) NOPASSWD: /usr/sbin/ledctl locate=/dev/sda, /usr/sbin/ledctl locate_off=/dev/sda
 x-monitor ALL=(root) NOPASSWD: /usr/bin/beep -r 5, /usr/bin/tee /dev/console
 ```
 
-A `*` lets the profile or boot entry vary, which is safe here because X-Monitor only ever passes a name it read from the host, shell-quoted. On NixOS the same rule goes in the system configuration, with the store paths of the system profile:
+A `*` lets the profile vary, which is safe here because X-Monitor only ever passes a name it read from the host, shell-quoted. On NixOS the same rule goes in the system configuration, with the store paths of the system profile:
 
 ```nix
 security.sudo.extraRules = [{
@@ -1800,15 +1760,11 @@ security.sudo.extraRules = [{
     "/run/current-system/sw/bin/systemctl poweroff"
     "/run/current-system/sw/bin/systemctl suspend"
     "/run/current-system/sw/bin/powerprofilesctl set *"
-    "/run/current-system/sw/bin/bootctl list --json=short"
-    "/run/current-system/sw/bin/bootctl set-oneshot *"
     "/run/current-system/sw/bin/ledctl locate=/dev/sda"
     "/run/current-system/sw/bin/ledctl locate_off=/dev/sda"
   ];
 }];
 ```
-
-GRUB's one-shot entry (`grub-reboot`) only takes effect when the host's GRUB config has `GRUB_DEFAULT=saved`.
 
 ---
 

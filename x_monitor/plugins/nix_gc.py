@@ -6,12 +6,10 @@ that stopped running, failed, or was never scheduled reads as a failure rather
 than as a slowly filling disk. An unreadable store, a probe that returned
 nothing, or no record of any run at all is unavailable. The last run's epoch and yield are carried
 forward as metric metadata, so a journal that has since rotated past it does
-not erase what was already seen. The action launches a detached
-`nix-collect-garbage` on the target, the same collection the timer runs, and
-its outcome is recorded as the last collection just as a timer run would be.
-Config: unit, timer, store, max_age, stale_status, timer_status, warning,
-threshold (either null to turn that level off), max_generations, max_generation_age, require_sudo, gc_bin,
-gc_args."""
+not erase what was already seen. The monitor only reads: collecting on demand
+is X-Nix's job. Config: unit, timer, store, max_age, stale_status,
+timer_status, warning, threshold (either null to turn that level off),
+max_generations, max_generation_age."""
 
 import json
 import re
@@ -20,10 +18,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from x_monitor.plugins.base.plugin_base import Plugin
-from x_monitor.core.connectors import ssh_connector as detached
-from x_monitor.core.connectors.types import (
-    ActionPlan, CmdResult, Command, CollectResult, Status,
-)
+from x_monitor.core.connectors.types import CmdResult, Command, CollectResult, Status
 from x_monitor.plugins.base.plugin_helpers import (
     StatusAccumulator, format_age, format_bytes, format_duration, level_for, limit_from, parse_duration,
 )
@@ -34,7 +29,6 @@ _DEFAULT_LAYOUT = [
     ['store_card', 'paths_card', 'generations_card', 'roots_card'],
     ['profiles'],
     ['chart'],
-    ['jobs'],
     ['events'],
 ]
 
@@ -195,28 +189,11 @@ class NixGc(Plugin):
             parse_duration(config['max_generation_age'])
             if config.get('max_generation_age') is not None else None
         )
-        self.require_sudo = bool(config.get('require_sudo', True))
-        self.gc_bin = str(config.get('gc_bin', 'nix-collect-garbage'))
-        self.gc_args = list(config.get('gc_args', ['--delete-older-than', '7d']))
-        self._pending_launch = None
-        self._polling_job = None
-
 
     # --- collection ---
 
     def commands(self) -> List[Command]:
-        job = self._running_job()
-        # parse() must read the results the way they were requested, even if a job starts or ends mid-cycle.
-        self._polling_job = job
-        if job is not None:
-            return [Command(detached.poll_command(job['workdir'], job['pid'], job['output_seq']))]
         return [Command(_probe_script(self.unit, self.timer, self.store))]
-
-    def _running_job(self) -> Optional[dict]:
-        job = self.jobs.running() if self.jobs else None
-        if job and job.get('pid') and job.get('workdir'):
-            return job
-        return None
 
     def _state(self) -> Dict[str, Any]:
         """The last collection X-Monitor has seen: its epoch, outcome and yield,
@@ -231,10 +208,6 @@ class NixGc(Plugin):
         return data if isinstance(data, dict) else {}
 
     def parse(self, results: List[CmdResult]) -> CollectResult:
-        job, self._polling_job = self._polling_job, None
-        if job is not None:
-            return self._parse_poll(job, results[0])
-
         if not results:
             return CollectResult.unavailable('No probe result for this cycle')
 
@@ -260,7 +233,7 @@ class NixGc(Plugin):
         if _same_run(seen['epoch'], stored_epoch):
             # The same run seen again; a later cycle may have picked up lines the first one missed.
             return {**stored, **{k: v for k, v in seen.items() if v is not None}}
-        # A manual collection outlives the unit's last run in the journal, so the newer record wins.
+        # A run recorded earlier, such as a manual collection, may be newer than the unit's own, so the newer record wins.
         return seen if seen['epoch'] > stored_epoch else stored
 
     def _observed_run(self, fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -434,104 +407,6 @@ class NixGc(Plugin):
             logs.append((f"Next collection in {format_duration(max(next_run - now, 0))}", 'INFO'))
         return metrics
 
-    # --- job polling ---
-
-    def _parse_poll(self, job: dict, result: CmdResult) -> CollectResult:
-        """Advance a running detached collection from one poll's output,
-        finalizing the Job row when it completes."""
-        job_id = job['id']
-        # A poll that never reached the target says nothing about the job; only a real answer may finish it.
-        if result.exit_code != 0 and not result.stdout.strip():
-            return CollectResult(logs=[(
-                f"Could not poll the running {job['kind']}: "
-                f"{(result.stderr or '').strip()[:200] or f'exit {result.exit_code}'}", 'WARNING')])
-        poll = detached.parse_poll(result.stdout)
-
-        lines, consumed = detached.split_lines(poll.new_output)
-        if lines:
-            self.jobs.append_output(job_id, lines)
-            self.jobs.bump_output_seq(job_id, job['output_seq'] + consumed)
-            summary = next((line.strip() for line in reversed(lines) if line.strip()), None)
-            if summary:
-                self.jobs.set_progress(job_id, summary[:200])
-
-        if poll.exit_code is None and poll.alive:
-            return CollectResult()
-
-        if poll.exit_code is None:
-            self.jobs.finish(job_id, 'failed', exit_code=-1,
-                             error='Process ended without writing an exit code')
-            return CollectResult.failed('Collection ended unexpectedly')
-
-        state = 'succeeded' if poll.exit_code == 0 else 'failed'
-        error = None if state == 'succeeded' else f"Exited with status {poll.exit_code}"
-        self.jobs.finish(job_id, state, exit_code=poll.exit_code, error=error)
-        run = self._job_run(lines or [job.get('progress') or ''], poll.exit_code == 0, error)
-        if poll.exit_code == 0:
-            return CollectResult(logs=[('Collection completed successfully', 'INFO')], success=True,
-                                 **self._run_record(run))
-        return CollectResult(logs=[(f"Collection failed (exit {poll.exit_code})", 'ERROR')],
-                             status='failed', **self._run_record(run))
-
-    def _job_run(self, lines: List[str], succeeded: bool, error: Optional[str]) -> Dict[str, Any]:
-        """The finished manual collection as the same record the journal probe builds."""
-        run: Dict[str, Any] = {'epoch': int(time.time()), 'deleted': None, 'freed_bytes': None,
-                               'error': error, 'succeeded': succeeded}
-        match = next((m for m in (_SUMMARY.search(line) for line in reversed(lines)) if m), None)
-        if match:
-            run['deleted'] = int(match.group(1))
-            run['freed_bytes'] = _bytes_from(match.group(2), match.group(3))
-        return run
-
-    @staticmethod
-    def _run_record(run: Dict[str, Any]) -> Dict[str, Any]:
-        """The metrics and metadata that carry a collection record to the next cycle."""
-        metrics = {_STATE_METRIC: float(run['epoch']),
-                   'last_gc_success': 1.0 if run['succeeded'] else 0.0}
-        if run['freed_bytes'] is not None:
-            metrics['last_gc_freed_gb'] = run['freed_bytes'] / (1024 ** 3)
-            metrics['last_gc_deleted'] = float(run['deleted'] or 0)
-        return {'metrics': metrics, 'metadata': {_STATE_METRIC: json.dumps(run)}}
-
-    # --- actions ---
-
-    def get_actions(self) -> List[Dict[str, str]]:
-        return [{'name': 'Collect Garbage', 'action_id': 'collect', 'job': 'collection',
-                 'variant': 'primary', 'icon': 'delete_sweep'}]
-
-    def _collect_command(self) -> str:
-        sudo = 'sudo -n ' if self.require_sudo else ''
-        args = ' '.join(shlex.quote(a) for a in self.gc_args)
-        return f'{sudo}{self.gc_bin} {args}'.strip()
-
-    def plan_action(self, action_id: str, **kwargs):
-        if action_id != 'collect':
-            return None
-        if self._running_job() is not None:
-            return CollectResult.failed('A collection is already running for this monitor',
-                                        level='WARNING', status=None)
-        # The on-target workdir is named before the Job row exists;
-        # interpret_action records the pid the launch prints and creates the row.
-        workdir = detached.workdir_for(f'{self.id}-{int(time.time())}')
-        self._pending_launch = (self._collect_command(), workdir)
-        return ActionPlan(detached.launch_command(self._pending_launch[0], workdir))
-
-    def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
-        if action_id != 'collect':
-            return result.exit_code == 0
-
-        command, workdir = self._pending_launch or ('', '')
-        self._pending_launch = None
-
-        pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
-        if pid is None:
-            return CollectResult.failed(
-                f"Failed to launch the collection: {(result.stderr or result.stdout).strip()[:200]}")
-
-        job_id = self.jobs.create('collection', command, workdir)
-        self.jobs.set_pid(job_id, pid)
-        return CollectResult(logs=[(f"Collection started (pid {pid})", 'INFO')], success=True)
-
     # --- UI ---
 
     def _metric(self, name: str) -> Optional[float]:
@@ -632,6 +507,5 @@ class NixGc(Plugin):
                 },
             },
             'chart': {'metric': 'store_paths', 'title': f'STORE PATHS — {self.store}'},
-            'job_panel': {'widget': 'jobs', 'title': 'Collection jobs', 'history_limit': 10},
             'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }

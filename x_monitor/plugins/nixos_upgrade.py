@@ -9,49 +9,28 @@ tracked alongside it. The evaluation runs as one detached job, so an X-Monitor
 restart or redeploy never kills it: later cycles keep probing, poll the job
 every `job_poll` and judge drift against the stored evaluation until it
 finishes, and `eval_timeout` bounds the whole run. Each evaluation is kept
-with its output but left out of the jobs panel's history. A failed evaluation is
-retried after `retry_interval` rather than held for the full `eval_interval`,
-and a dashboard poll evaluates unless an evaluation is already running. An
-unreachable or non-NixOS target, unreadable flake metadata, or an evaluation
-that never reached its host is unavailable; an evaluation that ran and errored,
-or ended without reporting, is failed. `eval_agent` runs the evaluation on another agent's
-host, for a target too small to evaluate its own flake, and `build_host` sends the
-switch's own compilation to a host that can do it. `build_agent` runs the build job
-on another agent's host, so one host can warm the cache for every other, and `build_root_dir` keeps
-its result as one GC root per monitor that the next build replaces. With `cache_url` the build is skipped
-when the closure is absent from the build host's store but already in that cache, so a closure kept only in
-the cache is never downloaded again just to be rooted. `switch_agent` runs the switch
-and update jobs on another agent's host, which with `target_host` lets one host
-build every other's closure and activate it over SSH; the probe stays on the target,
-so drift is still read from the machine it describes. Actions launch
-detached jobs on the target: `nix flake update` on the flake, and
-`nixos-rebuild switch --flake`; Reboot runs `systemctl reboot` on the target itself. Every action,
-a reboot or a failed launch included, lands in the job history with its output; a `github:` flake with a `push_ssh_key` is
-updated in a fresh clone that is committed and pushed back over SSH. With `auto_switch`, drift that outlasts
-`auto_switch_after` launches the switch itself, once per target closure, and
-only when the flake changed after the running generation was made. `update_at` and
-`build_at` launch the update and the build once a day at a local time of day; a slot
-missed while X-Monitor was down runs once when it returns, and a restart never repeats one. Config:
-flake, configuration, eval_agent, eval_interval, retry_interval, eval_timeout,
-job_poll, max_input_age, drift_status, reboot_status, require_sudo, nix_bin,
-rebuild_bin, nix_args, rebuild_args, build_host, build_agent, build_root_dir, cache_url, switch_agent, target_host,
-auto_switch, auto_switch_after, update_at, build_at,
-switch_wrapper, post_switch, push_ssh_key, commit_author,
-commit_message."""
+with its output in the job history. A failed evaluation is retried after
+`retry_interval` rather than held for the full `eval_interval`, and a dashboard
+poll evaluates unless an evaluation is already running. An unreachable or
+non-NixOS target, unreadable flake metadata, or an evaluation that never
+reached its host is unavailable; an evaluation that ran and errored, or ended
+without reporting, is failed. `eval_agent` runs the evaluation on another
+agent's host, for a target too small to evaluate its own flake; the probe stays
+on the target, so drift is still read from the machine it describes. The
+monitor only reads: updating, building and switching the flake is X-Nix's job.
+Config: flake, configuration, eval_agent, eval_interval, retry_interval,
+eval_timeout, job_poll, max_input_age, drift_status, reboot_status, nix_bin,
+nix_args."""
 
 import json
 import shlex
 import time
-from datetime import datetime, time as time_of_day, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from x_monitor.plugins.base.plugin_base import Plugin
 from x_monitor.plugins.base.nixos_boot import boot_parts_script, reboot_required as nixos_reboot_required
 from x_monitor.core.connectors import ssh_connector as detached
-from x_monitor.core.coordination.jobs import action_id_of
-from x_monitor.core.connectors.types import (
-    ActionPlan, CmdResult, Command, CollectResult, Status,
-)
+from x_monitor.core.connectors.types import CmdResult, Command, CollectResult, Status
 from x_monitor.plugins.base.plugin_helpers import (
     StatusAccumulator, format_age, format_duration, parse_duration,
 )
@@ -61,7 +40,6 @@ _DEFAULT_LAYOUT = [
     ['host_card', 'drift_card', 'reboot_card', 'generation_card'],
     ['flake_card', 'revision_card', 'switched_card', 'inputs_card'],
     ['details'],
-    ['jobs'],
     ['events'],
 ]
 
@@ -92,7 +70,6 @@ def _probe_script() -> str:
         'echo "booted=$(readlink -f /run/booted-system 2>/dev/null)"',
         'echo "switched=$(stat -c %Y /run/current-system 2>/dev/null)"',
         'echo "profile=$(readlink /nix/var/nix/profiles/system 2>/dev/null)"',
-        'echo "profile_created=$(stat -c %Y "/nix/var/nix/profiles/$(readlink /nix/var/nix/profiles/system)" 2>/dev/null)"',
         'echo "version=$(cat /run/current-system/nixos-version 2>/dev/null)"',
         "echo \"version_json=$(nixos-version --json 2>/dev/null | tr -d '\\n')\"",
         *boot_parts_script(),
@@ -192,25 +169,6 @@ def _escape(value: str) -> str:
     return value.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$')
 
 
-def _time_of_day(value, key: str) -> Optional[time_of_day]:
-    """Read a configured daily time such as "02:30", or None when unset."""
-    if value is None or value == '':
-        return None
-    try:
-        return time_of_day.fromisoformat(str(value))
-    except ValueError as e:
-        raise ValueError(f"`{key}` must be a time of day such as \"02:30\", not {value!r}") from e
-
-
-def _latest_slot(at: time_of_day, now: float) -> int:
-    """The epoch of the most recent local `at` no later than `now`."""
-    moment = datetime.fromtimestamp(now)
-    slot = datetime.combine(moment.date(), at)
-    if slot > moment:
-        slot -= timedelta(days=1)
-    return int(slot.timestamp())
-
-
 def _severity(value, default: str) -> str:
     """Read a configured status name, falling back on anything unrecognised."""
     try:
@@ -241,7 +199,7 @@ def _oldest_input(locks: Dict[str, Any]) -> Tuple[Optional[str], Optional[int]]:
 
 class NixosUpgrade(Plugin):
     RUNS_ON_AGENT = False
-    # The evaluation runs beside a build, switch or update, and never blocks their buttons.
+    # The evaluation runs beside any job a custom action launches, and never blocks its button.
     SIDE_JOB_KINDS = (_EVAL_JOB_KIND,)
 
     def __init__(self, name: str, config):
@@ -262,49 +220,21 @@ class NixosUpgrade(Plugin):
         )
         self.drift_status = _severity(config.get('drift_status'), 'warning')
         self.reboot_status = _severity(config.get('reboot_status'), 'warning')
-        self.require_sudo = bool(config.get('require_sudo', True))
         self.nix_bin = str(config.get('nix_bin', 'nix'))
-        self.rebuild_bin = str(config.get('rebuild_bin', 'nixos-rebuild'))
         self.nix_args = list(config.get(
             'nix_args', ['--extra-experimental-features', 'nix-command flakes']))
-        self.rebuild_args = list(config.get('rebuild_args', []))
-        self.build_host = config.get('build_host') or None
-        self.switch_agent = config.get('switch_agent') or None
-        self.build_agent = config.get('build_agent') or self.switch_agent
-        self.build_args = list(config.get('build_args', ['--keep-going', '--print-build-logs']))
-        self.build_root_dir = config.get('build_root_dir') or None
-        self.cache_url = config.get('cache_url') or None
-        self.target_host = config.get('target_host') or None
-        self.auto_switch = bool(config.get('auto_switch', False))
-        self.auto_switch_after = parse_duration(config.get('auto_switch_after', '30m'))
-        self.schedule = {kind: at for kind, at in (
-            ('update', _time_of_day(config.get('update_at'), 'update_at')),
-            ('build', _time_of_day(config.get('build_at'), 'build_at'))) if at is not None}
-        self.switch_wrapper = list(config.get('switch_wrapper', []))
-        self.post_switch = config.get('post_switch') or None
-        self.push_ssh_key = config.get('push_ssh_key') or None
-        self.commit_author = str(config.get('commit_author', 'X-Monitor <x-monitor@localhost>'))
-        self.commit_message = str(config.get('commit_message', 'chore(flake): update inputs'))
-        # Set by a finished job so the next cycle re-evaluates immediately
-        # instead of waiting out eval_interval.
+        # Set when the running closure changed or a dashboard poll asked, so
+        # the next cycle re-evaluates instead of waiting out eval_interval.
         self._force_eval = False
-        self._pending_launch = None
-        self._polling_job = None
         # The evaluation the current cycle launched (its command) or polled (its job row).
         self._eval_launch = None
         self._eval_polling = None
-        # The target an automatic switch is due for, and the launch the current cycle sent for it.
-        self._auto_switch_due = None
-        self._auto_launch = None
-        # The (kind, slot, command, workdir) of the scheduled job the current cycle launched.
-        self._scheduled_launch = None
 
     # --- flake reference ---
 
     @property
     def local_path(self) -> Optional[str]:
-        """The flake's filesystem path when it is a local checkout, else None
-        — `nix flake update` can only write a lock file it owns."""
+        """The flake's filesystem path when it is a local checkout, else None."""
         ref = self.flake
         for scheme in _LOCAL_SCHEMES:
             if ref.startswith(scheme):
@@ -316,39 +246,10 @@ class NixosUpgrade(Plugin):
         path = ref.split('?', 1)[0].split('#', 1)[0]
         return path or None
 
-    @property
-    def github_repo(self) -> Optional[Tuple[str, Optional[str]]]:
-        """The (SSH clone URL, branch or None) of a `github:owner/repo[/ref]` flake, else None."""
-        if not self.flake.startswith('github:'):
-            return None
-        path, _, query = self.flake[len('github:'):].partition('?')
-        parts = path.split('/')
-        if len(parts) < 2 or not parts[0] or not parts[1]:
-            return None
-        params = dict(p.partition('=')[::2] for p in query.split('&') if p)
-        ref = params.get('ref') or ('/'.join(parts[2:]) or None)
-        return f'git@github.com:{parts[0]}/{parts[1]}.git', ref
-
-    @property
-    def pushes_to_github(self) -> bool:
-        """Whether Update Flake clones and pushes the flake's GitHub repo, which needs a key to push with."""
-        return not self.local_path and self.github_repo is not None and self.push_ssh_key is not None
-
     def _refresh_args(self) -> List[str]:
         """A mutable remote ref is only seen freshly with --refresh; a local
         path is read from disk every time and needs none."""
         return [] if self.local_path else ['--refresh']
-
-    def _build_host_args(self) -> List[str]:
-        """Where the switch compiles what the cache cannot supply: a target too
-        small to build its own closure names a host that can, which needs SSH
-        from the target's root to that host."""
-        return ['--build-host', self.build_host] if self.build_host else []
-
-    def _target_host_args(self) -> List[str]:
-        """Which machine the built closure is copied to and activated on, for a
-        switch driven from another host rather than from the target itself."""
-        return ['--target-host', self.target_host] if self.target_host else []
 
     def _attribute(self) -> Optional[str]:
         """The nixosConfigurations attribute to evaluate: the configured name,
@@ -367,36 +268,9 @@ class NixosUpgrade(Plugin):
         return (f'"{_escape(self.flake)}#nixosConfigurations.\\"{attr}\\"'
                 f'.config.system.build.toplevel"')
 
-    def _sudo(self) -> str:
-        return 'sudo -n ' if self.require_sudo else ''
-
     # --- collection ---
 
     def commands(self) -> List[Command]:
-        job = self._running_job()
-        # parse() must read the results the way they were requested, even if a job starts or ends mid-cycle.
-        self._polling_job = job
-        if job is not None:
-            return [Command(detached.poll_command(job['workdir'], job['pid'], job['output_seq']),
-                            agent=self.job_agent(job))]
-
-        self._auto_launch = None
-        if self._auto_switch_due:
-            command = self._switch_command()
-            workdir = detached.workdir_for(f'{self.id}-auto-{int(time.time())}')
-            self._auto_launch = (self._auto_switch_due, command, workdir)
-            self._auto_switch_due = None
-            return [Command(detached.launch_command(command, workdir), agent=self.switch_agent)]
-
-        self._scheduled_launch = None
-        due = self._scheduled_due()
-        if due is not None:
-            kind, slot = due
-            command = self._build_command() if kind == 'build' else self._update_command()
-            workdir = detached.workdir_for(f'{self.id}-{kind}-{int(time.time())}')
-            self._scheduled_launch = (kind, slot, command, workdir)
-            return [Command(detached.launch_command(command, workdir), agent=self._agent_for(kind))]
-
         commands = [Command(_probe_script())]
         self._eval_launch = self._eval_polling = None
         eval_job = self._running_eval()
@@ -434,40 +308,14 @@ class NixosUpgrade(Plugin):
             return job
         return None
 
-    def _agent_for(self, kind: str) -> Optional[str]:
-        """The agent a job of this kind launches on: the build may run apart from the switch and update."""
-        return self.build_agent if kind == 'build' else self.switch_agent
-
     def job_agent(self, job: dict) -> Optional[str]:
-        if action_id_of(job.get('kind') or '') is not None:
-            return super().job_agent(job)
-        if job.get('kind') == _EVAL_JOB_KIND:
-            return self.eval_agent
-        return self._agent_for(job.get('kind'))
-
-    def _running_job(self) -> Optional[dict]:
-        job = self.jobs.running() if self.jobs else None
-        if job and job.get('pid') and job.get('workdir'):
-            return job
-        return None
+        return self.eval_agent if job.get('kind') == _EVAL_JOB_KIND else super().job_agent(job)
 
     def _state(self) -> Dict[str, Any]:
         """The last evaluation's stored result: target closure, flake revision
         and input ages, carried between cycles as metric metadata."""
         metric = self.data.latest_metric(_STATE_METRIC) if self.data else None
         return _decode_json(metric.metadata) if metric is not None and metric.metadata else {}
-
-    def _scheduled_due(self) -> Optional[Tuple[str, int]]:
-        """The first scheduled job whose latest slot is newer than the one last handled, update before build."""
-        handled = self._state().get('scheduled') or {}
-        now = time.time()
-        for kind, at in self.schedule.items():
-            if kind == 'update' and not self._update_enabled(self):
-                continue
-            # A schedule never seen before was seeded by the last probe cycle, so it first fires at its next slot.
-            if kind in handled and _latest_slot(at, now) > int(handled[kind]):
-                return kind, _latest_slot(at, now)
-        return None
 
     def _due_for_eval(self) -> bool:
         if self._force_eval:
@@ -488,16 +336,6 @@ class NixosUpgrade(Plugin):
         return await super().run_cycle()
 
     def parse(self, results: List[CmdResult]) -> CollectResult:
-        job, self._polling_job = self._polling_job, None
-        if job is not None:
-            return self._parse_poll(job, results[0])
-        launch, self._auto_launch = self._auto_launch, None
-        if launch is not None:
-            return self._parse_auto_launch(launch, results[0])
-        scheduled, self._scheduled_launch = self._scheduled_launch, None
-        if scheduled is not None:
-            return self._parse_scheduled_launch(scheduled, results[0])
-
         eval_launch, self._eval_launch = self._eval_launch, None
         eval_job, self._eval_polling = self._eval_polling, None
         if not results:
@@ -640,7 +478,6 @@ class NixosUpgrade(Plugin):
             logs.append((f"Running NixOS {version}, generation {generation or '?'}", 'INFO'))
 
         target = state.get('target')
-        self._auto_switch_due = None
         if state.get('eval_error'):
             unreachable = bool(state.get('eval_unreachable'))
             acc.escalate('unavailable' if unreachable else 'failed')
@@ -657,15 +494,11 @@ class NixosUpgrade(Plugin):
             up_to_date = target == current
             metrics['up_to_date'] = 1.0 if up_to_date else 0.0
             if up_to_date:
-                state['drift_target'] = state['drift_since'] = None
                 logs.append(('System matches the flake', 'INFO'))
             else:
                 acc.escalate(self.drift_status)
                 logs.append((f"System is out of date: {self.flake} evaluates to {target}, "
                              f"running {current}", Status(self.drift_status).log_level))
-                if state.get('drift_target') != target:
-                    state['drift_target'], state['drift_since'] = target, now
-                logs.extend(self._consider_auto_switch(fields, state, target, now))
 
         if state.get('metadata_error'):
             acc.escalate('unavailable')
@@ -692,15 +525,6 @@ class NixosUpgrade(Plugin):
                     f", over the {format_duration(self.max_input_age)} limit" if stale else ''),
                 'WARNING' if stale else 'INFO'))
 
-        scheduled = dict(state.get('scheduled') or {})
-        for kind, at in self.schedule.items():
-            scheduled.setdefault(kind, _latest_slot(at, now))
-        state['scheduled'] = scheduled
-        if 'update' in self.schedule and not self._update_enabled(self):
-            acc.escalate('warning')
-            logs.append((f"Scheduled update never runs: {self.flake} has no lock file this host can "
-                         "write", 'WARNING'))
-
         reboot = self._reboot_required(fields)
         if reboot is not None:
             metrics['reboot_required'] = 1.0 if reboot else 0.0
@@ -719,259 +543,12 @@ class NixosUpgrade(Plugin):
                       'hostname': fields.get('hostname')},
         )
 
-    def _consider_auto_switch(self, fields: Dict[str, Any], state: Dict[str, Any],
-                              target: str, now: int) -> List[Tuple[str, str]]:
-        """Decide whether this drift should launch a switch on the next cycle, returning any log lines explaining a hold."""
-        if not self.auto_switch or state.get('eval_error') or state.get('auto_switch_target') == target:
-            return []
-        created = fields.get('profile_created') or fields.get('switched') or ''
-        flake_modified = state.get('flake_last_modified')
-        # A generation newer than the flake came from somewhere else, such as an unpushed checkout, and switching would roll it back.
-        if not (created.isdigit() and flake_modified and int(flake_modified) > int(created)):
-            return [('Not switching automatically: the running generation is newer than the flake', 'INFO')]
-        waited = now - int(state.get('drift_since') or now)
-        if waited < self.auto_switch_after:
-            return [(f"Switching automatically once the drift has lasted "
-                     f"{format_duration(self.auto_switch_after)}", 'INFO')]
-        self._auto_switch_due = target
-        return [(f"Drift has lasted {format_age(waited)}; switching automatically", 'WARNING')]
-
-    def _parse_auto_launch(self, launch: Tuple[str, str, str], result: CmdResult) -> CollectResult:
-        """Record the job an automatic switch launched, and the target it was for so it is never retried."""
-        target, command, workdir = launch
-        pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
-        # An agent that never answered launched nothing, so the next cycle may try again.
-        if pid is None and result.exit_code == -1:
-            return CollectResult(logs=[(f"Could not launch the automatic switch: "
-                                        f"{(result.stderr or '').strip()[:200]}", 'WARNING')])
-        state = self._state()
-        state['auto_switch_target'] = target
-        written = CollectResult(metrics={_STATE_METRIC: float(state.get('evaluated_epoch') or 0)},
-                                metadata={_STATE_METRIC: json.dumps(state)})
-        if pid is None:
-            written.logs = [(f"Failed to launch the automatic switch: "
-                             f"{(result.stderr or result.stdout).strip()[:200]}", 'ERROR')]
-            written.status = 'failed'
-            return written
-        job_id = self.jobs.create('switch', command, workdir)
-        self.jobs.set_pid(job_id, pid)
-        written.logs = [(f"Automatic switch started (pid {pid})", 'INFO')]
-        return written
-
-    def _parse_scheduled_launch(self, launch: Tuple[str, int, str, str],
-                                result: CmdResult) -> CollectResult:
-        """Record the job a schedule launched, and its slot as handled so neither a retry nor a restart repeats it."""
-        kind, slot, command, workdir = launch
-        pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
-        # An agent that never answered launched nothing, so the next cycle may try again.
-        if pid is None and result.exit_code == -1:
-            return CollectResult(logs=[(f"Could not launch the scheduled {kind}: "
-                                        f"{(result.stderr or '').strip()[:200]}", 'WARNING')])
-        state = self._state()
-        state['scheduled'] = {**(state.get('scheduled') or {}), kind: slot}
-        written = CollectResult(metrics={_STATE_METRIC: float(state.get('evaluated_epoch') or 0)},
-                                metadata={_STATE_METRIC: json.dumps(state)})
-        if pid is None:
-            written.logs = [(f"Failed to launch the scheduled {kind}: "
-                             f"{(result.stderr or result.stdout).strip()[:200]}", 'ERROR')]
-            written.status = 'failed'
-            return written
-        job_id = self.jobs.create(kind, command, workdir)
-        self.jobs.set_pid(job_id, pid)
-        written.logs = [(f"Scheduled {kind} started (pid {pid})", 'INFO')]
-        return written
-
     @staticmethod
     def _reboot_required(fields: Dict[str, Any]) -> Optional[bool]:
         """Whether the booted closure's kernel-side parts differ from the
         current one's; None when the comparison could not be made."""
         return nixos_reboot_required(fields.get('booted_part') or [],
                                      fields.get('current_part') or [])
-
-    # --- job polling ---
-
-    def _parse_poll(self, job: dict, result: CmdResult) -> CollectResult:
-        """Advance a running detached job from one poll's output, finalizing
-        the Job row and forcing a re-evaluation when it completes."""
-        job_id = job['id']
-        # A poll that never reached the target says nothing about the job; only a real answer may finish it.
-        if result.exit_code != 0 and not result.stdout.strip():
-            return CollectResult(logs=[(
-                f"Could not poll the running {job['kind']}: "
-                f"{(result.stderr or '').strip()[:200] or f'exit {result.exit_code}'}", 'WARNING')])
-        poll = detached.parse_poll(result.stdout)
-
-        lines, consumed = detached.split_lines(poll.new_output)
-        if lines:
-            self.jobs.append_output(job_id, lines)
-            self.jobs.bump_output_seq(job_id, job['output_seq'] + consumed)
-            summary = next((line.strip() for line in reversed(lines) if line.strip()), None)
-            if summary:
-                self.jobs.set_progress(job_id, summary[:200])
-
-        if poll.exit_code is None and poll.alive:
-            return CollectResult()
-
-        kind = job['kind']
-        self._force_eval = True
-        if poll.exit_code is None:
-            self.jobs.finish(job_id, 'failed', exit_code=-1,
-                             error='Process ended without writing an exit code')
-            return CollectResult.failed(f"{kind.capitalize()} ended unexpectedly")
-
-        state = 'succeeded' if poll.exit_code == 0 else 'failed'
-        self.jobs.finish(job_id, state, exit_code=poll.exit_code,
-                         error=None if state == 'succeeded' else f"Exited with status {poll.exit_code}")
-        if poll.exit_code == 0:
-            return CollectResult(logs=[(f"{kind.capitalize()} completed successfully", 'INFO')],
-                                 success=True)
-        return CollectResult.failed(f"{kind.capitalize()} failed (exit {poll.exit_code})")
-
-    # --- actions ---
-
-    def get_actions(self) -> List[Dict[str, str]]:
-        return [
-            {'name': 'Update Flake', 'action_id': 'update_flake', 'job': 'update',
-             'variant': 'secondary', 'icon': 'sync'},
-            {'name': 'Rebuild & Switch', 'action_id': 'switch', 'job': 'switch',
-             'variant': 'primary', 'icon': 'rocket_launch'},
-            {'name': 'Reboot', 'action_id': 'reboot', 'variant': 'danger', 'icon': 'restart_alt',
-             'confirm': f'Reboot {self.name}? Everything running on it stops until it is back up.'},
-        ]
-
-    def action_state(self, action) -> str:
-        """Update Flake is hidden for a flake this host cannot write, and Reboot greys out while a job runs."""
-        if action.get('action_id') == 'update_flake' and not self._update_enabled(self):
-            return 'hidden'
-        if action.get('action_id') == 'reboot' and self._running_job() is not None:
-            return 'disabled'
-        return super().action_state(action)
-
-    def _update_command(self) -> str:
-        nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
-        if not self.pushes_to_github:
-            return f'{self._sudo()}{nix} flake update --flake {shlex.quote(self.flake)}'
-        return self._remote_update_command(nix)
-
-    def _remote_update_command(self, nix: str) -> str:
-        """Clone the flake's repo, update its lock, and push a commit back, as the monitoring user rather than root."""
-        url, ref = self.github_repo
-        name, _, email = self.commit_author.partition('<')
-        identity = (f"-c user.name={shlex.quote(name.strip())} "
-                    f"-c user.email={shlex.quote(email.rstrip('>').strip())}")
-        branch = f'--branch {shlex.quote(ref)} ' if ref else ''
-        lines = [
-            'set -e',
-            't=$(mktemp -d)',
-            'trap \'rm -rf "$t"\' EXIT',
-            # Host keys come from the system known_hosts, so an unpinned github.com fails rather than being trusted on first use.
-            f'export GIT_SSH_COMMAND={shlex.quote(f"ssh -i {shlex.quote(self.push_ssh_key)} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes")}',
-            f'git clone --quiet --depth 1 {branch}{shlex.quote(url)} "$t/repo"',
-            # Printed as it runs and kept for the commit message; an && || list is exempt from set -e, so the status is still recorded.
-            f'{{ {nix} flake update --flake "$t/repo" 2>&1 && echo 0 > "$t/rc" || echo $? > "$t/rc"; }} | tee "$t/log"',
-            '[ "$(cat "$t/rc")" = 0 ] || exit 1',
-            'if git -C "$t/repo" diff --quiet -- flake.lock; then echo "Every input is already current"; exit 0; fi',
-            f'printf \'%s\\n\\n\' {shlex.quote(self.commit_message)} > "$t/msg"',
-            "sed -n \"s/.*Updated input '\\([^']*\\)'.*/- \\1/p\" \"$t/log\" >> \"$t/msg\"",
-            f'git -C "$t/repo" {identity} commit --quiet -F "$t/msg" -- flake.lock',
-            'git -C "$t/repo" push origin HEAD',
-            'git -C "$t/repo" log --oneline -1',
-        ]
-        # A subshell, so set -e ends the update and not the launcher that records its exit status.
-        return '(\n' + '\n'.join(lines) + '\n)'
-
-    def _build_command(self) -> str:
-        """Realise this host's closure without activating it, so a deploy
-        substitutes instead of building. --keep-going by default: one
-        unbuildable package should cost its own path and not the whole
-        closure, and the job still exits non-zero so the failure is seen."""
-        nix = ' '.join([self.nix_bin] + [shlex.quote(a) for a in self.nix_args])
-        args = ' '.join(shlex.quote(a) for a in self.build_args + self._refresh_args())
-        if not self.build_root_dir:
-            build = ' '.join(filter(None, [nix, 'build --no-link', args, self._installable()]))
-        else:
-            # One fixed link per monitor, so each successful build replaces the root the last one held.
-            link = shlex.quote(f'{self.build_root_dir.rstrip("/")}/{self.id}')
-            build = (f'mkdir -p {shlex.quote(self.build_root_dir)} && '
-                     + ' '.join(filter(None, [nix, f'build --out-link {link}', args, self._installable()])))
-        if not self.cache_url:
-            return build
-        refresh = ' '.join(self._refresh_args())
-        evaluate = ' '.join(filter(None, [nix, 'eval --raw --no-write-lock-file', refresh, self._installable()]))
-        # Any failure here falls through to the build, which reports it properly.
-        cached = (f'out=$({evaluate} 2>/dev/null) && [ -n "$out" ] && ! {nix} path-info "$out" >/dev/null 2>&1 '
-                  f'&& {nix} path-info --store {shlex.quote(self.cache_url)} "$out" >/dev/null 2>&1')
-        return f'if {cached}; then echo "$out is already in the cache; not building it"; else {build}; fi'
-
-    def _switch_command(self) -> str:
-        flake_ref = f'{self.flake}#{self.configuration}' if self.configuration else self.flake
-        args = ' '.join(shlex.quote(a) for a in
-                        self._build_host_args() + self._target_host_args()
-                        + self.rebuild_args + self._refresh_args())
-        wrapper = ''.join(shlex.quote(a) + ' ' for a in self.switch_wrapper)
-        switch = (f'{wrapper}{self._sudo()}{self.rebuild_bin} switch --flake {shlex.quote(flake_ref)} '
-                  f'{args}').strip()
-        if not self.post_switch:
-            return switch
-        # The job's exit status stays the switch's own, whatever the follow-up command returns.
-        return f'{switch}; rc=$?; {self.post_switch}; (exit $rc)'
-
-    def plan_action(self, action_id: str, **kwargs):
-        if action_id not in ('update_flake', 'switch', 'build', 'reboot'):
-            return None
-        if self._running_job() is not None:
-            return CollectResult.failed('A job is already running for this monitor',
-                                        level='WARNING', status=None)
-        # The reboot is for the probed machine, so it ignores switch_agent and runs no job.
-        if action_id == 'reboot':
-            return ActionPlan(f'{self._sudo()}systemctl reboot')
-        if action_id == 'update_flake' and not (self.local_path or self.pushes_to_github):
-            return CollectResult.failed(
-                f"Cannot update {self.flake}: only a local checkout, or a github: flake with a "
-                f"push_ssh_key, has a lock file this host can write")
-
-        kind = {'update_flake': 'update', 'switch': 'switch', 'build': 'build'}[action_id]
-        command = {'update': self._update_command, 'switch': self._switch_command,
-                   'build': self._build_command}[kind]()
-        # The on-target workdir is named before the Job row exists;
-        # interpret_action records the pid the launch prints and creates the row.
-        workdir = detached.workdir_for(f'{self.id}-{int(time.time())}')
-        self._pending_launch = (kind, command, workdir)
-        return ActionPlan(detached.launch_command(command, workdir), agent=self._agent_for(kind))
-
-    def interpret_action(self, action_id: str, result: CmdResult, **kwargs):
-        if action_id == 'reboot':
-            self._record_finished('reboot', f'{self._sudo()}systemctl reboot', result)
-            if result.exit_code != 0:
-                return CollectResult.failed(
-                    f"Failed to reboot: {(result.stderr or result.stdout).strip()[:200]}")
-            return CollectResult(logs=[('Reboot requested', 'INFO')], success=True)
-        if action_id not in ('update_flake', 'switch', 'build'):
-            return result.exit_code == 0
-
-        kind, command, workdir = self._pending_launch or ('switch', '', '')
-        self._pending_launch = None
-
-        pid = detached.parse_launch(result.stdout) if result.exit_code == 0 else None
-        if pid is None:
-            self._record_finished(kind, command, result, error='The job could not be launched')
-            return CollectResult.failed(
-                f"Failed to launch {kind}: {(result.stderr or result.stdout).strip()[:200]}")
-
-        job_id = self.jobs.create(kind, command, workdir)
-        self.jobs.set_pid(job_id, pid)
-        return CollectResult(logs=[(f"{kind.capitalize()} started (pid {pid})", 'INFO')],
-                             success=True)
-
-    def _record_finished(self, kind: str, command: str, result: CmdResult,
-                         error: Optional[str] = None) -> None:
-        """Keep a command that ran no detached job in the job history, with whatever it printed."""
-        job_id = self.jobs.create(kind, command, None)
-        self.jobs.append_output(job_id, (result.stdout or '').splitlines())
-        self.jobs.append_output(job_id, (result.stderr or '').splitlines(), stream='stderr')
-        succeeded = result.exit_code == 0 and error is None
-        self.jobs.finish(job_id, 'succeeded' if succeeded else 'failed', exit_code=result.exit_code,
-                         error=None if succeeded else error or f"Exited with status {result.exit_code}")
 
     # --- UI ---
 
@@ -1064,17 +641,11 @@ class NixosUpgrade(Plugin):
                              f"({stamp(state.get('inputs_last_modified'))})"),
             ('Last evaluated', stamp(state.get('evaluated_epoch'))),
         ]
-        handled = state.get('scheduled') or {}
-        for kind, at in self.schedule.items():
-            rows.append((f'Scheduled {kind}', f"Daily at {at:%H:%M}, last slot {stamp(handled.get(kind))}"))
         for label, error in (('Evaluation error', state.get('eval_error')),
                              ('Metadata error', state.get('metadata_error'))):
             if error:
                 rows.append((label, error))
         return [{'label': label, 'value': value} for label, value in rows]
-
-    def _update_enabled(self, _plugin) -> bool:
-        return self.local_path is not None or self.pushes_to_github
 
     @property
     def UI_SPEC(self):
@@ -1106,8 +677,5 @@ class NixosUpgrade(Plugin):
                     ],
                 },
             },
-            # The hourly evaluation would push every switch and update out of the history, so it is left out.
-            'job_panel': {'widget': 'jobs', 'title': 'Jobs', 'history_limit': 10,
-                          'exclude_kinds': [_EVAL_JOB_KIND]},
             'events': {'title': 'Events', 'limit': 100, 'full_height': True},
         }

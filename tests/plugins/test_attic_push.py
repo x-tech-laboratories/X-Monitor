@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from x_monitor.plugins.attic_push import AtticPush, build_script, check_script, parse_report
+from x_monitor.plugins.attic_push import AtticPush, check_script, parse_report
 from x_monitor.core.connectors.types import CmdResult
 
 CFG = {
@@ -120,61 +120,51 @@ class TestKeptOnlyInTheCache:
         return str(nix)
 
     @staticmethod
-    def _check(nix, link, closure_list):
+    def _check(nix, closure_list):
         script = check_script("/f", [("Alpha", "/f#a")], "https://c", [], nix,
-                              {"Alpha": (str(link), str(closure_list))})
+                              {"Alpha": str(closure_list)})
         return parse_report(subprocess.run(["sh", "-c", script], capture_output=True, text=True).stdout)[0]["Alpha"]
 
-    def test_a_fully_pushed_root_is_dropped_after_its_list_is_written(self, tmp_path):
+    def test_a_fully_pushed_root_is_never_dropped(self, tmp_path):
         link, closure_list = tmp_path / "alpha", tmp_path / "alpha.closure"
         link.symlink_to(ALPHA)
-        fact = self._check(self._nix(tmp_path), link, closure_list)
-        assert fact["dropped"] == "1"
-        assert not link.is_symlink()
-        assert closure_list.read_text() == f"{ALPHA}\n{ALPHA}\n/nix/store/dddd-dep\n"
-
-    def test_a_root_with_missing_paths_is_kept(self, tmp_path):
-        link, closure_list = tmp_path / "alpha", tmp_path / "alpha.closure"
-        link.symlink_to(ALPHA)
-        fact = self._check(self._nix(tmp_path, missing="/nix/store/dddd-dep"), link, closure_list)
-        assert "dropped" not in fact and link.is_symlink() and not closure_list.exists()
-
-    def test_a_root_for_another_closure_is_kept(self, tmp_path):
-        link, closure_list = tmp_path / "alpha", tmp_path / "alpha.closure"
-        link.symlink_to(BETA)
-        fact = self._check(self._nix(tmp_path), link, closure_list)
-        assert "dropped" not in fact and link.is_symlink()
+        fact = self._check(self._nix(tmp_path), closure_list)
+        assert fact == {"target": ALPHA, "built": "1", "own": "2", "missing": []}
+        assert link.is_symlink() and not closure_list.exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["alpha", "nix"]
 
     def test_a_dropped_target_is_judged_by_its_list(self, tmp_path):
         closure_list = tmp_path / "alpha.closure"
         closure_list.write_text(f"{ALPHA}\n{ALPHA}\n/nix/store/dddd-dep\n")
         fact = self._check(self._nix(tmp_path, local=False, missing="/nix/store/dddd-dep"),
-                           tmp_path / "alpha", closure_list)
+                           closure_list)
         assert fact == {"target": ALPHA, "built": "1", "local": "0", "own": "2",
                         "missing": ["/nix/store/dddd-dep"]}
 
     def test_a_list_for_an_older_closure_counts_for_nothing(self, tmp_path):
         closure_list = tmp_path / "alpha.closure"
         closure_list.write_text(f"{BETA}\n{BETA}\n")
-        fact = self._check(self._nix(tmp_path, local=False), tmp_path / "alpha", closure_list)
+        fact = self._check(self._nix(tmp_path, local=False), closure_list)
         assert fact["built"] == "0" and "local" not in fact
 
-    def test_only_named_targets_are_dropped(self, make_plugin):
+    def test_only_named_targets_read_a_closure_list(self, make_plugin):
         plugin = make_plugin(AtticPush, {**CFG, "build_root_dir": "/roots", "drop_pushed": ["Alpha"],
                                          "build_links": {"Alpha": "alpha-deploy"}})
         text = plugin.check_script()
         assert ("check Alpha 'github:owner/fleet#nixosConfigurations.\"Alpha\".config.system.build.toplevel' "
-                "/roots/alpha-deploy /roots/alpha-deploy.closure") in text
+                "/roots/alpha-deploy.closure") in text
         assert "check Beta 'github:owner/fleet#nixosConfigurations.\"Beta\".config.system.build.toplevel'\n" in text
 
-    def test_a_dropped_row_says_so_and_refuses_a_push(self, make_plugin, run_cycle):
-        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet"})
+    def test_a_dropped_row_says_so(self, plugin, run_cycle):
         _run(plugin, run_cycle, _report(f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t1", "Alpha\tlocal\t0",
                                         "Alpha\town\t2", METADATA))
         row = _rows(plugin)["Alpha"]
         assert row["status"] == "online" and row["summary"] == "Pushed, kept only in the cache"
-        result = plugin.plan_action("push_target", target="Alpha")
-        assert result.success is False and "kept only in the cache" in result.metadata["content"]
+
+    def test_the_script_never_writes_to_the_build_root_folder(self, make_plugin):
+        plugin = make_plugin(AtticPush, {**CFG, "build_root_dir": "/roots", "drop_pushed": ["Alpha"]})
+        text = plugin.check_script()
+        assert "rm -f" not in text and "mv " not in text and "readlink" not in text
 
 
 class TestParse:
@@ -357,102 +347,17 @@ class TestUiSpec:
         assert tables['missing']['title'] == 'Paths not in the cache'
 
 
-class TestActions:
-    def _built(self, plugin, run_cycle, built="1"):
-        _run(plugin, run_cycle, _report(
-            f"Alpha\ttarget\t{ALPHA}", f"Alpha\tbuilt\t{built}", "Alpha\town\t1", f"Alpha\tmissing\t{ALPHA}",
-            f"Beta\ttarget\t{BETA}", "Beta\tbuilt\t1", "Beta\town\t3", METADATA))
+class TestReadOnly:
+    def test_offers_no_actions(self, plugin):
+        assert plugin.get_actions() == []
+        assert plugin.plan_action("build_target", target="Alpha") is None
+        assert plugin.plan_action("push_target", target="Alpha") is None
 
-    def test_build_runs_detached_from_the_latest_flake(self, plugin):
-        plan = plugin.plan_action("build_target", target="Alpha")
-        assert plan.detached
-        assert "name=Alpha" in plan.command
-        assert ("build --print-out-paths --no-link --keep-going --print-build-logs --refresh "
-                "'github:owner/fleet#nixosConfigurations.\"Alpha\".config.system.build.toplevel'") in plan.command
+    def test_rows_offer_no_actions(self, plugin):
+        assert 'row_actions' not in plugin.UI_SPEC['tables']['targets']
 
-    def test_build_is_rooted_under_its_link(self, make_plugin):
-        plugin = make_plugin(AtticPush, {**CFG, "build_root_dir": "/roots/", "build_links": {"Alpha": "alpha-deploy"}})
-        assert "--out-link /roots/alpha-deploy " in plugin.plan_action("build_target", target="Alpha").command
-        assert "--out-link /roots/test-plugin-Beta " in plugin.plan_action("build_target", target="Beta").command
-
-    def test_an_untracked_target_is_refused(self, plugin):
-        result = plugin.plan_action("build_target", target="Gamma")
-        assert result.success is False and "not a tracked target" in result.metadata["content"]
-
-    def test_push_needs_a_push_command(self, plugin, run_cycle):
-        self._built(plugin, run_cycle)
-        assert plugin.plan_action("push_target", target="Alpha").success is False
-
-    def test_push_needs_a_built_target(self, make_plugin, run_cycle):
-        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet"})
-        self._built(plugin, run_cycle, built="0")
-        result = plugin.plan_action("push_target", target="Alpha")
-        assert result.success is False and "not built" in result.metadata["content"]
-
-    def test_push_sends_the_rows_store_path(self, make_plugin, run_cycle):
-        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet"})
-        self._built(plugin, run_cycle)
-        plan = plugin.plan_action("push_target", target="Alpha")
-        assert plan.detached
-        assert f"out={ALPHA}\nattic push fleet \"$out\"" in plan.command
-
-    def test_a_finished_action_updates_only_its_row(self, plugin, run_cycle):
-        self._built(plugin, run_cycle)
-        outcome = plugin.interpret_action("push_target", CmdResult(0, _report(
-            "pushing...", f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t1", "Alpha\town\t1"), ""))
-        assert outcome.success
-        assert outcome.logs[0] == ("Push of Alpha finished", "INFO")
-        rows = {row["name"]: row for row in outcome.snapshot["targets"]}
-        assert rows["Alpha"]["pushed"] == "All 1"
-        assert rows["Beta"]["pushed"] == "All 3"
-        assert outcome.snapshot["revision"] == "0123456789abcdef0123"
-
-    def test_a_failed_build_with_no_report_keeps_the_snapshot(self, plugin, run_cycle):
-        self._built(plugin, run_cycle)
-        outcome = plugin.interpret_action("build_target", CmdResult(1, "error: build failed\n", ""),
-                                          target="Alpha")
-        assert outcome.success is False
-        assert outcome.snapshot is None
-        assert outcome.logs[0] == ("Build of Alpha failed (exit 1)", "ERROR")
-
-    def test_build_script_reports_the_built_target(self, tmp_path):
-        nix = tmp_path / "nix"
-        nix.write_text(
-            "#!/bin/sh\n"
-            'case "$*" in\n'
-            "  *'path-info --stdin'*) cat >/dev/null; echo '{}' ;;\n"
-            f"  *'path-info -r'*) echo {ALPHA} ;;\n"
-            "  *path-info*) exit 0 ;;\n"
-            "esac\n")
-        nix.chmod(0o755)
-        script = build_script("Alpha", f"echo building >&2; echo {ALPHA}; exit 1", "https://c", [], str(nix))
-        run = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
-        assert run.returncode == 1
-        facts, _ = parse_report(run.stdout)
-        assert facts["Alpha"] == {"target": ALPHA, "built": "1", "own": "1", "missing": []}
-
-    def test_build_pushes_its_result_before_reporting(self, tmp_path):
-        nix = tmp_path / "nix"
-        nix.write_text("#!/bin/sh\ncase \"$*\" in *'path-info --stdin'*) cat >/dev/null; echo '{}' ;; esac\n")
-        nix.chmod(0o755)
-        script = build_script("Alpha", f"echo {ALPHA}", "https://c", [], str(nix),
-                              push_command="sh -c 'printf \"pushed %s\\n\" \"$1\" >&2; exit 1' push")
-        run = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
-        assert run.stderr == f"pushed {ALPHA}\n"
-        # A failed push fails the build action, though the build itself succeeded.
-        assert run.returncode == 1
-        assert parse_report(run.stdout)[0]["Alpha"]["target"] == ALPHA
-
-    def test_a_failed_build_pushes_nothing(self):
-        script = build_script("Alpha", "exit 1", "https://c", [], "nix", push_command="echo pushed >&2")
-        run = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
-        assert run.returncode == 1 and "pushed" not in run.stderr
-
-    def test_build_plan_pushes_with_the_push_command(self, make_plugin):
-        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet"})
-        assert 'then attic push fleet "$out" || rc=$?' in plugin.plan_action("build_target", target="Alpha").command
-
-    def test_rows_offer_build_and_push(self, plugin):
-        actions = plugin.UI_SPEC['tables']['targets']['row_actions']
-        assert [a['action_id'] for a in actions] == ['build_target', 'push_target']
-        assert actions[1]['visible_if'](plugin) is False
+    def test_removed_build_and_push_keys_are_ignored(self, make_plugin):
+        plugin = make_plugin(AtticPush, {**CFG, "push_command": "attic push fleet",
+                                         "build_args": ["--keep-going"]})
+        text = plugin.check_script()
+        assert "attic push" not in text and "nix build" not in text
