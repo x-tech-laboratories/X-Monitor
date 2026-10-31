@@ -4,8 +4,12 @@ reachability strips, backup ages, deployments and vulnerability findings."""
 from types import SimpleNamespace
 
 import pytest
+from nicegui import context, ui
+from nicegui.testing import User, UserInteraction
 
 from x_monitor.core.ui.views import fleet
+
+pytest_plugins = ['nicegui.testing.user_plugin']
 
 
 def monitor(monitor_id, name=None, kind='group', children=(), **extra):
@@ -154,3 +158,52 @@ class TestReadFleet:
         _, histories = fleet.read_fleet(SimpleNamespace(db=db), roots, set(), rows)
         assert histories == [[1.0], [1.0], [1.0]]
         assert asked[2] == ('odin-http', 'probe_ok', fleet.charts.STRIP_CELLS)
+
+
+class TestSectionSlots:
+    pytestmark = pytest.mark.nicegui_main_file(None)
+
+    @staticmethod
+    def _by_class(built, css_class):
+        return [e for e in built['client'].elements.values() if css_class in e._classes]
+
+    async def test_a_host_tile_refills_in_place_and_shows_only_the_states_it_counts(self, user: User, roots):
+        built, opened = {}, []
+
+        @ui.page('/')
+        def _page():
+            built['show'] = fleet.draw_host_tile(opened.append)
+            built['client'] = context.client
+
+        await user.open('/')
+        tiles = fleet.build_host_tiles(roots, {'odin-up': 'online'})
+        built['show'](tiles[0])
+        ids = [e.id for e in built['client'].elements.values()]
+
+        built['show'](tiles[1])
+
+        assert [e.id for e in built['client'].elements.values()] == ids
+        assert self._by_class(built, 'halon-tile-label')[0].text == 'Odin'
+        parts = self._by_class(built, 'halon-share-part')
+        assert [part.visible for part in parts] == [True, False, False, False, True]
+        UserInteraction(user, set(self._by_class(built, 'halon-host-tile')), None).click()
+        assert opened == ['odin']
+
+    async def test_a_finding_row_refills_in_place(self, user: User, roots):
+        built = {}
+
+        @ui.page('/')
+        def _page():
+            built['show'] = fleet.draw_finding_row()
+            built['client'] = context.client
+
+        await user.open('/')
+        built['show'](fleet.build_finding_rows(roots, readings({}))[0])
+        ids = [e.id for e in built['client'].elements.values()]
+
+        built['show'](fleet.build_finding_rows(roots, readings({('heimdall-scan', 'vulnerable'): 2.0}))[0])
+
+        assert [e.id for e in built['client'].elements.values()] == ids
+        parts = self._by_class(built, 'halon-share-part')
+        assert [part.visible for part in parts] == [True, False, False, False]
+        assert parts[0]._style['flex-grow'] == '2.0'

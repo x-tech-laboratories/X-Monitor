@@ -226,30 +226,42 @@ def show_strip(strip, cell_elements, share_label, last: list, states: List[str])
 # Meters and tiles for repeated items
 # ============================================================================
 
-def meter_row(label: str, value_text: str, percent: float, color: str,
-              marker: Optional[float] = None):
-    """One labeled 6px meter: the label and its printed value above, the fill below, and an
-    optional tick at the warning level."""
+def draw_meter_row(marker: Optional[float] = None) -> Callable:
+    """One labeled 6px meter with an optional tick at the warning level; returns show(label, value text,
+    percent, color) to fill it."""
     with ui.element('div').classes('halon-meter-row'):
         with ui.row().classes('halon-meter-head no-wrap'):
-            ui.label(label).classes('halon-meter-label')
-            ui.label(value_text).classes('halon-meter-value')
+            label = ui.label().classes('halon-meter-label')
+            value = ui.label().classes('halon-meter-value')
         with ui.element('div').classes('halon-meter'):
-            ui.element('div').classes('halon-meter-fill').style(
-                f'width: {percent:.1f}%; background: {color}')
+            fill = ui.element('div').classes('halon-meter-fill')
             if marker is not None:
                 ui.element('div').classes('halon-meter-marker').style(f'left: {marker:.1f}%')
 
+    def show(label_text: str, value_text: str, percent: float, color: str) -> None:
+        label.text = label_text
+        value.text = value_text
+        fill.style(f'width: {percent:.1f}%; background: {color}')
 
-def status_tile(label: str, value_text: str, state: Optional[str]):
-    """One item as a small tile: a status dot and its name, with its value as the caption; returns the tile."""
-    color = STATUS_COLORS.get(state or 'unavailable', STATUS_COLORS['unavailable'])
-    with ui.element('div').classes('halon-tile').style(f'--halon-tile-color: {color}') as tile:
+    return show
+
+
+def draw_status_tile() -> tuple:
+    """One item as a small tile: a status dot and its name, with its value as the caption; returns the
+    tile and show(label, value text, state) to fill it."""
+    with ui.element('div').classes('halon-tile') as tile:
         with ui.row().classes('halon-tile-head no-wrap'):
             ui.element('span').classes('halon-tile-dot')
-            ui.label(label).classes('halon-tile-label')
-        ui.label(value_text).classes('halon-caption')
-    return tile
+            label = ui.label().classes('halon-tile-label')
+        caption = ui.label().classes('halon-caption')
+
+    def show(label_text: str, value_text: str, state: Optional[str]) -> None:
+        color = STATUS_COLORS.get(state or 'unavailable', STATUS_COLORS['unavailable'])
+        tile.style(f'--halon-tile-color: {color}')
+        label.text = label_text
+        caption.text = value_text
+
+    return tile, show
 
 
 # ============================================================================

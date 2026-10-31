@@ -1,4 +1,5 @@
 """Tables that sort by several columns at once and filter on a typed term, done on the server so every table behaves the same."""
+import hashlib
 import re
 from contextlib import nullcontext
 from typing import Optional
@@ -63,6 +64,24 @@ def next_sort_keys(sort_keys: list, column_name: str, add: bool) -> list:
     if not current[column_name]:
         return [(name, True if name == column_name else desc) for name, desc in sort_keys]
     return [(name, desc) for name, desc in sort_keys if name != column_name]
+
+
+# ===== Keying rows =====
+
+def keyed_rows(rows: list, row_key: str) -> list:
+    """Gives each row that has no key one made from its contents, so the browser keeps a row it has already drawn."""
+    seen: dict = {}
+    keyed = []
+    for row in rows:
+        if row.get(row_key) is not None:
+            keyed.append(row)
+            continue
+        contents = repr(sorted(row.items(), key=lambda item: str(item[0])))
+        digest = hashlib.blake2b(contents.encode(), digest_size=8).hexdigest()
+        # Identical rows, such as one message logged twice in a second, each need their own key.
+        seen[digest] = seen.get(digest, -1) + 1
+        keyed.append({**row, row_key: f'{digest}-{seen[digest]}'})
+    return keyed
 
 
 # ===== Arranging rows as a tree =====
@@ -142,7 +161,7 @@ class TableControls:
 
     def set_rows(self, rows: list) -> None:
         """Takes a fresh set of rows and shows them sorted and filtered."""
-        self.source_rows = list(rows)
+        self.source_rows = keyed_rows(rows, self.table.row_key)
         self.show()
 
     def set_filter(self, term: Optional[str]) -> None:
@@ -243,6 +262,8 @@ def set_rows(table, rows: list) -> None:
     controls = getattr(table, 'x_controls', None)
     if controls is not None:
         controls.set_rows(rows)
-    elif rows != table.rows:
+        return
+    rows = keyed_rows(rows, table.row_key)
+    if rows != table.rows:
         table.rows = rows
         table.update()

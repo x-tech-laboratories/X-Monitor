@@ -164,6 +164,31 @@ class TestRepeatPanels:
         widths = [e._style['width'] for e in _by_class(built, 'halon-meter-fill')]
         assert widths == ['41.0%', '78.0%']
 
+    async def test_new_readings_refill_the_same_meters(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'fs_root_pct': 41.0, 'fs_storage_pct': 78.0},
+                                           status='online'))
+        built = await _ticked(user, render_page)
+        ids = [e.id for e in _by_class(built, 'halon-meter-fill')]
+
+        plugin.storage.apply(CollectResult(metrics={'fs_root_pct': 42.0, 'fs_storage_pct': 79.0},
+                                           status='online'))
+        await built['page']._tick()
+
+        assert [e.id for e in _by_class(built, 'halon-meter-fill')] == ids
+        assert _texts(built, 'halon-meter-value') == ['42%', '79%']
+
+    async def test_new_readings_refill_the_same_tiles(self, user: User, plugin, render_page):
+        plugin.storage.apply(CollectResult(metrics={'disk_sda_ok': 1.0}, status='online'))
+        built = await _ticked(user, render_page)
+        ids = [e.id for e in _by_class(built, 'halon-tile')]
+
+        plugin.storage.apply(CollectResult(metrics={'disk_sda_ok': 0.0}, status='failed'))
+        await built['page']._tick()
+
+        tiles = _by_class(built, 'halon-tile')
+        assert [t.id for t in tiles] == ids
+        assert tiles[0]._style['--halon-tile-color'] == STATUS_COLORS['failed']
+
     async def test_a_meter_draws_its_warning_tick(self, user: User, plugin, render_page):
         plugin.storage.apply(CollectResult(metrics={'fs_root_pct': 41.0}, status='online'))
         built = await _ticked(user, render_page)
