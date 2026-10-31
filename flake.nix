@@ -47,6 +47,10 @@
                             httpcore = pyprev.httpcore.overridePythonAttrs (old: {
                                 doCheck = false;
                             });
+                            # NiceGUI 3.18 and older remount every template slot on each render, which redraws the sidebar tree and table headers on every refresh.
+                            nicegui = pyprev.nicegui.overridePythonAttrs (old: {
+                                patches = (old.patches or [ ]) ++ [ ./nix/nicegui-slot-components.patch ];
+                            });
                         };
                     };
                     python312Packages = final.python312.pkgs;
