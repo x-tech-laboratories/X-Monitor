@@ -343,3 +343,12 @@ a web process serving a read-only UI and the REST API, and the database plus a l
 channel between them. The database is already the source of truth, so the seam exists; the work is
 that the state store is in-process memory today and would have to be fed to the web side over that
 channel instead of shared directly.
+
+# TODO — NixOS management moves to X-Nix
+
+Decided 2026-10-31: the NixOS management functions move to X-Nix, a web app, as borg moved to
+X-Backups. X-Monitor keeps only the job of watching X-Nix itself.
+- [ ] Once X-Nix has ported them (its todo.md, task 1), remove `nixos_upgrade`, `nix_gc`, `attic_push`,
+      the NixOS half of `reboot_required` and `host_control`, `base/nixos_boot.py`, the Fleet view's
+      "NixOS deployments" tiles and the NixOS parts of `nix/agent-module.nix`, with their tests and docs.
+- [ ] Add an X-Nix health check, as there is for X-Backups.
