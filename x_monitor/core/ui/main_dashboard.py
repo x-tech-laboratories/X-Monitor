@@ -45,6 +45,16 @@ def view_path(view_type: str, plugin: Optional[Any] = None) -> str:
 # The views switch in place, so going back re-renders the page for the address it returns to.
 _RELOAD_ON_BACK = '<script>window.addEventListener("popstate", () => location.reload());</script>'
 
+# Tailwind times every restyle with performance marks the browser keeps forever, so they are dropped each minute.
+_CLEAR_PERFORMANCE_ENTRIES = ('<script>setInterval(() => { performance.clearMarks(); performance.clearMeasures(); }'
+                              ', 60000);</script>')
+
+
+def add_page_scripts() -> None:
+    """Adds the dashboard's own scripts to the page being built."""
+    ui.add_head_html(_RELOAD_ON_BACK)
+    ui.add_head_html(_CLEAR_PERFORMANCE_ENTRIES)
+
 
 @dataclass
 class DashboardState:
@@ -121,7 +131,7 @@ def _render_index(engine: EngineLike, auth_config: Optional[AuthConfig] = None,
                   view: str = 'overview', plugin: Optional[Any] = None):
     """Renders the dashboard page: header, sidebar and the switchable main view."""
     theme.install()
-    ui.add_head_html(_RELOAD_ON_BACK)
+    add_page_scripts()
 
     state = DashboardState(current_view=view, selected_plugin=plugin)
 

@@ -4,7 +4,7 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
-from x_monitor.core.ui.tables import data_table, filter_rows, next_sort_keys, set_rows, sort_rows, tree_rows
+from x_monitor.core.ui.tables import data_table, filter_rows, keyed_rows, next_sort_keys, set_rows, sort_rows, tree_rows
 
 pytest_plugins = ['nicegui.testing.user_plugin']
 pytestmark = pytest.mark.nicegui_main_file(None)
@@ -114,6 +114,35 @@ def test_tree_rows_copy_the_rows_they_mark():
     assert '_depth' not in TREE_ROWS[0]
 
 
+# ===== Row keys =====
+
+FEED = [
+    {'timestamp': '10:00:02', 'message': 'disk full'},
+    {'timestamp': '10:00:01', 'message': 'started'},
+    {'timestamp': '10:00:01', 'message': 'started'},
+]
+
+
+def test_keyed_rows_give_every_row_without_a_key_its_own():
+    keys = [row['id'] for row in keyed_rows(FEED, 'id')]
+    assert len(set(keys)) == 3
+
+
+def test_keyed_rows_keep_a_rows_key_when_newer_rows_push_in_above_it():
+    before = keyed_rows(FEED, 'id')
+    after = keyed_rows([{'timestamp': '10:00:03', 'message': 'cleared'}] + FEED[:2], 'id')
+    assert [row['id'] for row in after[1:]] == [row['id'] for row in before[:2]]
+
+
+def test_keyed_rows_leave_a_rows_own_key_alone():
+    assert keyed_rows([{'id': 7, 'name': 'cpu'}], 'id') == [{'id': 7, 'name': 'cpu'}]
+
+
+def test_keyed_rows_copy_the_rows_they_key():
+    keyed_rows(FEED, 'id')
+    assert 'id' not in FEED[0]
+
+
 # ===== A real table =====
 
 async def test_a_data_table_sorts_on_header_clicks_and_filters_on_typing(user: User):
@@ -164,3 +193,15 @@ async def test_a_tree_table_collapses_and_opens_a_branch(user: User):
 
     user.find(ui.table).trigger('tree_toggle', 3)
     assert [r['name'] for r in table.rows] == ['init', 'shell', 'browser', 'tab', 'orphan']
+
+
+async def test_a_feed_table_keys_its_rows_so_the_browser_can_keep_them(user: User):
+    tables = []
+
+    @ui.page('/')
+    def _page():
+        tables.append(data_table(columns=[{'name': 'message', 'label': 'Message', 'field': 'message'}]))
+        set_rows(tables[0], FEED)
+
+    await user.open('/')
+    assert all(row.get('id') for row in tables[0].rows)

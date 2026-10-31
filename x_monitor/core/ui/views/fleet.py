@@ -13,7 +13,7 @@ from x_monitor.core.coordination.monitor_graph import iter_monitors, restates_ch
 from x_monitor.plugins.base.plugin_helpers import format_age
 
 from .. import charts
-from ..components import LABEL_CLASS, card, offload, on_data_event
+from ..components import LABEL_CLASS, ItemSlots, card, offload, on_data_event
 from ..theme import STATUS_COLORS
 
 # ============================================================================
@@ -218,33 +218,49 @@ def build_finding_rows(roots: list, latest: LatestMetric) -> List[FindingRow]:
 FINDING_COLORS = (STATUS_COLORS['failed'], STATUS_COLORS['warning'], charts.color_for('neutral'))
 
 
-def _host_tile(tile: HostTile, open_host: Callable[[str], None]):
-    """A clickable host tile with a small bar of its monitors by state under the caption."""
-    element = charts.status_tile(tile.name, tile.caption, tile.state)
-    element.classes('halon-host-tile cursor-pointer').on('click', lambda _e, host_id=tile.id: open_host(host_id))
-    with element:
+def draw_host_tile(open_host: Callable[[str], None]) -> Callable[[HostTile], None]:
+    """A clickable host tile with a small bar of its monitors by state under the caption; returns the
+    function that fills it from a HostTile."""
+    shown = {}
+    tile, show = charts.draw_status_tile()
+    tile.classes('halon-host-tile cursor-pointer').on('click', lambda _e: open_host(shown['id']))
+    with tile:
         with ui.element('div').classes('halon-share halon-host-share'):
-            for name in STATUS_ORDER:
-                if tile.counts.get(name):
-                    color = charts.TRACK_COLOR if name == 'unavailable' else STATUS_COLORS[name]
-                    ui.element('div').classes('halon-share-part').style(
-                        f'flex-grow: {tile.counts[name]}; background: {color}')
+            parts = {name: ui.element('div').classes('halon-share-part') for name in STATUS_ORDER}
+
+    def fill(host: HostTile) -> None:
+        shown['id'] = host.id
+        show(host.name, host.caption, host.state)
+        for name, part in parts.items():
+            color = charts.TRACK_COLOR if name == 'unavailable' else STATUS_COLORS[name]
+            part.style(f'flex-grow: {host.counts.get(name, 0)}; background: {color}')
+            part.set_visibility(bool(host.counts.get(name)))
+
+    return fill
 
 
-def _finding_row(row: FindingRow):
-    """One labeled bar of a scan's findings, with the counts printed beside it."""
-    total = row.vulnerable + row.suspected + row.noted
+def draw_finding_row() -> Callable[[FindingRow], None]:
+    """One labeled bar of a scan's findings, with the counts printed beside it; returns the function
+    that fills it from a FindingRow."""
     with ui.row().classes('halon-strip-row no-wrap'):
-        ui.label(row.name).classes('halon-strip-label')
+        name = ui.label().classes('halon-strip-label')
         with ui.element('div').classes('halon-share halon-finding-bar'):
-            for count, color in zip((row.vulnerable, row.suspected, row.noted), FINDING_COLORS):
-                if count:
-                    ui.element('div').classes('halon-share-part').style(
-                        f'flex-grow: {count}; background: {color}')
-            if not total:
-                ui.element('div').classes('halon-share-part').style(
-                    f'flex-grow: 1; background: {STATUS_COLORS["online"]}')
-        ui.label(row.text).classes('halon-strip-share')
+            parts = [ui.element('div').classes('halon-share-part').style(f'background: {color}')
+                     for color in FINDING_COLORS]
+            clean = ui.element('div').classes('halon-share-part').style(
+                f'flex-grow: 1; background: {STATUS_COLORS["online"]}')
+        text = ui.label().classes('halon-strip-share')
+
+    def fill(row: FindingRow) -> None:
+        counts = (row.vulnerable, row.suspected, row.noted)
+        name.text = row.name
+        for part, count in zip(parts, counts):
+            part.style(f'flex-grow: {count}')
+            part.set_visibility(bool(count))
+        clean.set_visibility(not any(counts))
+        text.text = row.text
+
+    return fill
 
 
 def _legend(entries: List[Tuple[str, str]]):
@@ -256,10 +272,22 @@ def _legend(entries: List[Tuple[str, str]]):
                 ui.label(name)
 
 
-def _backup_meter(row: BackupRow):
-    """One backup's meter, in the accent while healthy and in its state's color otherwise."""
-    color = STATUS_COLORS[row.state] if row.state in ('warning', 'failed') else charts.color_for(None)
-    charts.meter_row(row.label, row.value_text, row.percent, color, 100.0 / BACKUP_SCALE)
+def draw_backup_meter() -> Callable[[BackupRow], None]:
+    """One backup's meter, in the accent while healthy and in its state's color otherwise; returns the
+    function that fills it from a BackupRow."""
+    show = charts.draw_meter_row(100.0 / BACKUP_SCALE)
+
+    def fill(row: BackupRow) -> None:
+        color = STATUS_COLORS[row.state] if row.state in ('warning', 'failed') else charts.color_for(None)
+        show(row.label, row.value_text, row.percent, color)
+
+    return fill
+
+
+def draw_deploy_tile() -> Callable:
+    """One deployment's tile; returns the function that fills it from a deploy tile row."""
+    _, show = charts.draw_status_tile()
+    return lambda tile: show(tile.name, tile.caption, tile.state)
 
 
 def _render_reachability(strip_rows: List[StripRow]) -> list:
@@ -335,25 +363,18 @@ def render_fleet(engine: Any, switch_view: Callable):
     drawn_strips = _render_reachability(build_strip_rows(roots))
     boxes.update(_render_section_boxes({monitor_type(m) for m in by_id.values()}))
     drawers = {
-        'hosts': lambda tile: _host_tile(tile, open_host),
-        'backups': _backup_meter,
-        'deploys': lambda tile: charts.status_tile(tile.name, tile.caption, tile.state),
-        'findings': _finding_row,
+        'hosts': lambda: draw_host_tile(open_host),
+        'backups': draw_backup_meter,
+        'deploys': draw_deploy_tile,
+        'findings': draw_finding_row,
     }
-    last_model: Dict[str, list] = {}
+    slots = {name: ItemSlots(box, drawers[name]) for name, box in boxes.items()}
 
     async def update():
         model, histories = await offload(read_fleet)(engine, roots, set(boxes), [row for row, *_ in drawn_strips])
         for (_, strip, cell_elements, share_label, last_states), values in zip(drawn_strips, histories):
             charts.show_strip(strip, cell_elements, share_label, last_states, charts.strip_states(values))
-        # A section is rebuilt only when its own rows changed.
         for name, rows in model.items():
-            if rows == last_model.get(name):
-                continue
-            last_model[name] = rows
-            boxes[name].clear()
-            with boxes[name]:
-                for row in rows:
-                    drawers[name](row)
+            slots[name].show(rows)
 
     on_data_event(update)

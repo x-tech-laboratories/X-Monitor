@@ -1,6 +1,6 @@
 """Reusable NiceGUI building blocks shared by the UI_SPEC renderer and plugin views."""
 import asyncio
-from typing import Optional
+from typing import Any, Callable, Optional
 from nicegui import context, ui
 from x_monitor.core.contracts import RefreshCallback
 from .tables import data_table, set_rows
@@ -280,11 +280,33 @@ def history_chart(page, title: str, plugin_id: str, metric_name: str, limit: int
         page.on_refresh(update)
         return chart
 
-def chip_label(label: str, value: str, color: Optional[str] = None):
-    """A status *region*: tinted, not filled, so its text stays ordinary body
-    text (§6.7). `color` is a status token, composited at 15% by halon.css."""
-    style = f'--halon-tint-color: {color}' if color else ''
-    return ui.label(f'{label}: {value}' if label else value).classes('halon-tint').style(style)
+class ItemSlots:
+    """A container holding one drawn slot per item, refilled in place and redrawn only when the number of items changes.
+
+    `draw` makes one slot's widgets in the current container and returns a function that fills them from an item.
+    """
+
+    def __init__(self, container, draw: Callable[[], Callable[[Any], None]], empty_text: Optional[str] = None):
+        self.container = container
+        self.draw = draw
+        self.empty_text = empty_text
+        self.fillers: list = []
+        self.items: Optional[list] = None
+
+    def show(self, items: list) -> None:
+        """Fills the slots from these items, sending nothing when they match the last ones."""
+        if items == self.items:
+            return
+        # Removed elements leave their ids behind in the browser, so a slot is redrawn only when one is missing or extra.
+        if self.items is None or len(items) != len(self.fillers) or not items:
+            self.container.clear()
+            with self.container:
+                self.fillers = [self.draw() for _ in items]
+                if not items and self.empty_text is not None:
+                    ui.label(self.empty_text).classes('halon-caption')
+        self.items = items
+        for fill, item in zip(self.fillers, items):
+            fill(item)
 
 
 def _resolve_repeat_items(plugin, repeat_spec: dict) -> list:
@@ -418,43 +440,58 @@ def render_repeat_card(plugin, page, repeat_spec: dict, title: Optional[str] = N
             'display: flex; flex-wrap: wrap; gap: var(--space-5); width: 100%'
         )
         container = ui.element('div').style(wrap_style)
-    last_items = [None]
+
+    def item_view(item: dict, scale: float) -> dict:
+        raw_label = str(item.get(item_label, ''))
+        label = label_transform(raw_label) if raw_label else raw_label
+        if label:
+            label = f'{label_prefix}{label}{label_suffix}'
+        if item_format_fn:
+            value = item_format_fn(item)
+        else:
+            raw_value = item.get(item_value)
+            value = formatter(raw_value) if formatter else str(raw_value)
+        state = color_rule(item) if color_rule else None
+        return {'label': label, 'value': value, 'state': state,
+                'color': STATUS_COLORS.get(state) if state else None,
+                'percent': charts.fill_percent(item.get(bar_value), scale)}
+
+    def draw_chip():
+        chip = ui.label().classes('halon-tint')
+
+        def fill(view):
+            chip.text = f"{view['label']}: {view['value']}" if view['label'] else view['value']
+            chip.style(replace=f"--halon-tint-color: {view['color']}" if view['color'] else '')
+
+        return fill
+
+    def draw_meter():
+        show = charts.draw_meter_row(bar_marker)
+        return lambda view: show(view['label'] or '--', view['value'], view['percent'],
+                                 view['color'] or charts.color_for(None))
+
+    def draw_tile():
+        _, show = charts.draw_status_tile()
+        return lambda view: show(view['label'] or '--', view['value'], view['state'])
+
+    def draw_info_card():
+        with card('halon-stat flex-1 min-w-[9rem]'):
+            title_label = ui.label().classes(LABEL_CLASS)
+            value_label = ui.label().classes(f'{VALUE_CLASS} w-full')
+
+        def fill(view):
+            title_label.text = view['label'] or '--'
+            value_label.text = view['value']
+
+        return fill
+
+    drawers = {'chips': draw_chip, 'bars': draw_meter, 'tiles': draw_tile}
+    slots = ItemSlots(container, drawers.get(container_kind, draw_info_card), empty_text)
 
     def render():
         items = _resolve_repeat_items(plugin, repeat_spec)
-        # Rebuilding is the costly part, so a refresh that finds the same items sends nothing.
-        if items == last_items[0]:
-            return
-        last_items[0] = items
-        container.clear()
-        if not items:
-            with container:
-                ui.label(empty_text).classes('halon-caption')
-            return
         scale = _largest_bar_value(items, bar_value) if bar_max == 'largest' else bar_max
-        with container:
-            for item in items:
-                raw_label = str(item.get(item_label, ''))
-                label = label_transform(raw_label) if raw_label else raw_label
-                if label:
-                    label = f'{label_prefix}{label}{label_suffix}'
-                if item_format_fn:
-                    value = item_format_fn(item)
-                else:
-                    raw_value = item.get(item_value)
-                    value = formatter(raw_value) if formatter else str(raw_value)
-                state = color_rule(item) if color_rule else None
-                color = STATUS_COLORS.get(state) if state else None
-                if container_kind == 'chips':
-                    chip_label(label, value, color)
-                elif container_kind == 'bars':
-                    charts.meter_row(label or '--', value,
-                                     charts.fill_percent(item.get(bar_value), scale),
-                                     color or charts.color_for(None), bar_marker)
-                elif container_kind == 'tiles':
-                    charts.status_tile(label or '--', value, state)
-                else:
-                    info_card(label or '--', value)
+        slots.show([item_view(item, scale) for item in items])
 
     page.on_refresh(render)
 
