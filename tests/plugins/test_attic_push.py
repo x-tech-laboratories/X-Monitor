@@ -205,9 +205,12 @@ class TestParse:
         assert row["summary"] == "Not built from the latest flake"
         assert plugin._built_text == "0 / 3"
 
-    def test_unbuilt_but_cached_root(self, plugin, run_cycle):
+    def test_target_built_and_pushed_by_another_host_counts_as_built(self, plugin, run_cycle):
         _run(plugin, run_cycle, _report(f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t0", "Alpha\town\t1"))
-        assert _rows(plugin)["Alpha"]["pushed"] == "Root only"
+        row = _rows(plugin)["Alpha"]
+        assert (row["built"], row["pushed"], row["local"]) == ("Yes", "Yes", False)
+        assert row["status"] == "online"
+        assert row["summary"] == "Pushed, kept only in the cache"
 
     def test_failed_evaluation_fails(self, plugin, run_cycle):
         result = _run(plugin, run_cycle, _report("Alpha\terror\terror: attribute missing"))
@@ -239,7 +242,7 @@ class TestParse:
         plugin = make_plugin(AtticPush, {**CFG, "configurations": ["Alpha"], "installables": {},
                                          "pending_status": "failed"})
         result = _run(plugin, run_cycle, _report(f"Alpha\ttarget\t{ALPHA}", "Alpha\tbuilt\t0",
-                                                 "Alpha\town\t1"))
+                                                 "Alpha\town\t1", f"Alpha\tmissing\t{ALPHA}"))
         assert result.status == "failed"
 
 
