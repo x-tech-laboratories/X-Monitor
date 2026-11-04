@@ -21,7 +21,9 @@ and pushes the targets, writes its closure's path list beside its build root
 (`build_root_dir`, under its name in `build_links`, else `<monitor id>-<target>`)
 as `<link>.closure` and removes the root once it is fully pushed. The check
 reads that list for a target no longer in the local store, so it still counts
-as built and its paths are still checked against the cache. The monitor only
+as built and its paths are still checked against the cache. A target absent
+from the local store whose root the cache already holds, because another host
+built and pushed it, counts as built and kept only in the cache. The monitor only
 reads: it never builds, pushes or writes to the build-root folder."""
 
 import json
@@ -336,9 +338,11 @@ class AtticPush(Plugin):
             row.update(status='failed', summary=f"Evaluation failed: {fact['error'].strip()}")
             return row
 
-        is_built = fact.get('built') == '1'
-        is_local = fact.get('local') != '0'
         missing = fact.get('missing') or []
+        # A target another host built and pushed is absent from this store, but the cache holds its root.
+        built_elsewhere = fact.get('built') == '0' and not missing and 'cache_error' not in fact
+        is_built = fact.get('built') == '1' or built_elsewhere
+        is_local = fact.get('local') != '0' and not built_elsewhere
         own = int(fact['own']) if str(fact.get('own', '')).isdigit() else 0
         row.update(target=fact.get('target', '--'), built='Yes' if is_built else 'No', local=is_local,
                    missing_count=len(missing), missing=missing[:self.missing_limit])
@@ -349,7 +353,9 @@ class AtticPush(Plugin):
 
         # An unbuilt target was checked by its root path alone, so its count says nothing about the closure.
         if not is_built:
-            row['pushed'] = 'No' if missing else 'Root only'
+            row['pushed'] = 'No'
+        elif built_elsewhere:
+            row['pushed'] = 'Yes'
         elif missing:
             row['pushed'] = f'{len(missing)} of {own} missing'
         else:
