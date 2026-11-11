@@ -106,7 +106,8 @@ export interface ChartView {
   type: "chart";
   title: string;
   style: "lines" | "stack" | "mirror";
-  times: string[];
+  // When each reading was taken, in epoch seconds, newest last.
+  times: number[];
   series: { label: string; values: (number | null)[] }[];
 }
 

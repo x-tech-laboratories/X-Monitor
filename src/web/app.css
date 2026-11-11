@@ -1,0 +1,39 @@
+/* X-Monitor's own layout; every colour, space and type size comes from Halon's tokens. */
+
+.body-layout { display: flex; flex-direction: column; gap: var(--space-5); width: 100%; }
+.layout-row { display: flex; flex-wrap: wrap; gap: var(--space-5); width: 100%; align-items: stretch; }
+.layout-cell { display: flex; flex-direction: column; gap: var(--space-4); }
+
+.button-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.button-row.end { justify-content: flex-end; }
+.grid-row { display: flex; flex-wrap: wrap; gap: var(--space-5); }
+.grid-row > * { flex: 1 1 320px; min-width: 0; }
+
+.strip-row { display: flex; align-items: center; gap: var(--space-4); }
+.strip-row > :first-child { flex: 1; min-width: 0; }
+.strip-group { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.host-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: var(--space-4); }
+.host-tile { display: flex; flex-direction: column; gap: var(--space-2); text-decoration: none; color: inherit; }
+
+.child-cards { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-5); width: 100%; }
+.child-head { display: flex; align-items: center; gap: var(--space-3); width: 100%; text-align: left; }
+.child-body { padding: var(--space-4); min-width: 0; }
+
+.tree-cell { display: inline-flex; align-items: center; gap: var(--space-2); }
+.tree-leaf { display: inline-block; width: 1.5rem; }
+.tree-tools { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) 0; }
+.monitor-tree { display: flex; flex-direction: column; gap: var(--space-2); }
+.sidebar-views { display: flex; flex-direction: column; }
+
+.search-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
+.host-picks { display: flex; flex-wrap: wrap; gap: var(--space-3); border: 0; padding: 0; margin: 0; }
+.crumbs-row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); }
+.list-row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); }
+
+.schedule-line { display: block; }
+.section-title { margin: 0; }
+.pre-wrap { white-space: pre-wrap; }
+.break-all { word-break: break-all; }
+.mono { font-family: var(--font-family-mono); }
+.truncate { display: block; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
