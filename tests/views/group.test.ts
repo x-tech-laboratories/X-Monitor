@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { DatabaseManager } from "../../src/core/database/database.ts";
-import { child_cell_style, set_child_open, spec_with_titles } from "../../src/server/views/group.ts";
+import { child_cell_style } from "../../src/monitors/base/child_cards.ts";
+import { spec_with_titles } from "../../src/monitors/group.ts";
+import { set_child_open } from "../../src/server/views/group.ts";
 import { CompositeLayout, resolve_rows } from "../../src/server/views/layout.ts";
 import { build_body, new_context } from "../../src/server/views/monitor.ts";
 import { iter_monitors } from "../../src/core/coordination/monitor_graph.ts";

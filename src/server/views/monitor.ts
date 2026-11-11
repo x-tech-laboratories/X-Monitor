@@ -6,7 +6,7 @@ import type { ActionButtonSpec, LayoutRow } from "../../shared/ui_spec.ts";
 import type { ActionReply, BodyView, DialogView, HeaderActionView, MonitorPageView, MuteView } from "../../shared/page_view.ts";
 import { outcome_notice } from "../../shared/page_view.ts";
 import { dialog_views } from "./components.ts";
-import { browser_view, own_log_search, systemd_service_rows } from "./custom.ts";
+import { browser_view, own_log_search, systemd_service_rows, type SystemdViewData } from "./custom.ts";
 import type { NotificationsLike, ViewEngine } from "./engine.ts";
 import { child_cards, composite_body } from "./group.ts";
 import { format_when } from "./schedules.ts";
@@ -45,8 +45,8 @@ export function build_body(plugin: Plugin, context: "page" | "inline", build: Bu
     return { monitor_id: plugin.id, rows: [], children: child_cards(plugin, build), custom: null };
   }
 
-  if (kind === "systemd_service") {
-    return { monitor_id: plugin.id, rows: systemd_service_rows(plugin, context, build.now).rows, children: [], custom: null };
+  if (kind === "systemd_service" && custom !== null) {
+    return { monitor_id: plugin.id, rows: systemd_service_rows(plugin, custom.data as SystemdViewData, context).rows, children: [], custom: null };
   }
 
   const spec = plugin.UI_SPEC;

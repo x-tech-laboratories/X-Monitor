@@ -8,6 +8,7 @@
 // warning ("slow"). A table lists every monitor's recent cycle times, slowest first, with how long its SSH commands
 // queued for a channel. A sample that throws before anything was read is unavailable.
 
+import { iter_monitors } from "../core/coordination/monitor_graph.ts";
 import { readFileSync } from "node:fs";
 
 import { CollectResult, type Result } from "../core/connectors/types.ts";
@@ -53,20 +54,6 @@ interface WatchedMonitor {
   name: string;
   interval: number;
   children: WatchedMonitor[];
-}
-
-// Every monitor reachable from these roots once each, parents before children, in config order.
-function* iter_monitors(roots: readonly unknown[]): Generator<WatchedMonitor> {
-  const seen = new Set<unknown>();
-  function* walk(plugins: readonly unknown[]): Generator<WatchedMonitor> {
-    for (const plugin of plugins) {
-      if (seen.has(plugin)) continue;
-      seen.add(plugin);
-      yield plugin as WatchedMonitor;
-      yield* walk((plugin as WatchedMonitor).children ?? []);
-    }
-  }
-  yield* walk(roots);
 }
 
 // ── Process readers ──────────────────────────────────────────────────────────
@@ -184,7 +171,7 @@ export class XMonitorSelfPlugin extends Plugin {
   private *walk_monitors(): Generator<WatchedMonitor> {
     const engine = this.self_engine;
     if (engine === null) return;
-    for (const plugin of iter_monitors(engine.plugins)) if ((plugin as unknown) !== this) yield plugin;
+    for (const plugin of iter_monitors(engine.plugins as unknown as WatchedMonitor[])) if ((plugin as unknown) !== this) yield plugin;
   }
 
   private collection_health(): [total: number, late: number, stalled: number, offenders: [number, string][]] {

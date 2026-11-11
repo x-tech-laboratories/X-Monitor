@@ -4,13 +4,14 @@ import { is_watched } from "../../src/core/coordination/jobs.ts";
 import { DatabaseManager } from "../../src/core/database/database.ts";
 import type { JobDict } from "../../src/core/state/records.ts";
 import { job_panel } from "../../src/server/views/components.ts";
-import { browse_folder, browser_view, oneshot_cards, restore_question } from "../../src/server/views/custom.ts";
+import { browse_folder, browser_view, restore_question } from "../../src/server/views/custom.ts";
 import { job_log_view, job_summary, job_title, JobWatches, LEASE_SECONDS } from "../../src/server/views/job_log.ts";
 import {
   action_names, build_body, cancel_job, lede, monitor_page_view, new_context, poll_now, run_header_action, run_header_toggle, schedule_lines, start_job,
 } from "../../src/server/views/monitor.ts";
 import type { ActionState } from "../../src/monitors/base/plugin_base.ts";
 import type { ActionButtonSpec } from "../../src/shared/ui_spec.ts";
+import { SystemdService } from "../../src/monitors/systemd_service.ts";
 import { make_plugin } from "../harness.ts";
 import { apply, SpecPlugin, widgets_by_type } from "./helpers.ts";
 
@@ -321,18 +322,8 @@ describe("a job's log", () => {
 // ── Custom pages ─────────────────────────────────────────────────────────────
 
 describe("a systemd service's page", () => {
-  class Service extends SpecPlugin {
-    service_name = "nginx.service";
-    max_age: number | null = null;
-    allow_unit_file_edit = false;
-
-    override custom_view() {
-      return { kind: "systemd_service", data: null };
-    }
-  }
-
   it("shows a continuous service's state, last collection and unit file buttons", () => {
-    const plugin = make_plugin(Service, { name: "nginx", id: "nginx" });
+    const plugin = make_plugin(SystemdService, { name: "nginx", id: "nginx", type: "systemd_service", service_name: "nginx.service" });
     apply(plugin, { metrics: { active: 1 }, status: "online" });
     const body = build_body(plugin, "page", new_context());
     expect(widgets_by_type(body.rows, "value").map((card) => [card.title, card.text])).toEqual([
@@ -343,18 +334,15 @@ describe("a systemd service's page", () => {
   });
 
   it("offers editing only where allowed", () => {
-    const plugin = make_plugin(Service, { name: "nginx", id: "nginx" });
-    plugin.allow_unit_file_edit = true;
+    const plugin = make_plugin(SystemdService, { name: "nginx", id: "nginx", type: "systemd_service", service_name: "nginx.service", allow_unit_file_edit: true });
     expect(widgets_by_type(build_body(plugin, "page", new_context()).rows, "buttons")[0].buttons.map((button) => button.label)).toContain("Edit Unit File");
   });
 
   it("judges a oneshot service by its last run", () => {
-    expect(oneshot_cards(1, null, null, 3600, 0).state.text).toBe("RUNNING");
-    expect(oneshot_cards(0, null, null, 3600, 0).state).toMatchObject({ text: "UNKNOWN", state: "unavailable" });
-    expect(oneshot_cards(0, 0, 0, 3600, 100)).toMatchObject({ state: { text: "NEVER RUN", state: "failed" }, age: { text: "Never run" } });
-    const recent = oneshot_cards(0, 1000, 1, 3600, 1060);
-    expect([recent.state.text, recent.result.text, recent.age.text, recent.age.state]).toEqual(["IDLE", "SUCCESS", "1 Minute ago", "online"]);
-    expect(oneshot_cards(0, 1000, 0, 3600, 10_000).age.state).toBe("failed");
+    const plugin = make_plugin(SystemdService, { name: "backup", id: "backup", type: "systemd_service", service_name: "backup.service", max_age: "1h" });
+    apply(plugin, { metrics: { is_running: 0, last_run_epoch: 0, last_run_success: 0 }, status: "failed" });
+    const cards = widgets_by_type(build_body(plugin, "page", new_context()).rows, "value").map((card) => [card.title, card.text, card.state]);
+    expect(cards).toEqual(expect.arrayContaining([["MAX AGE", "1 Hour", null], ["CURRENT STATE", "NEVER RUN", "failed"], ["LAST RESULT", "FAILED", "failed"], ["LAST RUN", "Never run", "failed"]]));
   });
 });
 

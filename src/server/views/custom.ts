@@ -3,77 +3,61 @@
 // search. Each reads the monitor's attributes and readings by their Python names.
 
 import type { Plugin } from "../../monitors/base/plugin_base.ts";
-import { format_age, format_duration } from "../../monitors/base/plugin_helpers.ts";
 import type { BrowserView, LogSearchView, ValueCardView } from "../../shared/page_view.ts";
-import { iso_local } from "../../shared/time.ts";
+import { status_of } from "../../shared/status.ts";
 import type { ButtonSpec, LayoutRow } from "../../shared/ui_spec.ts";
-import { buttons_view, host_card, info_card, latest_value, log_feed, status_card } from "./components.ts";
+import { buttons_view, host_card, info_card, log_feed, status_card } from "./components.ts";
 import { plugin_attr } from "./engine.ts";
-import { make_inline_layout, PluginLayout } from "./layout.ts";
+import { PluginLayout } from "./layout.ts";
 
 // ── systemd services ─────────────────────────────────────────────────────────
 
-export const CONTINUOUS_LAYOUT: LayoutRow[] = [
-  ["host_card", "service_card", "status_card", "time_card"],
-  ["unit_file_card"],
-  ["logs"],
-];
-
-export const ONESHOT_LAYOUT: LayoutRow[] = [
-  ["host_card", "service_card", "maxage_card", "state_card"],
-  ["unit_file_card"],
-  ["history"],
-  ["logs"],
-];
-
-function unit_file_buttons(): ButtonSpec[] {
-  return [
-    { id: "view_unit_file", label: "View Unit File", icon: "article", color: "primary", kind: "dialog", dialog: "view_unit_file" },
-    { id: "daemon_reload", label: "Reload Daemon", icon: "refresh", color: "secondary", kind: "dispatch" },
-    { id: "edit_unit_file", label: "Edit Unit File", icon: "edit", color: "secondary", kind: "dialog", dialog: "edit_unit_file", visible_if: (plugin) => Boolean(plugin_attr(plugin, "allow_unit_file_edit")) },
-  ];
+// A state the systemd monitor reports, such as {text: "IDLE", level: "online"}.
+interface StateText {
+  text: string;
+  level: string;
 }
 
-// The oneshot state, last result and last run cards, from the run metrics.
-export function oneshot_cards(is_running: number | null, last_run_epoch: number | null, last_run_success: number | null, max_age: number, now_seconds: number): { state: ValueCardView; history_visible: boolean; result: ValueCardView; age: ValueCardView } {
-  const result = info_card("LAST RESULT", "--");
-  const age = info_card("LAST RUN", "--");
-  if (is_running !== null && is_running > 0.5) return { state: info_card("CURRENT STATE", "RUNNING", "warning"), history_visible: false, result, age };
-  if (last_run_epoch === null) return { state: info_card("CURRENT STATE", "UNKNOWN", "unavailable"), history_visible: true, result, age };
-  const ok = last_run_success !== null && last_run_success > 0.5;
-  const epoch = Math.trunc(last_run_epoch);
-  const state = epoch === 0 ? info_card("CURRENT STATE", "NEVER RUN", "failed") : info_card("CURRENT STATE", "IDLE", "online");
-  const result_card = info_card("LAST RESULT", ok ? "SUCCESS" : "FAILED", ok ? "online" : "failed");
-  if (epoch === 0) return { state, history_visible: true, result: result_card, age: info_card("LAST RUN", "Never run", "failed") };
-  const seconds = Math.trunc(now_seconds) - epoch;
-  return { state, history_visible: true, result: result_card, age: info_card("LAST RUN", format_age(seconds), seconds > max_age ? "failed" : "online") };
+// What the systemd monitor's custom_view() hands over (src/monitors/systemd_service.ts).
+export interface SystemdViewData {
+  mode: "continuous" | "oneshot";
+  service_name: string | null;
+  default_layout: LayoutRow[];
+  inline_layout: LayoutRow[];
+  unit_file: { title: string; buttons: (ButtonSpec & { visible?: boolean })[] };
+  logs: { title: string; limit: number; full_height: boolean };
+  status_card?: { title: string; on_text: string; off_text: string; value: number | null };
+  last_collection?: string;
+  max_age_text?: string;
+  state?: StateText | null;
+  history_visible?: boolean;
+  result?: StateText | null;
+  age?: StateText | null;
 }
 
-// A systemd service's page: a continuous service shows whether it is active, a oneshot one its last run.
-export function systemd_service_rows(plugin: Plugin, context: "page" | "inline", now: Date): PluginLayout {
-  const max_age = plugin_attr(plugin, "max_age");
-  const oneshot = max_age !== null && max_age !== undefined;
-  const rows = oneshot ? ONESHOT_LAYOUT : CONTINUOUS_LAYOUT;
-  const layout = new PluginLayout(plugin.config, context === "page" ? rows : make_inline_layout(rows));
-  const service_name = String(plugin_attr(plugin, "service_name") ?? "");
+function state_card(title: string, state: StateText | null | undefined): ValueCardView {
+  return state ? info_card(title, state.text, status_of(state.level)) : info_card(title, "--");
+}
 
+// A systemd service's page from what the monitor reports: a continuous service shows whether it is active, a oneshot
+// one its last run; the layout is the monitor's own, made compact inline.
+export function systemd_service_rows(plugin: Plugin, data: SystemdViewData, context: "page" | "inline"): PluginLayout {
+  const layout = new PluginLayout(plugin.config, context === "page" ? data.default_layout : data.inline_layout);
   layout.cell("host_card").push(host_card(plugin.target));
-  layout.cell("service_card").push(info_card("SERVICE", service_name));
-  layout.cell("unit_file_card").push(buttons_view(plugin, unit_file_buttons(), "Unit file"));
-  layout.cell("logs").push(log_feed(plugin, { title: "Logs", limit: 100, full_height: true }));
+  layout.cell("service_card").push(info_card("SERVICE", String(data.service_name ?? "")));
+  const buttons = data.unit_file.buttons.filter((button) => button.visible !== false).map(({ visible: _visible, ...button }) => button);
+  layout.cell("unit_file_card").push(buttons_view(plugin, buttons, data.unit_file.title));
+  layout.cell("logs").push(log_feed(plugin, data.logs));
 
-  if (!oneshot) {
-    layout.cell("status_card").push(status_card(latest_value(plugin, "active"), "SERVICE STATUS", "ACTIVE", "INACTIVE"));
-    const collected = plugin.data.latest_status_time(plugin.id);
-    layout.cell("time_card").push(info_card("LAST COLLECTION", collected ? iso_local(collected).slice(11) : "--:--:--"));
+  if (data.mode === "continuous") {
+    const card = data.status_card;
+    layout.cell("status_card").push(status_card(card?.value ?? null, card?.title, card?.on_text, card?.off_text));
+    layout.cell("time_card").push(info_card("LAST COLLECTION", data.last_collection ?? "--:--:--"));
     return layout;
   }
-
-  layout.cell("maxage_card").push(info_card("MAX AGE", format_duration(Number(max_age))));
-  const cards = oneshot_cards(latest_value(plugin, "is_running"), latest_value(plugin, "last_run_epoch"), latest_value(plugin, "last_run_success"), Number(max_age), now.getTime() / 1000);
-  layout.cell("state_card").push(cards.state);
-  const history = layout.cell("history");
-  if (cards.history_visible) history.push(cards.result, cards.age);
+  layout.cell("maxage_card").push(info_card("MAX AGE", data.max_age_text ?? "--"));
+  layout.cell("state_card").push(state_card("CURRENT STATE", data.state));
+  if (data.history_visible) layout.cell("history").push(state_card("LAST RESULT", data.result), state_card("LAST RUN", data.age));
   return layout;
 }
 
