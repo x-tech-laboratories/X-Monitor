@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { cmd_result, ping_result, type ActionPlan, type CollectResult, type IoActionPlan } from "../../src/core/connectors/types.ts";
 import type { PluginConfig } from "../../src/monitors/base/plugin_helpers.ts";
-import { magic_packet } from "../../src/monitors/base/wol.ts";
+import { magic_packet } from "../../src/core/connectors/wol.ts";
 import { python_format, Uptime } from "../../src/monitors/uptime.ts";
 import { make_plugin, run_requests, store_of } from "../harness.ts";
 

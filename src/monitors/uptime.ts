@@ -13,7 +13,7 @@ import { shell_quote } from "../core/shell.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_duration, parse_duration, type PluginConfig } from "./base/plugin_helpers.ts";
-import { DEFAULT_BROADCAST, DEFAULT_PORT, magic_packet, remote_send_command, send_magic_packet } from "./base/wol.ts";
+import { DEFAULT_BROADCAST, DEFAULT_PORT, magic_packet, remote_send_command, send_magic_packet } from "../core/connectors/wol.ts";
 
 const log = create_logger_for("x_monitor.plugins.uptime");
 

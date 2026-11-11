@@ -2,6 +2,7 @@
 // touches the network itself. build_resolver and failure_result are also what a monitor's blocking lookup uses, so
 // both aim at the same nameserver and name their errors the same way.
 
+import { getServers } from "node:dns";
 import { Resolver } from "node:dns/promises";
 
 import { dns_result, type DnsAnswer, type DnsQuery, type DnsRecordValue, type DnsResult } from "./types.ts";
@@ -20,16 +21,19 @@ export type ResolverFactory = (options: { timeout: number; tries: number }) => R
 
 const node_resolver: ResolverFactory = (options) => new Resolver(options) as unknown as ResolverLike;
 
-// A nameserver and port as setServers takes them, bracketing an IPv6 address.
-function server_address(nameserver: string, port: number): string {
-  const host = nameserver.includes(":") && !nameserver.startsWith("[") ? `[${nameserver}]` : nameserver;
-  return `${host}:${port}`;
+// A server address with its port as setServers takes it, bracketing an IPv6 address.
+function server_with_port(server: string, port: number): string {
+  const host = server.startsWith("[") ? server.slice(1, server.indexOf("]")) : server.includes(".") && server.includes(":") ? server.split(":")[0] : server;
+  if (port === 53) return host;
+  return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
-// A resolver aimed at the query's nameserver and port, or the system's nameservers when it names none.
+// A resolver aimed at the query's nameserver and port, or the system's nameservers when it names none; the whole
+// query gets one try within its timeout.
 export function build_resolver(query: DnsQuery, factory: ResolverFactory = node_resolver): ResolverLike {
   const resolver = factory({ timeout: Math.max(1, Math.round(query.timeout * 1000)), tries: 1 });
-  if (query.resolver) resolver.setServers([server_address(query.resolver, query.port)]);
+  if (query.resolver) resolver.setServers([server_with_port(query.resolver, query.port)]);
+  else if (query.port !== 53) resolver.setServers(getServers().map((server) => server_with_port(server, query.port)));
   return resolver;
 }
 
@@ -37,11 +41,11 @@ export function build_resolver(query: DnsQuery, factory: ResolverFactory = node_
 
 // The DnsResult a failed lookup maps to, by what went wrong.
 export function failure_result(error: unknown): DnsResult {
-  const code = (error as { code?: string }).code;
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code: unknown }).code) : "";
   if (code === "ENOTFOUND") return dns_result("nxdomain");
   if (code === "ENODATA") return dns_result("no_answer");
   if (code === "ETIMEOUT") return dns_result("timeout");
-  return dns_result("dns_error", null, (error as Error).message || String(error));
+  return dns_result("dns_error", null, error instanceof Error ? error.message : String(error));
 }
 
 // Looks one query up through a resolver, keeping TTLs for addresses, which are the records node reports them for.
