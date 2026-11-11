@@ -87,7 +87,13 @@ export function database_path(config_path: string, override: string | undefined)
 
 // ── Server ───────────────────────────────────────────────────────────────────
 
-export async function serve(argv: string[]): Promise<void> {
+// What a caller may swap in, such as the demo's engine that applies sample readings instead of collecting.
+export interface ServeOptions {
+  engine_class?: typeof XMonitorEngine;
+}
+
+export async function serve(argv: string[], options: ServeOptions = {}): Promise<void> {
+  const engine_class = options.engine_class ?? XMonitorEngine;
   const config = read_server_config<"config" | "db">({
     program: "x-monitor", summary: "X-Monitor: watches hosts and services and serves its dashboard.", env_prefix: "X_MONITOR", default_port: 8080,
     secret: false, argv, web_folder_default: join(import.meta.dirname, "../../dist"),
@@ -103,7 +109,7 @@ export async function serve(argv: string[]): Promise<void> {
   // A restore picked in Settings waits beside the database and is taken in here, before the engine opens it.
   const restored = take_staged_restore(db_path);
   // The engine builds the notifications and exporters through these, and builds them afresh when a reload changes them.
-  const engine = new XMonitorEngine(config_path, {
+  const engine = new engine_class(config_path, {
     db_path_override: config.values.db ?? null,
     handle_signals: true,
     notifications: (db, settings, agents) => new NotificationEngine(db, settings as Record<string, unknown>, agents as never) as never,
@@ -159,7 +165,7 @@ export async function serve(argv: string[]): Promise<void> {
 
 // ── Entry ────────────────────────────────────────────────────────────────────
 
-export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+export async function main(argv: string[] = process.argv.slice(2), options: ServeOptions = {}): Promise<number> {
   if (argv[0] === "token") {
     try {
       return token_command(argv.slice(1));
@@ -171,7 +177,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       throw error;
     }
   }
-  await serve(argv);
+  await serve(argv, options);
   return 0;
 }
 
