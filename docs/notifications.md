@@ -109,7 +109,7 @@ monitor recovers and closes when the last one does.
 
 Releasing the **Notifications** toggle button on a monitor's page mutes it until you press it again, for
 example during maintenance. Muting a group mutes everything in it, and each monitor in the group
-shows a disabled button naming the group that muted it. The bell icon in the dashboard's header lists everything that is muted,
+shows a disabled button naming the group that muted it. The **Notifications** dialog in the dashboard's top bar lists everything that is muted,
 with a button to unmute each one.
 
 A mute is saved, so it survives a restart. A failure that happens while a monitor is muted is not
@@ -140,13 +140,13 @@ during the window and is still there when it ends is announced then. A problem t
 the window is never sent. A notification already on screen from before the window still clears
 when its monitor recovers.
 
-A monitor's page says when a window covers it, and the bell dialog lists every window with the
+A monitor's page says when a window covers it, and the **Notifications** dialog lists every window with the
 ones in effect marked.
 
 ## Monitor links
 
-Every monitor has its own dashboard address, `/monitor/<id>`, and the events feed is at
-`/events`. A notification links to its monitor when `base_url` is set.
+Every monitor has its own dashboard address, `#/monitor/<id>`, and the events feed is at
+`#/events`. A notification links to its monitor, as `<base_url>/monitor/<id>`, when `base_url` is set.
 
 ## Desktop notifications
 
@@ -336,8 +336,8 @@ channels:
     # urls: ["tgram://bottoken/ChatID"]    # or inline, as a list or a single URL
 ```
 
-Apprise URLs usually carry the service's token, so prefer `urls_file`. The channel needs the
-`apprise` Python package, which the Nix package includes; with pip, install `x-monitor[apprise]`. Apprise
+Apprise URLs usually carry the service's token, so prefer `urls_file`. The channel runs the
+`apprise` program, which must be on X-Monitor's `PATH`. Apprise
 shows failures, warnings and recoveries with the service's own colors or icons where it has them.
 
 ## PagerDuty and Opsgenie
@@ -369,11 +369,11 @@ channels:
 
 ## Checking a channel
 
-The bell icon in the dashboard's header lists every channel with a **Send test** button. From a
+The **Notifications** button in the dashboard's top bar lists every channel with a **Send test** button. From a
 script, use the API:
 
 ```bash
-curl -X POST -u admin https://x-monitor.lan/api/notifications/laptop/test
+curl -X POST -H "Authorization: Bearer $XMONITOR_TOKEN" https://x-monitor.lan/api/notifications/laptop/test
 ```
 
 This sends a test notification and returns `{"sent": true}`, or the error if it could not be

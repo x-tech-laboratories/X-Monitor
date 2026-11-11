@@ -80,30 +80,33 @@ Every monitor type, its config keys, and its `ssh_config` / layout options are
 documented in the [plugin reference](plugins.md). Agent declaration and
 installation are covered in the [agent guide](agent.md). A plugin type of your own can live in a directory outside X-Monitor, named under `plugin_paths:` (see [out-of-tree plugins](plugins.md#out-of-tree-plugins)).
 
-## Authentication
+## Signing in
 
-By default the dashboard and REST API are unauthenticated — anyone who can reach the port has full read access and can trigger control actions. Set `auth.username` and `auth.password` (or `auth.password_file`, to keep the secret out of the YAML config) to put every route behind a sign-in page:
+With no user configured, the dashboard and API are open: anyone who can reach the port can read everything and run actions. Declare a user and every route goes behind X-Monitor's sign-in page:
 
 ```yaml
 auth:
-  username: "admin"
-  password_file: "/run/secrets/x_monitor_dashboard_password"
-  # Optional — sign a session with a fixed key so restarts do not sign everyone
-  # out. Without it a key is generated per start.
-  session_secret_file: "/run/secrets/x_monitor_session_secret"
-  session_hours: 12      # How long a sign-in lasts (default 12)
-  remember_days: 30      # How long "keep me signed in" lasts (default 30)
+  username: "admin"                                            # lower-cased; letters, digits, '.', '_' or '-'
+  password_file: "/run/secrets/x_monitor_dashboard_password"   # or password:
+  session_hours: 12      # how long a sign-in lasts (default 12)
+  remember_days: 30      # how long "Keep me signed in" lasts (default 30)
 ```
 
-An unauthenticated browser is redirected to `/login`, where it exchanges the credentials for a signed, expiring session cookie (`HttpOnly`, `SameSite=Lax`, and `Secure` when X-Monitor is reached over HTTPS — including behind a reverse proxy that sets `X-Forwarded-Proto`). "Keep me signed in" is what makes the cookie outlive the browser session. The dashboard header gains an account menu with **Sign out**, which drops the session at `/logout`. Repeated failures from one address are throttled after five attempts in five minutes.
+`auth.username` with `password` or `password_file` declares one admin. More admins come from an accounts file of `name:hash` lines named by `X_MONITOR_PASSWORD_HASH_FILE`; `npm run hash-password [name]` asks for a password and writes the line there, or prints it when the variable is unset. Single sign-on is set up with the `X_MONITOR_OIDC_*` variables. If only one of `username` and `password` is set, that account is not enabled and an error is logged. `auth.session_secret` is ignored, since sessions are kept in the state database.
 
-Scripts and scrapers cannot follow a form redirect, so `/api/...` and `/metrics` also accept HTTP Basic credentials — the same username and password — and answer `401` rather than redirecting. No `WWW-Authenticate` header is sent, so a browser never sees the native credential dialog. `/api/push/...` stays public to the gate; it checks a per-monitor token or a push-scoped API token itself.
+Signing in opens a session kept in the state database: with "Keep me signed in" unticked it ends with the browser or after `session_hours`, and ticked it lasts `remember_days`. A user can add a second factor (an authenticator app), see their sessions and **Sign out** of them under **Your account**. An admin manages users under **Users**, each with a role:
 
-Every `*_file` value is read once at startup. If only one of `username`/`password` is set, auth stays disabled and a warning is logged.
+| Role | May |
+|------|-----|
+| `viewer` | Read everything and change nothing |
+| `operator` | Also poll, run actions and send test notifications |
+| `admin` | Also manage users and the state backups |
+
+Without a session or a token, the API answers `401` instead of showing the sign-in page; HTTP Basic credentials are not accepted. `/api/push/...` checks its own per-monitor or push token, and the agent socket checks the agent's key.
 
 ### API tokens
 
-Rather than hand the operator password to every scraper and script, give each client its own named token. Mint one with:
+Rather than share a password with every scraper and script, give each client its own token. A signed-in user makes one under **Your account**, or a token can be declared in the config. Mint one to declare with:
 
 ```bash
 x-monitor token new prometheus --scope read
@@ -130,13 +133,13 @@ auth:
 
 A client sends `Authorization: Bearer <token>`. The scopes are:
 
-| Scope | Reaches |
+| Scope | Acts as |
 |-------|---------|
-| `read` | `GET` on `/api/...` and `/metrics` |
-| `control` | Everything `read` does, plus the API's write routes: poll now, run a monitor's action, send a test notification |
-| `push` | `/api/push/{id}` for the monitors in `monitors`, or every push monitor when it is absent |
+| `read` | A viewer: reads on `/api/...` and `/metrics` |
+| `control` | An operator: also poll now, run a monitor's action, send a test notification |
+| `push` | `/api/push/{id}` for the monitors in `monitors`, or every push monitor when it is absent; it signs nothing else in, so it gets `401` anywhere else |
 
-A token never opens the dashboard itself — that stays behind the sign-in page. A token with the wrong scope for a route gets `403`, and an unknown one `401`. Each action taken with a token is written to the monitor's events and the log under the token's name, so the audit trail shows which client acted; revoking a client means deleting its entry and restarting. `token: "..."` in plain text also works, but logs a warning. Read and control tokens need `username`/`password` to be set, since without them the API is open anyway; push tokens work either way.
+A token never opens the dashboard itself, which stays behind the sign-in page. A token with too little for a route gets `403`, and an unknown one `401`. Each action taken with a token is written to the monitor's events and the log under the token's name, so the audit trail shows which client acted. Declared tokens are read at startup, so revoking one means deleting its entry and restarting. `token: "..."` in plain text also works, but logs a warning. Read and control tokens need a user to be configured, since without one the API is open anyway; push tokens work either way.
 
 For Prometheus, set `authorization: {credentials_file: /run/secrets/x_monitor_scrape_token}` on the scrape job.
 
@@ -146,10 +149,14 @@ Editing `config.yaml` takes effect while X-Monitor runs: the change is picked up
 
 Logging verbosity can change while X-Monitor runs, for the whole process or one module: from the dashboard's **System** menu (**Log levels**), through `POST /api/log-levels` (see [integrations](integrations.md#runtime-control)), or, when the dashboard is unreachable, with `kill -USR1` (one step more verbose) and `kill -USR2` (one step quieter). `logging.level` and `logging.levels` in `config.yaml` set the starting values.
 
-## Dashboard only
-
-To run just the dashboard against an existing database:
+## Running
 
 ```bash
-x-monitor-gui --db x-monitor.db --port 8080
+x-monitor --config config.yaml          # or: nix run, or npm start in a checkout
 ```
+
+`--config` names the config file (`config.yaml` by default); a JSON file loads the same way, since JSON is valid YAML. `--db` names the state database and overrides `database.path`. The server listens on every address on port 8080; `--host` and `--port`, or `X_MONITOR_HOST` and `X_MONITOR_PORT`, change that. In a checkout, `npm run dev:server` runs it on `config.example.json` and restarts it on every change.
+
+## State backups
+
+The state database is backed up daily into a `backups` folder beside it, keeping the last 14 by default. **Settings** lists the backups, takes one now, changes the schedule, and restores or deletes one. Everything but the list is an admin's, and X-Monitor restarts to take a restored backup in. The same is served at `/api/state-backups`.
