@@ -3,7 +3,7 @@
 X-Monitor was called Vigil. Every name changed with it, so an existing install needs these updates:
 
 - The NixOS options are `services.x-monitor` and `services.x-monitor-agent`, and the flake is `github:x-tech-laboratories/X-Monitor`.
-- The commands are `x-monitor` and `x-monitor-agent`. The server's environment variables start with `X_MONITOR_` and the agent's with `XMONITOR_AGENT_`.
+- The commands are `x-monitor` and `x-monitor-agent`. The server's environment variables start with `X_MONITOR_` (`X_MONITOR_PORT`, `X_MONITOR_PASSWORD_HASH_FILE`), except `XMONITOR_SSH_CONTROL_DIR`, and the agent's with `XMONITOR_AGENT_`.
 - The service users are `x-monitor` and `x-monitor-agent`, and data lives in `/var/lib/x-monitor/x-monitor.db`; move `/var/lib/vigil/vigil.db` there to keep your history.
 - The `vigil_self` monitor type is `x_monitor_self`, and the Prometheus metrics are `x_monitor_up` and `x_monitor_metric`.
 
