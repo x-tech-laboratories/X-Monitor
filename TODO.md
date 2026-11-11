@@ -146,7 +146,7 @@ it is the one architectural change X-Monitor has deliberately deferred.
       image exists and can prune. [plugin.ts](src/monitors/containers/plugin.ts) counts running/stopped
       and offers restart only. An `image_update_available` metric plus a Prune action would be a
       genuine addition.
-      Done: [containers/](x_monitor/plugins/containers/) asks the registry for each image's current
+      Done: [containers/](src/monitors/containers/) asks the registry for each image's current
       digest on a slow interval, and has a confirmed Prune button.
 - [x] *(Already on roadmap)* Per-core CPU breakdown — LNXlink's `cpu` exposes load 1m/5m/15m as
       attributes; X-Monitor already splits these into `load_pct_*` metrics, so only the per-core split
@@ -285,7 +285,7 @@ Of the remaining 17, almost everything is phone↔desktop sync.
 
 - `notification` (sync notifications) and `connectivity_report` (link/carrier status) are weak
   analogues of the roadmap's alerting item and of X-Monitor's existing
-  [network.py](x_monitor/plugins/network.py) / [uptime.ts](src/monitors/uptime.ts). No new work implied.
+  [interfaces.ts](src/monitors/interfaces.ts) / [uptime.ts](src/monitors/uptime.ts). No new work implied.
 - `ping` is covered by [uptime.ts](src/monitors/uptime.ts); `runcommand` by
   [command.ts](src/monitors/command.ts) plus the action framework.
 
