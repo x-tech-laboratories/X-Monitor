@@ -57,7 +57,7 @@ export class Probe extends Plugin {
     return null;
   }
 
-  override interpret_action(_action_id: string, result: unknown): ActionOutcome {
+  override interpret_action(_action_id: string, result: unknown, _args: Record<string, unknown> = {}): ActionOutcome {
     this.outcomes.push(result);
     return (result as CmdResult).exit_code === 0;
   }
