@@ -3,7 +3,6 @@
 
 import "@x-tech-laboratories/halon/halon-tokens.css";
 import "@x-tech-laboratories/halon/halon.css";
-import "./widgets/widgets.css";
 import "./app.css";
 import { follow_changes } from "@x-tech-laboratories/x-libs/web/events";
 import { AccountView, UsersView } from "@x-tech-laboratories/x-libs/web/react/accounts";
