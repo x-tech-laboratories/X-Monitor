@@ -26,6 +26,7 @@ const safe_host = /^[A-Za-z0-9.:_-]+$/;
 // Lines as Python's str.splitlines() gives them, without a trailing empty one.
 export function splitlines(text: string): string[] {
   if (!text) return [];
+  // oxlint-disable-next-line no-control-regex
   const lines = text.split(/\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/);
   if (lines.at(-1) === "") lines.pop();
   return lines;
