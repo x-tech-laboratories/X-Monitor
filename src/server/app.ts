@@ -9,7 +9,7 @@ import { timingSafeEqual } from "node:crypto";
 import { openapi_document, positional_args } from "@x-tech-laboratories/x-libs/api_spec";
 import type { ProxySignIn } from "@x-tech-laboratories/x-libs/server/account_sign_in";
 import { register_backup_routes, type BackupRoutesOptions } from "@x-tech-laboratories/x-libs/server/backup_routes";
-import { EventStream } from "@x-tech-laboratories/x-libs/server/events";
+import { EventStream, leading_cooldown } from "@x-tech-laboratories/x-libs/server/events";
 import { register_mcp_route } from "@x-tech-laboratories/x-libs/server/mcp";
 import type { OidcClient } from "@x-tech-laboratories/x-libs/server/oidc";
 import type { Accounts } from "@x-tech-laboratories/x-libs/server/passwords";
@@ -94,26 +94,21 @@ function query_number(value: string | undefined): number | null | typeof Number.
 function follow_changes(stream: EventStream): () => void {
   let kinds = new Set<ChangeKind>();
   let monitors = new Set<string>();
-  let cooling: NodeJS.Timeout | null = null;
-  const flush = () => {
-    if (kinds.size === 0) {
-      cooling = null;
-      return;
-    }
+  const cooldown = leading_cooldown(CHANGE_COOLDOWN_SECONDS * 1000, () => {
+    if (kinds.size === 0) return false;
     stream.send(JSON.stringify({ kinds: [...kinds], monitors: [...monitors] }), { event: stream.changed_event });
     kinds = new Set();
     monitors = new Set();
-    cooling = setTimeout(flush, CHANGE_COOLDOWN_SECONDS * 1000);
-    cooling.unref?.();
-  };
+    return true;
+  });
   const unsubscribe = CHANGES.subscribe((kind, plugin_id) => {
     kinds.add(kind);
     if (plugin_id) monitors.add(plugin_id);
-    if (cooling === null) flush();
+    cooldown.poke();
   });
   return () => {
     unsubscribe();
-    if (cooling !== null) clearTimeout(cooling);
+    cooldown.stop();
   };
 }
 
