@@ -153,7 +153,12 @@ export function restore_question(archive: string, restore_dir: string, paths: re
 
 // ── journal ──────────────────────────────────────────────────────────────────
 
-// The journal monitor's own log search, over its host alone.
-export function own_log_search(plugin: Plugin): LogSearchView {
-  return { type: "log_search", monitors: [{ id: plugin.id, target: plugin.target }], show_host: false, default_limit: Number(plugin_attr(plugin, "max_entries") ?? 500) };
+// The journal monitor's own log search, from its custom_view() data when it gives one.
+export function own_log_search(plugin: Plugin, data: { monitor_ids?: string[]; show_host?: boolean; default_limit?: number } | null = null): LogSearchView {
+  return {
+    type: "log_search",
+    monitors: (data?.monitor_ids ?? [plugin.id]).map((id) => ({ id, target: plugin.target })),
+    show_host: data?.show_host ?? false,
+    default_limit: Number(data?.default_limit ?? plugin_attr(plugin, "max_entries") ?? 500),
+  };
 }

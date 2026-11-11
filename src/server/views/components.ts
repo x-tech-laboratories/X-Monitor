@@ -2,6 +2,7 @@
 // with row actions and toggle cells, button rows, dialogs and the job panel. Each reads the monitor's stored state
 // through its data view and returns plain JSON for the page to draw; nothing here holds a widget or a timer.
 
+import { metric_family_items } from "../../monitors/base/metric_family.ts";
 import type { Plugin } from "../../monitors/base/plugin_base.ts";
 import { format_duration } from "../../monitors/base/plugin_helpers.ts";
 import { align_series, fill_percent, type SeriesStyle, SERIES_STYLES } from "../../shared/charts.ts";
@@ -53,42 +54,6 @@ const LABEL_TRANSFORMS: Record<string, (text: string) => string> = {
 
 export const REPEAT_PANELS = ["bars", "tiles"];
 
-// Each latest value of the metrics named prefix<key>suffix, by the stripped key.
-function scan_metric_family(plugin: Plugin, prefix: string, suffix: string, exclude: ReadonlySet<string>): Map<string, number> {
-  const latest = new Map<string, number>();
-  for (const record of plugin.data.latest_collector_metrics()) {
-    const name = record.metric_name;
-    if (exclude.has(name)) continue;
-    if (prefix && !name.startsWith(prefix)) continue;
-    if (suffix && !name.endsWith(suffix)) continue;
-    let key = name;
-    if (prefix) key = key.slice(prefix.length);
-    if (suffix) key = key.slice(0, key.length - suffix.length);
-    latest.set(key, record.value);
-  }
-  return latest;
-}
-
-// Items discovered from metric names, one per stripped key; `fields` merges several metric families sharing a key
-// into one item, such as fs_<k>_used_pct and fs_<k>_inodes_pct into {key, used_pct, inodes_pct}.
-function metrics_prefix_items(plugin: Plugin, repeat_spec: RepeatSpec): Record<string, unknown>[] {
-  const exclude = new Set(repeat_spec.metrics_exclude ?? []);
-  let items: Record<string, unknown>[];
-  if (repeat_spec.fields && repeat_spec.fields.length > 0) {
-    const merged = new Map<string, Record<string, unknown>>();
-    for (const field of repeat_spec.fields) {
-      for (const [key, value] of scan_metric_family(plugin, field.prefix ?? "", field.suffix ?? "", exclude)) {
-        if (!merged.has(key)) merged.set(key, { key });
-        merged.get(key)![field.name] = value;
-      }
-    }
-    items = [...merged.values()];
-  } else {
-    items = [...scan_metric_family(plugin, repeat_spec.metrics_prefix ?? "", repeat_spec.metrics_suffix ?? "", exclude)].map(([key, value]) => ({ key, value }));
-  }
-  return items.sort((left, right) => (String(left.key) < String(right.key) ? -1 : String(left.key) > String(right.key) ? 1 : 0));
-}
-
 // The items a repeat card or a spec table shows: the latest snapshot list, a JSON list in the settings store, or items
 // discovered from metric names.
 export function resolve_repeat_items(plugin: Plugin, repeat_spec: RepeatSpec): Record<string, unknown>[] {
@@ -107,7 +72,7 @@ export function resolve_repeat_items(plugin: Plugin, repeat_spec: RepeatSpec): R
     // A list of plain strings, such as DNS answers, becomes label and value items.
     return data.map((item) => (typeof item === "object" && item !== null && !Array.isArray(item) ? (item as Record<string, unknown>) : { label: item, value: item }));
   }
-  if (source === "metrics_prefix") return metrics_prefix_items(plugin, repeat_spec);
+  if (source === "metrics_prefix") return metric_family_items(plugin.data.latest_collector_metrics(), repeat_spec);
   const snapshot = plugin.data.latest_snapshot<unknown>([]);
   return Array.isArray(snapshot) ? (snapshot as Record<string, unknown>[]) : [];
 }

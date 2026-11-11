@@ -58,7 +58,10 @@ export function build_body(plugin: Plugin, context: "page" | "inline", build: Bu
       const data = custom?.kind === "borg_browser" && typeof custom.data === "object" && custom.data !== null ? (custom.data as Record<string, unknown>) : null;
       layout.cell(String(data?.cell ?? "browser")).push(browser_view(plugin, data));
     }
-    if ((kind === "journal") && context === "page") layout.cell("log_search").push(own_log_search(plugin));
+    if (kind === "journal") {
+      const search = custom?.kind === "journal" ? ((custom.data as { log_search?: { cell?: string; page_only?: boolean; monitor_ids?: string[]; show_host?: boolean; default_limit?: number } } | null)?.log_search ?? null) : null;
+      if (context === "page" || search?.page_only === false) layout.cell(search?.cell ?? "log_search").push(own_log_search(plugin, search));
+    }
     rows = layout.rows;
   }
   const own_custom = custom !== null && !["borg_browser", "borg", "journal"].includes(custom.kind) ? { kind: custom.kind, data: custom.data, extra: {} } : null;
