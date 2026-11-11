@@ -232,6 +232,14 @@ export class XMonitorEngine implements EngineLike {
   private readonly make_notifications: NotificationsFactory;
   private readonly make_exporters: ExportersFactory;
   private readonly builtins: Record<string, () => Promise<PluginClass>> | undefined;
+  // The clocks and sleeps the loops use, which a test replaces to drive time.
+  time: () => number = () => Date.now() / 1000;
+  monotonic: () => number = monotonic;
+  random: () => number = Math.random;
+  startup_jitter_seconds = STARTUP_JITTER_SECONDS;
+  config_poll_seconds = CONFIG_POLL_SECONDS;
+  sleep: (seconds: number, signal?: AbortSignal) => Promise<void> = sleep;
+  sleep_unless_watched: (seconds: number, wake: string, signal?: AbortSignal) => Promise<boolean> = sleep_unless_watched;
 
   constructor(config_path: string, options: EngineOptions = {}) {
     this.local_agent = options.local_agent ?? null;
@@ -345,7 +353,7 @@ export class XMonitorEngine implements EngineLike {
       return;
     }
     // A sample stream is the monitor's whole collection path, so its event marks the cycle, even when it parses badly.
-    if (this.collection_streams.has(stream_id)) this.last_collected_at.set(plugin.id, monotonic());
+    if (this.collection_streams.has(stream_id)) this.last_collected_at.set(plugin.id, this.monotonic());
     let result: CollectResult | null;
     try {
       result = plugin.parse_event(stream_id, payload, timestamp);
@@ -355,7 +363,7 @@ export class XMonitorEngine implements EngineLike {
     }
     if (result !== null) {
       this.write(plugin, result);
-      this.check_triggers(plugin, result, Date.now() / 1000);
+      this.check_triggers(plugin, result, this.time());
     }
   }
 
@@ -531,7 +539,7 @@ export class XMonitorEngine implements EngineLike {
     if (this.retired.has(plugin)) return false;
     this.write(plugin, result);
     this.react(plugin, result);
-    this.check_triggers(plugin, result, Date.now() / 1000);
+    this.check_triggers(plugin, result, this.time());
     if (did_io) {
       this.cycle_stats.record(plugin.id, parsed - started, wait_seconds);
       if (this.cycle_timings) this.record_cycle_timing(plugin, started, collected, parsed);
@@ -556,7 +564,7 @@ export class XMonitorEngine implements EngineLike {
     try {
       return await this.held_awake(plugin, () => this.run_cycle(plugin));
     } finally {
-      this.last_collected_at.set(plugin.id, monotonic());
+      this.last_collected_at.set(plugin.id, this.monotonic());
       this.collecting.set(plugin.id, false);
     }
   }
@@ -673,7 +681,7 @@ export class XMonitorEngine implements EngineLike {
     if (result.status === null) return;
     let reaction;
     try {
-      reaction = plugin.on_status(String(result.status), monotonic());
+      reaction = plugin.on_status(String(result.status), this.monotonic());
     } catch (error) {
       log.error(`${plugin.name}: on_status() failed: ${(error as Error).message}`);
       return;
@@ -718,13 +726,13 @@ export class XMonitorEngine implements EngineLike {
   }
 
   // Polls one monitor until aborted, first waiting at least `hold` seconds for a saved result to come due.
-  private async monitor_loop(plugin: Plugin, hold: number, signal: AbortSignal): Promise<void> {
+  async monitor_loop(plugin: Plugin, hold: number, signal: AbortSignal): Promise<void> {
     const offset = plugin.offset;
-    if (offset === null) await sleep(Math.max(hold, Math.random() * STARTUP_JITTER_SECONDS), signal);
-    else await sleep(seconds_to_clock_slot(plugin.interval, offset, Date.now() / 1000), signal);
+    if (offset === null) await this.sleep(Math.max(hold, this.random() * this.startup_jitter_seconds), signal);
+    else await this.sleep(seconds_to_clock_slot(plugin.interval, offset, this.time()), signal);
     if (signal.aborted) return;
     if (hold) this.awaiting_due.delete(plugin.id);
-    let next_due = monotonic();
+    let next_due = this.monotonic();
     let early = false;
     while (!signal.aborted) {
       // A failing cycle must not end its loop; the next tick retries.
@@ -738,31 +746,31 @@ export class XMonitorEngine implements EngineLike {
       let wait: number;
       if (offset !== null) {
         // A clock-pinned monitor reads the wall clock each cycle, so a suspend or a slow cycle never shifts its slot.
-        wait = seconds_to_clock_slot(plugin.interval, offset, Date.now() / 1000);
+        wait = seconds_to_clock_slot(plugin.interval, offset, this.time());
         if (wait < 1) wait += plugin.interval;
       } else {
         // The interval is the period, not the gap; an overrun re-anchors rather than bursts, and an early cycle leaves
         // the due time where it was.
         if (!early) next_due += plugin.interval;
-        const now = monotonic();
+        const now = this.monotonic();
         if (next_due <= now) next_due = now + plugin.interval;
         wait = next_due - now;
       }
       const sooner = sooner_cycle(plugin);
       early = sooner !== null && sooner < wait;
       // A log view opened mid-sleep starts the faster polling at once, and that cycle counts as early.
-      early = (await sleep_unless_watched(early ? sooner! : wait, plugin.id, signal)) || early;
+      early = (await this.sleep_unless_watched(early ? sooner! : wait, plugin.id, signal)) || early;
     }
   }
 
   private async schedule_loop(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
-        this.start_due_schedules(Date.now() / 1000);
+        this.start_due_schedules(this.time());
       } catch (error) {
         log.error(`Scheduled action check failed: ${(error as Error).message}`);
       }
-      await sleep(SCHEDULE_CHECK_SECONDS, signal);
+      await this.sleep(SCHEDULE_CHECK_SECONDS, signal);
     }
   }
 
@@ -788,7 +796,7 @@ export class XMonitorEngine implements EngineLike {
   // Runs one scheduled action as its button would, recording the outcome on the monitor and for the Schedules view.
   private async run_scheduled(plugin: Plugin, entry: ScheduledAction, key: string): Promise<void> {
     const label = `Scheduled ${entry.action} (${entry.cron.expression})`;
-    const started = Math.trunc(Date.now() / 1000);
+    const started = Math.trunc(this.time());
     let success = false;
     let line: [string, string];
     try {
@@ -843,7 +851,7 @@ export class XMonitorEngine implements EngineLike {
 
   private async run_triggered(plugin: Plugin, entry: TriggeredAction): Promise<void> {
     const label = `Triggered ${entry.action} (${entry.describe()})`;
-    const started = Math.trunc(Date.now() / 1000);
+    const started = Math.trunc(this.time());
     let success = false;
     let line: [string, string];
     try {
@@ -859,7 +867,7 @@ export class XMonitorEngine implements EngineLike {
   private async prune_loop(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       this.maybe_prune_logs();
-      await sleep(PRUNE_CHECK_SECONDS, signal);
+      await this.sleep(PRUNE_CHECK_SECONDS, signal);
     }
   }
 
@@ -946,12 +954,12 @@ export class XMonitorEngine implements EngineLike {
 
   // Restores the store from the database and records the restart.
   async load_state(): Promise<void> {
-    const started = monotonic();
+    const started = this.monotonic();
     await this.db.hydrate();
     this.db.insert_event("INFO", "X-Monitor Engine initialized.", "x_monitor_core");
     const orphaned = this.db.reconcile_orphaned_jobs();
     if (orphaned) log.warn(`Marked ${orphaned} orphaned job(s) as failed after restart`);
-    log.info(`Saved state loaded in ${(monotonic() - started).toFixed(1)}s`);
+    log.info(`Saved state loaded in ${(this.monotonic() - started).toFixed(1)}s`);
   }
 
   async run(): Promise<void> {
@@ -992,7 +1000,7 @@ export class XMonitorEngine implements EngineLike {
   maybe_prune_logs(interval = 3600): void {
     // Nothing to prune when every retention window is off.
     if (this.log_retention_days <= 0 && this.metric_retention_days <= 0 && this.metric_downsample_days <= 0) return;
-    const now = monotonic();
+    const now = this.monotonic();
     if (now - this.last_prune < interval) return;
     this.last_prune = now;
     const failed = (error: unknown) => log.error(`Retention prune failed: ${(error as Error).message}`);
@@ -1204,7 +1212,7 @@ export class XMonitorEngine implements EngineLike {
     let seen: string | null = null;
     let pending: string | null = null;
     while (!signal.aborted) {
-      await sleep(CONFIG_POLL_SECONDS, signal);
+      await this.sleep(this.config_poll_seconds, signal);
       if (signal.aborted) return;
       const current = this.config_fingerprint();
       if (current === null || current === seen) {

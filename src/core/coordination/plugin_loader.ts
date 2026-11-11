@@ -12,15 +12,20 @@ import { plugin_entries } from "@x-tech-laboratories/x-libs/plugin_folder";
 import { create_plugin_host, type Plugin as HostPlugin, type PluginHost } from "@x-tech-laboratories/x-libs/plugins";
 
 import { builtin_monitor_types } from "../../monitors/index.ts";
-import type { PluginClass } from "../../monitors/base/plugin_base.ts";
+import { Plugin, type PluginClass } from "../../monitors/base/plugin_base.ts";
+import { CollectResult, command } from "../connectors/types.ts";
 import { create_logger_for } from "../logging.ts";
 import { python_repr } from "../python.ts";
 
 const log = create_logger_for("x_monitor.core.coordination.plugin_loader");
 
+// What X-Monitor hands a folder plugin: the base class and result types its monitors build on.
+export const monitor_services = { Plugin, CollectResult, command };
+
 // What X-Monitor lets a folder plugin reach: it provides monitor types by name.
 export interface MonitorPluginApi {
   providers: { monitor_type: PluginClass };
+  services: typeof monitor_services;
 }
 
 // The side of a folder plugin the server loads.
@@ -145,6 +150,7 @@ export class PluginLoader {
     this.loading ??= (async () => {
       const host = create_plugin_host<MonitorPluginApi>({
         app: { id: "x-monitor", version: app_version() },
+        services: monitor_services,
         on_error: (plugin_id, error) => log.error(`plugin ${plugin_id} failed: ${(error as Error)?.message ?? String(error)}`),
       });
       const fresh = Date.now();
