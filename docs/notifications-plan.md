@@ -64,7 +64,7 @@ of one per monitor.
 - **Desktop agent:** runs as the logged-in user, because only that user's processes can reach the
   session bus. It is a separate, `notify_only` agent that refuses commands. The NixOS agent
   module creates it as a user service.
-- **Monitor links:** the dashboard has `/monitor/<id>` and `/events` routes, and changing the view
+- **Monitor links:** the dashboard has `#/monitor/<id>` and `#/events` routes, and changing the view
   updates the address bar.
 
 ## Phases
