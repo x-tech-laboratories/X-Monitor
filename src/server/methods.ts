@@ -147,7 +147,8 @@ export function create_methods(context: MethodContext) {
     },
 
     async list_events(level: string | null = null, target: string | null = null, search: string | null = null, limit = 200) {
-      const clamped = Math.max(1, Math.min(Math.trunc(Number(limit) || 200), 2000));
+      const asked = Number(limit);
+      const clamped = Math.max(1, Math.min(Number.isFinite(asked) ? Math.trunc(asked) : 200, 2000));
       return db.recent_events(clamped, level || null, target || null, search || null);
     },
 

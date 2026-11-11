@@ -249,6 +249,10 @@ export async function build_app(options: AppOptions): Promise<XMonitorApp> {
       name: "x-monitor", version: options.version ?? "0.0.0", api, is_read_only,
       instructions: "X-Monitor watches hosts and services. list_monitors and get_overview are the places to start; a monitor's id comes from them.",
       call: async (method, args, request) => {
+        const viewer = request.viewer;
+        if (viewer && auth.accounts && !is_read_only(method) && !auth.accounts.has_role(viewer.role, "operator")) {
+          throw new Error(`This needs the operator role; ${viewer.name} is a ${viewer.role}.`);
+        }
         try {
           return await call(method, args, request);
         } catch (error) {
