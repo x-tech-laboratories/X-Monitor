@@ -128,7 +128,8 @@ export async function build_app(options: AppOptions): Promise<XMonitorApp> {
 
   register_starting_page(app, () => engine.ready);
   register_lenient_json_body(app);
-  register_error_replies(app, { format: "json" });
+  // The built page answers unknown paths itself, so the error replies leave not-found to it when there is one.
+  register_error_replies(app, { format: "json", not_found: !options.web_folder });
   const auth = await register_auth(app, {
     database: options.database, auth_settings: options.auth_settings, accounts_file: options.accounts_file,
     oidc: options.oidc, proxy: options.proxy, open_paths: options.open_paths,
@@ -297,7 +298,11 @@ export async function build_app(options: AppOptions): Promise<XMonitorApp> {
   app.get("/metrics", async (_request, reply) => reply.type(metrics_content_type).send(render(engine.db)));
 
   await options.extra_routes?.(app);
-  if (options.web_folder) await register_web_folder(app, { folder: options.web_folder, page_fallback: true, api_prefix: "/api", when_missing: "warn" });
+  if (options.web_folder) {
+    const api_not_found = (_request: FastifyRequest, reply: FastifyReply) => reply.code(404).send({ error: "not found" });
+    const served = await register_web_folder(app, { folder: options.web_folder, page_fallback: true, api_prefix: "/api", when_missing: "warn", api_not_found });
+    if (!served) app.setNotFoundHandler(api_not_found);
+  }
   return { app, auth, methods, changes: stream };
 }
 
