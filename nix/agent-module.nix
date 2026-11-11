@@ -69,15 +69,15 @@ in
       defaultText = literalExpression "x-monitor-agent (from flake)";
       description = ''
         The package providing the `x-monitor-agent` binary. Defaults to the
-        standalone agent package, which carries only what the agent imports —
-        deliberately not the server package, so a monitored host never builds
-        nicegui, peewee, dnspython or asyncssh to run an agent.
+        standalone agent package, which carries only what the agent imports
+        (its engine and monitors), never the server, the page or their
+        dependencies.
       '';
     };
 
     url = mkOption {
       type = types.str;
-      example = "ws://x-monitor.example.com:8080/api/agent/ws";
+      example = "wss://x-monitor.example.com/api/agent/ws";
       description = ''
         The X-Monitor server's agent endpoint. Use `wss://` when the dashboard is
         behind TLS. This is an outbound connection, so only egress to the
