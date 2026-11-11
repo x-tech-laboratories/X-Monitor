@@ -1,15 +1,15 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { generate_agent_key } from "@x-tech-laboratories/x-libs/agent/keys";
+import { follow_lines, LineServer } from "@x-tech-laboratories/x-libs/agent/local_socket";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { agent_runner, NOTIFY_ONLY_REFUSAL, XMonitorAgent } from "../../src/agent/agent.ts";
+import { agent_runner, CAPABILITIES, ICON_FILE, idle_inhibitor, NOTIFY_ONLY_REFUSAL, XMonitorAgent } from "../../src/agent/agent.ts";
 import { load_config, type AgentConfig } from "../../src/agent/config.ts";
-import { IdleInhibitor } from "../../src/agent/inhibit.ts";
 import { LocalRunner, PLAN_FILE, PLAN_VERSION_FILE, type LocalEngineLike } from "../../src/agent/local.ts";
-import { follow, LocalNotifier, notify, OfflineAlerts } from "../../src/agent/local_notify.ts";
+import { notify, OfflineAlerts } from "../../src/agent/local_notify.ts";
 import { entry_matches, JournalMux, mangle_unit, supervise } from "../../src/agent/watchers.ts";
 
 function folder(): string {
@@ -26,16 +26,6 @@ async function until(condition: () => boolean, what: string): Promise<void> {
   throw new Error(`timed out waiting for ${what}`);
 }
 
-// A stand-in systemd-inhibit that skips its four options and runs the command, counting each start.
-function fake_inhibit(): [find: () => string, starts: () => number] {
-  const where = folder();
-  const starts = join(where, "starts");
-  const script = join(where, "systemd-inhibit");
-  writeFileSync(script, `#!/bin/sh\necho start >> ${starts}\nshift 4\nexec "$@"\n`);
-  chmodSync(script, 0o755);
-  return [() => script, () => (existsSync(starts) ? readFileSync(starts, "utf8").split("\n").filter(Boolean).length : 0)];
-}
-
 function config(extra: Partial<AgentConfig> = {}): AgentConfig {
   const where = folder();
   writeFileSync(join(where, "key"), generate_agent_key("a").private_text);
@@ -45,53 +35,9 @@ function config(extra: Partial<AgentConfig> = {}): AgentConfig {
 
 // ── The idle inhibitor ───────────────────────────────────────────────────────
 
-describe("the idle inhibitor", () => {
-  it("shares one lock among holders and releases it after the linger", async () => {
-    const [find, starts] = fake_inhibit();
-    const lock = new IdleInhibitor(0.05, find);
-    await lock.acquire();
-    await lock.acquire();
-    expect(lock.is_locked).toBe(true);
-    lock.release();
-    lock.release();
-    expect(lock.is_locked).toBe(true);
-    await sleep(300);
-    expect(lock.is_locked).toBe(false);
-    expect(starts()).toBe(1);
-  });
-
-  it("starts one lock for concurrent first holds", async () => {
-    const [find, starts] = fake_inhibit();
-    const lock = new IdleInhibitor(0, find);
-    await Promise.all(Array.from({ length: 5 }, () => lock.acquire()));
-    await until(() => starts() === 1, "the lock to start");
-    await lock.close();
-    expect(lock.is_locked).toBe(false);
-    expect(starts()).toBe(1);
-  });
-
-  it("keeps the same lock for a hold within the linger", async () => {
-    const [find, starts] = fake_inhibit();
-    const lock = new IdleInhibitor(0.2, find);
-    await lock.held(async () => undefined);
-    await lock.held(async () => {
-      await sleep(300);
-      expect(lock.is_locked).toBe(true);
-    });
-    await lock.close();
-    expect(lock.is_locked).toBe(false);
-    await until(() => starts() === 1, "the start count");
-  });
-
-  it("does nothing without systemd-inhibit", async () => {
-    const lock = new IdleInhibitor(0, () => null);
-    await lock.held(async () => expect(lock.is_locked).toBe(false));
-  });
-});
-
 describe("the agent's holds", () => {
   it("runs a command with the host held awake", async () => {
-    const inhibitor = new IdleInhibitor(0, () => null);
+    const inhibitor = idle_inhibitor(0, () => null);
     const seen: number[] = [];
     const runner = agent_runner(inhibitor, false, { run: async () => { seen.push(inhibitor.holders); return { exit_code: 0, stdout: "", stderr: "" }; }, launch: () => ({ program: "true", args: [] }) });
     await runner.run("true", { timeout_in_seconds: 5 });
@@ -100,13 +46,13 @@ describe("the agent's holds", () => {
   });
 
   it("refuses commands when it only shows notifications", async () => {
-    const result = await agent_runner(new IdleInhibitor(0, () => null), true).run("id", { timeout_in_seconds: 5 });
+    const result = await agent_runner(idle_inhibitor(0, () => null), true).run("id", { timeout_in_seconds: 5 });
     expect(result.exit_code).toBe(-1);
     expect(result.stderr).toBe(NOTIFY_ONLY_REFUSAL);
   });
 
   it("keys the server's holds and drops them with the connection", async () => {
-    const agent = new XMonitorAgent(config(), { inhibitor: new IdleInhibitor(0, () => null), runner: null });
+    const agent = new XMonitorAgent(config(), { inhibitor: idle_inhibitor(0, () => null), runner: null });
     await agent.apply_server_hold({ type: "inhibit", key: "scan:1", hold: true });
     await agent.apply_server_hold({ type: "inhibit", key: "scan:1", hold: true });
     await agent.apply_server_hold({ type: "inhibit", key: "scan:2", hold: true });
@@ -178,11 +124,11 @@ describe("local notifications", () => {
 
   it("reach a desktop agent following the socket", async () => {
     const path = join(folder(), "notify.sock");
-    const notifier = new LocalNotifier(path);
+    const notifier = new LineServer(path);
     await notifier.start();
     const received: Record<string, unknown>[] = [];
     const controller = new AbortController();
-    void follow(path, (frame) => received.push(frame), controller.signal);
+    void follow_lines(path, (frame) => received.push(frame), controller.signal, { accept: (frame) => frame.type === "notify" || frame.type === "dismiss" });
     try {
       await until(() => notifier.sockets.size > 0, "the follower to connect");
       await notifier.send(notify("Disk is failed", "body", "normal", { key: "local:disk" }) as unknown as Record<string, unknown>);
@@ -301,5 +247,14 @@ describe("the monitors an agent runs itself", () => {
     await runner.poll_now("answer");
     await runner.poll_now("missing");
     expect(log).toEqual([["poll", "answer"]]);
+  });
+});
+
+describe("desktop notifications", () => {
+  it("advertise notify and dismiss, and show X-Monitor's own icon from the bundled file", () => {
+    expect(CAPABILITIES).toEqual(expect.arrayContaining(["notify", "dismiss"]));
+    expect(ICON_FILE.endsWith("resources/icon.svg")).toBe(true);
+    expect(existsSync(ICON_FILE)).toBe(true);
+    expect(new XMonitorAgent(config(), { runner: null }).desktop.command("t", "b", "normal", null, "x-monitor")).toContain(`--icon=${ICON_FILE}`);
   });
 });
