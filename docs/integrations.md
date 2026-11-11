@@ -8,11 +8,13 @@ An **Events** view in the sidebar shows a unified, filterable feed of every even
 
 ## REST API
 
-JSON endpoints for consuming X-Monitor's state programmatically:
+JSON endpoints for consuming X-Monitor's state programmatically. With sign-in on, a script sends a token as `Authorization: Bearer <token>` (see [API tokens](configuration.md#api-tokens)).
 
 | Endpoint | Returns |
 |----------|---------|
 | `GET /api/health` | `{"status": "ok"}` |
+| `GET /api/summary` | Monitors counted by status, leaving out plain groups, with `unhealthy` for everything not online or info |
+| `GET /api/backups` | Every backup monitor's health, stalest first, with how many are healthy |
 | `GET /api/monitors` | All monitors with id, name, type, target, and current status |
 | `GET /api/monitors/{id}` | A single monitor plus its latest metrics and the ids of its actions |
 | `GET /api/metrics` | Latest value of every collected metric |
@@ -29,14 +31,36 @@ And a few that act, the same things the dashboard's buttons do:
 Each action taken through the API is written to the monitor's events, naming the account or [API token](configuration.md#api-tokens) that asked for it.
 
 ```bash
-curl http://localhost:8080/api/monitors
-curl "http://localhost:8080/api/events?level=ERROR&limit=50"
+curl -H "Authorization: Bearer $XMONITOR_TOKEN" http://localhost:8080/api/monitors
+curl -H "Authorization: Bearer $XMONITOR_TOKEN" "http://localhost:8080/api/events?level=ERROR&limit=50"
 curl -X POST -H "Authorization: Bearer $XMONITOR_TOKEN" http://localhost:8080/api/monitors/web/poll
 ```
 
+A push heartbeat goes to `/api/push/{id}`; see the [push monitor](plugins.md#push). A `value` that is not a number answers `422` with `{"error": ...}`.
+
+### Every call by name, MCP and OpenAPI
+
+Every call the dashboard makes is also served by name, each described once with its arguments:
+
+| Endpoint | Does |
+|----------|------|
+| `POST /api/call/{method}` | Runs one call, with its arguments as a JSON list in order or an object by name |
+| `GET /api/openapi.json` | An OpenAPI 3.1 document of every call |
+| `/api/mcp` | The same calls as MCP tools, for an AI assistant |
+
+A call named `list_`, `get_` or `search_` only reads, so a viewer or a `read` token may make it; the rest need an operator. `list_monitors` and `get_overview` are the places to start.
+
+### Changes as they happen
+
+`GET /api/changes` is a stream of server-sent events. Each one names the kinds of data that changed (`status`, `metric`, `event`, `log`, `job`, `snapshot`, `setting`, `monitors`) and the monitors they belong to. The first change goes out at once, and the rest within half a second are sent together.
+
+### State backups
+
+`/api/state-backups` lists, takes, restores and deletes backups of the state database and sets their daily schedule, as **Settings** does; see [state backups](configuration.md#state-backups).
+
 ### Runtime control
 
-These change X-Monitor itself rather than read its state. They sit behind the same sign-in as every other route.
+These change X-Monitor itself rather than read its state. They sit behind the same sign-in as every other route, and need an operator.
 
 | Endpoint | Does |
 |----------|------|
@@ -46,13 +70,14 @@ These change X-Monitor itself rather than read its state. They sit behind the sa
 
 ```bash
 curl -X POST http://localhost:8080/api/log-levels \
+  -H "Authorization: Bearer $XMONITOR_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"logger": "x_monitor.core.connectors.ssh_connector", "level": "DEBUG"}'
 ```
 
 ## Prometheus
 
-A Prometheus exposition endpoint is always available at `GET /metrics` (pull) — no configuration required. It exports `x_monitor_up` (per-monitor status: `1` online, `0.75` info, `0.5` warning, `0` failed, `-1` unavailable) and `x_monitor_metric` (every collected metric, labeled by monitor/target/metric). Point a Prometheus scrape config at it:
+A Prometheus exposition endpoint is always available at `GET /metrics` (pull) — no configuration required. It exports `x_monitor_up` (per-monitor status: `1` online, `0.75` info, `0.5` warning, `0` failed, `-1` unavailable) and `x_monitor_metric` (every collected metric, labeled by monitor/target/metric). A whole number is written as `1`, not `1.0`. With sign-in on, the scrape needs a `read` token. Point a Prometheus scrape config at it:
 
 ```yaml
 scrape_configs:
@@ -79,8 +104,7 @@ exporters:
 
 ## MQTT and Home Assistant
 
-An optional **push** exporter publishes every monitor's status and metrics to an MQTT broker the moment they change, and announces each one to Home Assistant through [MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery), so no agent or custom integration is needed on the Home Assistant side. It needs the `mqtt` extra (`pip install 'x-monitor[mqtt]'`, which brings `aiomqtt`); the Nix package and dev shell already include it.
-
+An optional **push** exporter publishes every monitor's status and metrics to an MQTT broker the moment they change, and announces each one to Home Assistant through [MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery), so no agent or custom integration is needed on the Home Assistant side.
 ```yaml
 exporters:
   mqtt:
