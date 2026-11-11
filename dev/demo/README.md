@@ -31,10 +31,13 @@ dev/demo/run.sh --sample 8123
 ```
 
 `--sample` runs `sample.yaml`, a fleet of four hosts, IoT sensors, backups, NixOS deployments and
-vulnerability scans, on `sample.py`. That is the real dashboard on an engine whose cycles apply a
+vulnerability scans, on `sample.ts`. That is the real dashboard on an engine whose cycles apply a
 sample reading for each monitor's type instead of collecting, so every chart, gauge, strip and
-fleet section has live data and nothing is contacted. A type with no sample in `sample.py` shows as
+fleet section has live data and nothing is contacted. A type with no sample in `sample.ts` shows as
 unavailable.
+
+The page is served from `dist/`, which `run.sh` builds once when it is missing; run `npx vite build`
+after changing the page.
 
 ## Screenshot it
 

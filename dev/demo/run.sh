@@ -44,11 +44,8 @@ echo "X-Monitor demo: http://127.0.0.1:$port  (state in $state_dir)"
 # ===== Run =====
 
 cd "$repo_root"
-command=(python -m x_monitor --config "$state_dir/config.yaml" --db "$state_dir/x-monitor.db" --port "$port")
-if $sample; then
-    command=(python "$demo_dir/sample.py" --config "$state_dir/config.yaml" --db "$state_dir/x-monitor.db" --port "$port")
-fi
-if [ -n "${IN_NIX_SHELL:-}" ]; then
-    exec "${command[@]}"
-fi
-exec nix develop --command "${command[@]}"
+# The page is served built, so build it once when it is missing.
+if [ ! -f dist/index.html ]; then npx vite build >/dev/null; fi
+entry=src/server/main.ts
+if $sample; then entry=dev/demo/sample.ts; fi
+exec node "$entry" --config "$state_dir/config.yaml" --db "$state_dir/x-monitor.db" --host 127.0.0.1 --port "$port"
