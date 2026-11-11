@@ -1,7 +1,8 @@
 // The named formatters, color rules and predicates a UI_SPEC may refer to, with the shared ones every monitor can use.
 // A monitor registers a name of its own only to publish a rule other monitors may reuse.
 
-import { format_fixed, format_grouped } from "./numbers.ts";
+import { format_fixed, format_grouped } from "@x-tech-laboratories/x-libs/python_text";
+
 import type { Status } from "./status.ts";
 import type { ColorRule, EnabledPredicate, Formatter, ItemColorRule, ItemFormatter, RuleRef } from "./ui_spec.ts";
 

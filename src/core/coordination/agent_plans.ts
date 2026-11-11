@@ -7,11 +7,12 @@
 
 import { createHash } from "node:crypto";
 
+import { python_dumps, python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import type { SyncMessage } from "../connectors/agent_connector.ts";
 import { CollectResult } from "../connectors/types.ts";
 import { LATE_STATUS_MILLISECONDS } from "../database/database.ts";
 import { create_logger_for } from "../logging.ts";
-import { python_dumps, python_repr } from "../python.ts";
 import * as records from "../sync/records.ts";
 import type { Plugin } from "../../monitors/base/plugin_base.ts";
 import { format_duration } from "../../monitors/base/plugin_helpers.ts";

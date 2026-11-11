@@ -1,5 +1,8 @@
-// Python's conversions and text forms where X-Monitor's messages and config parsing depend on them: int() and float()
-// of a config value, repr() and type names in warnings, and difflib's close matches for a mistyped section.
+// Python's conversions where X-Monitor's messages and config parsing depend on them: int() and float() of a config
+// value, type names in warnings, difflib's close matches for a mistyped section, and Python's == on JSON values.
+// repr() and json.dumps() come from X-Libs' python_text.
+
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
 
 // ── Conversions ──────────────────────────────────────────────────────────────
 
@@ -43,29 +46,6 @@ export function python_type_name(value: unknown): string {
   if (Array.isArray(value)) return "list";
   if (value instanceof Date) return "datetime";
   return "dict";
-}
-
-// The value as Python's repr() writes it.
-export function python_repr(value: unknown): string {
-  if (value === null || value === undefined) return "None";
-  if (value === true) return "True";
-  if (value === false) return "False";
-  if (typeof value === "number") {
-    if (Number.isNaN(value)) return "nan";
-    if (!Number.isFinite(value)) return value > 0 ? "inf" : "-inf";
-    return String(value);
-  }
-  if (typeof value === "string") {
-    const quote = value.includes("'") && !value.includes('"') ? '"' : "'";
-    const escaped = value.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll("\t", "\\t").replaceAll("\r", "\\r");
-    return quote + (quote === "'" ? escaped.replaceAll("'", "\\'") : escaped) + quote;
-  }
-  if (Array.isArray(value)) return `[${value.map(python_repr).join(", ")}]`;
-  if (value instanceof Date) return `datetime(${value.toISOString()})`;
-  if (typeof value === "object") {
-    return `{${Object.entries(value).map(([key, entry]) => `${python_repr(key)}: ${python_repr(entry)}`).join(", ")}}`;
-  }
-  return String(value);
 }
 
 // ── Close matches ────────────────────────────────────────────────────────────
@@ -115,32 +95,7 @@ export function close_matches(word: string, candidates: Iterable<string>, count 
   return scored.slice(0, count).map(([, candidate]) => candidate);
 }
 
-// ── JSON ─────────────────────────────────────────────────────────────────────
-
-function ascii_string(text: string): string {
-  return JSON.stringify(text).replace(/[\u007f-￿]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
-}
-
-// JSON as Python's json.dumps writes it: ", " and ": " separators, non-ASCII escaped, keys in insertion order unless
-// `sort_keys`, so settings the Python app stored compare equal.
-export function python_dumps(value: unknown, sort_keys = false): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value === "string") return ascii_string(value);
-  if (typeof value === "number") {
-    if (Number.isNaN(value)) return "NaN";
-    if (!Number.isFinite(value)) return value > 0 ? "Infinity" : "-Infinity";
-    return JSON.stringify(value);
-  }
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (value instanceof Date) return ascii_string(value.toISOString());
-  if (Array.isArray(value)) return `[${value.map((item) => python_dumps(item, sort_keys)).join(", ")}]`;
-  if (typeof value === "object") {
-    const keys = Object.keys(value).filter((key) => (value as Record<string, unknown>)[key] !== undefined);
-    if (sort_keys) keys.sort();
-    return `{${keys.map((key) => `${ascii_string(key)}: ${python_dumps((value as Record<string, unknown>)[key], sort_keys)}`).join(", ")}}`;
-  }
-  return ascii_string(String(value));
-}
+// ── Equality ─────────────────────────────────────────────────────────────────
 
 // Whether two JSON-like values are equal as Python's == compares dicts and lists.
 export function deep_equal(first: unknown, second: unknown): boolean {

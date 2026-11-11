@@ -1,11 +1,12 @@
 // mdadm array health, read from /proc/mdstat. A degraded array is failed and a rebuilding one warning; an unreadable
 // /proc/mdstat or a host with no arrays is unavailable.
 
+import { format_fixed, parse_float, parse_int } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import type { Status } from "../shared/status.ts";
 import type { CardSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { format_fixed, parse_float, parse_int } from "./base/text_parsing.ts";
 
 const array_pattern = /^(md\d+)\s*:\s*(\S+)\s+(\S+)/gm;
 const level_pattern = /\b(raid\d+|linear|multipath|faulty|container)\b/;

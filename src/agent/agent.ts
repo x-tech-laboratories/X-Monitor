@@ -5,23 +5,28 @@
 
 import { hostname as system_hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { AppMessage } from "@x-tech-laboratories/x-libs/agent/protocol";
 import type { AgentSession } from "@x-tech-laboratories/x-libs/agent/session";
 import { shell_runner, type TaskRunner } from "@x-tech-laboratories/x-libs/agent/tasks";
 import { start_agent, type RunningAgent } from "@x-tech-laboratories/x-libs/agent/client";
+import { Notifier } from "@x-tech-laboratories/x-libs/agent/desktop_notify";
+import { IdleInhibitor } from "@x-tech-laboratories/x-libs/agent/inhibit";
+import { follow_lines, LineServer } from "@x-tech-laboratories/x-libs/agent/local_socket";
 
 import { code_version } from "../core/code_version.ts";
 import { create_logger_for } from "../core/logging.ts";
 import { agent_app, ENGINE_CAPABILITY, stream_from_wire, type CapabilitiesMessage } from "../shared/agent_protocol.ts";
 import type { AgentConfig } from "./config.ts";
-import { Notifier } from "./desktop.ts";
-import { IdleInhibitor } from "./inhibit.ts";
 import { LocalRunner } from "./local.ts";
-import { follow, LocalNotifier, OfflineAlerts } from "./local_notify.ts";
+import { OfflineAlerts } from "./local_notify.ts";
 import { supervise, WATCHERS, type StreamEvent } from "./watchers.ts";
 
 const log = create_logger_for("x_monitor_agent.client");
+const desktop_log = create_logger_for("x_monitor_agent.desktop");
+const inhibit_log = create_logger_for("x_monitor_agent.inhibit");
+const local_notify_log = create_logger_for("x_monitor_agent.local_notify");
 
 export const AGENT_VERSION = "0.2.0";
 
@@ -34,6 +39,23 @@ export const CAPABILITIES = [...Object.keys(WATCHERS), NOTIFY, DISMISS, INHIBIT]
 
 // How long the outbox pump waits before looking for new records when it found none.
 export const PUMP_IDLE_SECONDS = 1.0;
+
+// The icon name that stands for X-Monitor's own icon, which ships with the agent.
+export const XMONITOR_ICON = "x-monitor";
+
+export const ICON_FILE = fileURLToPath(new URL("../../resources/icon.svg", import.meta.url));
+
+// The desktop notifier X-Monitor's agent shows its notifications with.
+export function desktop_notifier(): Notifier {
+  return new Notifier({ app_name: "X-Monitor", icons: { [XMONITOR_ICON]: ICON_FILE }, on_error: (message) => desktop_log.error(message) });
+}
+
+// The idle inhibitor that keeps the host awake while X-Monitor's tasks run.
+export function idle_inhibitor(linger_seconds?: number, find?: (name: string) => string | null): IdleInhibitor {
+  return new IdleInhibitor({
+    who: "x-monitor-agent", why: "An X-Monitor task is running", linger_seconds, find, on_warning: (message) => inhibit_log.warn(message),
+  });
+}
 
 // The answer a notify-only agent gives every command.
 export const NOTIFY_ONLY_REFUSAL = "This agent only shows notifications; it runs no commands";
@@ -69,8 +91,8 @@ export class XMonitorAgent {
     this.config = config;
     this.hostname = config.hostname ?? system_hostname();
     // Kept across reconnects, so a notification can still be clicked or dismissed after a network drop.
-    this.desktop = options.desktop ?? new Notifier();
-    this.inhibitor = options.inhibitor ?? new IdleInhibitor();
+    this.desktop = options.desktop ?? desktop_notifier();
+    this.inhibitor = options.inhibitor ?? idle_inhibitor();
     // The monitors this agent runs itself, which keep running whether or not it is connected.
     this.runner = options.runner !== undefined ? options.runner : config.state_dir && !config.notify_only ? new LocalRunner(config.agent_id, config.state_dir) : null;
   }
@@ -252,11 +274,15 @@ export class XMonitorAgent {
     if (!socket_path) return [];
     if (this.config.notify_only) {
       const controller = new AbortController();
-      void follow(socket_path, (frame) => (frame.type === NOTIFY ? this.desktop.show(frame) : this.desktop.dismiss(frame)), controller.signal);
+      void follow_lines(socket_path, (frame) => (frame.type === NOTIFY ? this.desktop.show(frame) : this.desktop.dismiss(frame)), controller.signal, {
+        accept: (frame) => frame.type === NOTIFY || frame.type === DISMISS,
+        on_disconnect: (reason) => local_notify_log.debug(`local notifications from ${socket_path} ended: ${reason}`),
+      });
       return [() => controller.abort()];
     }
     if (this.runner === null) return [];
-    const notifier = new LocalNotifier(socket_path);
+    // Desktop agents run as the desktop's user, so the socket is open to every local user; it only carries notifications out.
+    const notifier = new LineServer(socket_path);
     try {
       await notifier.start();
     } catch (error) {

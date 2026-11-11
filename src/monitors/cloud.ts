@@ -4,11 +4,12 @@
 // cards and as the snapshot behind the detail cards; no responding metadata endpoint is unavailable rather than
 // failed, since not being a cloud host is a finding, not an error.
 
+import { python_dumps } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
-import { json_dumps } from "./base/python_text.ts";
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ export class Cloud extends Plugin {
       const details = ["instance_id", "region", "az", "zone"]
         .filter((key) => fields[key])
         .map((key) => ({ label: key.replaceAll("_", " ").toUpperCase(), value: String(fields[key]) }));
-      return new CollectResult({ metrics: { on_cloud: 1.0 }, logs, status: "online", snapshot: details, settings: { [`cloud:${this.id}`]: json_dumps(fields) } });
+      return new CollectResult({ metrics: { on_cloud: 1.0 }, logs, status: "online", snapshot: details, settings: { [`cloud:${this.id}`]: python_dumps(fields) } });
     }
 
     return new CollectResult({

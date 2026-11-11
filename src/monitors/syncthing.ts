@@ -7,12 +7,13 @@
 // an API that did not answer, or answered with an error or something unparseable, is unavailable. The local device,
 // which the config lists but the connections map never does, is not an expected device.
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { CollectResult, http_request, type HttpRequest, type HttpResult, type Request, type Result } from "../core/connectors/types.ts";
 import type { Status } from "../shared/status.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { limit_from, resolve_secret, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { py_str_repr } from "./base/python_text.ts";
 
 const default_layout: LayoutRow[] = [
   ["host_card", "folders_card", "devices_card"],
@@ -55,12 +56,12 @@ function decode_folder_states(watched_ids: string[], folder_results: HttpResult[
     const result = folder_results[index];
     if (result.error !== null || result.status_code !== 200) {
       const detail = result.error || `HTTP ${result.status_code}`;
-      throw new Error(`Failed to query folder ${py_str_repr(folder_id)}: ${detail}`);
+      throw new Error(`Failed to query folder ${python_repr(folder_id)}: ${detail}`);
     }
     try {
       folder_states.set(folder_id, JSON.parse(result.text) as Json);
     } catch (error) {
-      throw new Error(`Folder ${py_str_repr(folder_id)} status was not JSON (${(error as Error).message})`);
+      throw new Error(`Folder ${python_repr(folder_id)} status was not JSON (${(error as Error).message})`);
     }
   }
   return folder_states;

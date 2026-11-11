@@ -1,11 +1,12 @@
 // Battery charge, external power and battery wear, read from /sys/class/power_supply.
 
+import { float_or_null, format_fixed, partition, split_lines } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { floor_level_for, limit_from, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin, worst_status } from "./base/signal_plugin.ts";
-import { float_or_null, format_fixed, partition, split_lines } from "./base/text_parsing.ts";
 
 // Kernel health values that mean the battery is failing rather than just outside its comfort zone.
 const failed_health = new Set(["Dead", "Overheat", "Over voltage", "Over current", "Unspecified failure", "No battery"]);

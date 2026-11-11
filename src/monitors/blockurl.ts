@@ -8,11 +8,12 @@
 // Reading alone cannot see a database whose every write fails, which is how a corrupt index once held this monitor
 // green while nothing could be blocked.
 
+import { python_dumps, python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, http_request, type CmdResult, type HttpResult, type Request, type Result } from "../core/connectors/types.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { resolve_secret, type PluginConfig } from "./base/plugin_helpers.ts";
-import { json_dumps, py_str_repr } from "./base/python_text.ts";
 
 const default_key_command = "cut -d= -f2- /run/secrets/blockurl_api_key";
 
@@ -23,9 +24,9 @@ export function parse_response(stdout: string): unknown[] {
   try {
     data = JSON.parse(stdout);
   } catch (error) {
-    throw new Error(`domains response was not JSON (${(error as Error).message}): ${py_str_repr(stdout.slice(0, 200))}`);
+    throw new Error(`domains response was not JSON (${(error as Error).message}): ${python_repr(stdout.slice(0, 200))}`);
   }
-  if (!Array.isArray(data)) throw new Error(`domains response was not a list: ${py_str_repr(stdout.slice(0, 200))}`);
+  if (!Array.isArray(data)) throw new Error(`domains response was not a list: ${python_repr(stdout.slice(0, 200))}`);
   return data;
 }
 
@@ -64,7 +65,7 @@ export function write_probe_error(result: unknown): string {
   if (probe.exit_code !== 0) {
     const detail = (probe.stderr || probe.stdout).trim().slice(0, 200);
     if (detail.includes("is not connected")) return AGENT_UNAVAILABLE;
-    return `probe command exited ${probe.exit_code}: ${py_str_repr(detail)}`;
+    return `probe command exited ${probe.exit_code}: ${python_repr(detail)}`;
   }
 
   const fields: Record<string, string> = {};
@@ -79,7 +80,7 @@ export function write_probe_error(result: unknown): string {
   try {
     checked = JSON.parse(fields.check ?? "");
   } catch {
-    return `check response was not JSON: ${py_str_repr((fields.check ?? "").slice(0, 200))}`;
+    return `check response was not JSON: ${python_repr((fields.check ?? "").slice(0, 200))}`;
   }
   if (!(typeof checked === "object" && checked !== null && !Array.isArray(checked) && Object.values(checked).some(truthy))) {
     return "a URL blocked moments earlier did not read back as blocked";
@@ -129,7 +130,7 @@ export class Blockurl extends Plugin {
   // Blocks, checks and unblocks the reserved URL in that order, printing each step's outcome.
   probe_command(): string {
     const base = this.api_url!.replace(/\/+$/, "");
-    const body = json_dumps({ urls: [this.probe_url] });
+    const body = python_dumps({ urls: [this.probe_url] });
     // The key reaches curl on stdin, since every user on the host can read a command line in `ps`.
     const call = 'printf "X-API-Key: %s\\n" "$KEY" | ' + `curl -sS -m ${this.api_timeout} -X POST ` + '-H @- -H "Content-Type: application/json" ' + `-d '${body}'`;
     return (

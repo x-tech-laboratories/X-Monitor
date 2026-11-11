@@ -6,6 +6,8 @@
 // when readonly_is_failure is off) because the kernel may have remounted it after an I/O error. A df that produced
 // nothing, or no real filesystems at all, is unavailable.
 
+import { format_fixed, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import { log_level_of, severity, type Status } from "../shared/status.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
@@ -13,7 +15,6 @@ import { df_command, parse_df, path_key, PSEUDO_FS_TYPES } from "./base/disk_usa
 import { scan_metric_family } from "./base/metric_family.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_bytes, level_for, limit_from, limits_text, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { format_fixed, split_lines, split_words } from "./base/text_parsing.ts";
 
 export const SNAP = "---SNAP---";
 

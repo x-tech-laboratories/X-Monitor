@@ -4,11 +4,12 @@
 // per probe. Every check reachable is online; any check down is failed, with no warning tier. The target itself being
 // unreachable, so the probe never ran, is unavailable: nothing was measured.
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import type { CardSpec, ChartSpec, LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
-import { py_str_repr } from "./base/python_text.ts";
 
 const fail_word = "FAIL";
 
@@ -36,7 +37,7 @@ export function build_probe_script(checks: PortCheck[], timeout: number): string
     if (url) {
       lines.push(
         `code=$(curl -o /dev/null -s -m ${timeout} -w "%{http_code}:%{time_total}" ` +
-          `${py_str_repr(String(url))} 2>/dev/null); ` +
+          `${python_repr(String(url))} 2>/dev/null); ` +
           `case "$code" in 2*|3*) echo "${index} $(echo "$code" | cut -d: -f2 | ` +
           `awk '{printf "%.0f", $1*1000}')";; *) echo "${index} ${fail_word}";; esac`,
       );

@@ -4,12 +4,13 @@
 // client; optional when a push-scoped API token from auth.tokens covers this monitor), target_host for display. A fresh
 // heartbeat that reported "up" is online; no heartbeat yet, one older than max_age, or a last-reported "down" is failed.
 
+import { parse_float, parse_int } from "@x-tech-laboratories/x-libs/python_text";
+
 import { CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import type { PushablePlugin } from "../core/contracts.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_age, format_duration, type PluginConfig } from "./base/plugin_helpers.ts";
-import { parse_float, parse_int } from "./base/text_parsing.ts";
 
 const default_layout: LayoutRow[] = [["status_card", "lastbeat_card", "maxage_card"], ["uptime_strip"], ["events"]];
 

@@ -5,9 +5,10 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { python_dumps } from "@x-tech-laboratories/x-libs/python_text";
+
 import { cmd_result, CollectResult, type CmdResult } from "../../src/core/connectors/types.ts";
 import type { PluginConfig } from "../../src/monitors/base/plugin_helpers.ts";
-import { json_dumps } from "../../src/monitors/base/python_text.ts";
 import { NixosUpgrade, split_eval_output } from "../../src/monitors/nixos_upgrade.ts";
 import { make_plugin, store_of } from "../harness.ts";
 
@@ -52,7 +53,7 @@ function metadata(options: { revision?: string; last_modified?: number; inputs?:
   const nodes: Record<string, unknown> = { root: { inputs: Object.fromEntries(Object.keys(inputs).map((name) => [name, name])) } };
   for (const [name, stamp] of Object.entries(inputs)) nodes[name] = { locked: { lastModified: stamp, rev: "0".repeat(40) } };
   const rev_key = options.dirty ? "dirtyRev" : "rev";
-  return cmd_result(0, json_dumps({
+  return cmd_result(0, python_dumps({
     lastModified: last_modified,
     locked: { [rev_key]: options.revision ?? "f".repeat(40), lastModified: last_modified },
     locks: { nodes, root: "root", version: 7 },
@@ -121,7 +122,7 @@ function stored_state(plugin: NixosUpgrade): Record<string, unknown> {
 function rewind_eval(plugin: NixosUpgrade, seconds: number): void {
   const state = stored_state(plugin);
   state.evaluated_epoch = now_epoch() - seconds;
-  apply(plugin, new CollectResult({ metrics: { flake_eval_epoch: state.evaluated_epoch as number }, metadata: { flake_eval_epoch: json_dumps(state) } }));
+  apply(plugin, new CollectResult({ metrics: { flake_eval_epoch: state.evaluated_epoch as number }, metadata: { flake_eval_epoch: python_dumps(state) } }));
 }
 
 // Runs the cycle that launches an evaluation, returning its job row.

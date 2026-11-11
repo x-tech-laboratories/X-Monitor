@@ -1,7 +1,7 @@
 // The overview: a tile per host, reachability strips, backup ages, deployments and vulnerability findings, the status
 // donut and type treemap whose clicks filter the monitor table, and the recent metrics and events.
 
-import { Donut, Meters, Strip } from "@x-tech-laboratories/x-libs/web/react/charts";
+import { Donut, Meters, ShareBar, Strip, Treemap } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { SearchBox } from "@x-tech-laboratories/x-libs/web/react/controls";
 import { PageHeading, Section, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
@@ -9,12 +9,11 @@ import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useState } from "react";
 
+import { filter_rows } from "@x-tech-laboratories/x-libs/web/tables";
+
 import { color_for, TRACK_COLOR } from "../../shared/charts.ts";
-import { filter_rows } from "../../shared/table_rows.ts";
 import { calls, live, type FleetView, type MonitorRow, type OverviewView } from "../api.ts";
 import { status_color, StatusBadge, StatusDot, tone_of } from "../ui.tsx";
-import { ShareBar } from "../widgets/share_bar.tsx";
-import { Treemap } from "../widgets/treemap.tsx";
 import { LevelBadge } from "./body.tsx";
 
 export const STATUS_ORDER = ["online", "info", "failed", "warning", "unavailable"] as const;

@@ -7,13 +7,14 @@
 // collecting on demand is X-Nix's job. Config: unit, timer, store, max_age, stale_status, timer_status, warning,
 // threshold (either null to turn that level off), max_generations, max_generation_age.
 
+import { python_dumps } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import { is_status, log_level_of, type Status } from "../shared/status.ts";
 import type { LayoutRow, TableSpec, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_age, format_bytes, format_duration, level_for, limit_from, parse_duration, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { json_dumps } from "./base/python_text.ts";
 
 const default_layout: LayoutRow[] = [
   ["host_card", "last_gc_card", "freed_card", "next_gc_card"],
@@ -306,7 +307,7 @@ export class NixGc extends Plugin {
     metrics[state_metric] = Number(state.epoch || 0);
     return new CollectResult({
       metrics,
-      metadata: { [state_metric]: json_dumps(state) },
+      metadata: { [state_metric]: python_dumps(state) },
       logs,
       status: accumulator.status,
       snapshot: {

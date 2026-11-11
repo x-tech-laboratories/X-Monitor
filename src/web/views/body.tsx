@@ -2,22 +2,21 @@
 // panel, a group's grid or child cards, and the widgets custom pages add (the log search and the archive browser).
 
 import { Badge, Chip, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
-import { LineChart, Meters, Strip } from "@x-tech-laboratories/x-libs/web/react/charts";
+import { Gauge, LineChart, Meters, ShareBar, Strip } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { SearchBox } from "@x-tech-laboratories/x-libs/web/react/controls";
 import { Section, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { DataTable, type TableColumn } from "@x-tech-laboratories/x-libs/web/react/table";
 import { createContext, useContext, useState, type CSSProperties } from "react";
+
+import { filter_rows, tree_rows, type TableRow } from "@x-tech-laboratories/x-libs/web/tables";
 
 import { color_for } from "../../shared/charts.ts";
 import type {
   BodyView, ButtonsView, ButtonView, ChartView, ChildCardView, CellView, DialogView, FeedView, JobPanelView, RepeatView, RowActionView, ShareView, StripView, TableView, WidgetView,
 } from "../../shared/page_view.ts";
 import { row_params, substitute, title_words } from "../../shared/page_view.ts";
-import { filter_rows, tree_rows, type TableRow } from "../../shared/table_rows.ts";
 import { calls } from "../api.ts";
 import { confirmed, notify, notify_error, StateValue, status_color, StatusDot, tone_of } from "../ui.tsx";
-import { Gauge } from "../widgets/gauge.tsx";
-import { ShareBar } from "../widgets/share_bar.tsx";
 import { ArchiveBrowser } from "./browser.tsx";
 import { open_job_log, open_spec_dialog } from "./dialogs.tsx";
 import { LogSearch } from "./logs.tsx";

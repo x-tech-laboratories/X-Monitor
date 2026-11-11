@@ -2,12 +2,13 @@
 // /sys/class/drm in one command. No GPU at all, a probe timeout, or a wedged NVIDIA driver is unavailable; nvidia-smi
 // reporting an error of its own is failed.
 
+import { float_or_null, format_fixed, parse_float, parse_int, partition, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { level_for, limit_from, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin, worst_status } from "./base/signal_plugin.ts";
-import { float_or_null, format_fixed, parse_float, parse_int, partition, split_lines, split_words } from "./base/text_parsing.ts";
 
 const pci_vendors: Record<string, string> = { nvidia: "0x10de", amd: "0x1002", intel: "0x8086" };
 const vendor_names: Record<string, string> = { nvidia: "NVIDIA", amd: "AMD", intel: "Intel" };

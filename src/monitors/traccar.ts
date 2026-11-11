@@ -5,13 +5,14 @@
 // failed; no matching enabled devices is a warning. Transport, auth and payload errors mean nothing was measured, so
 // they are unavailable.
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { CollectResult, http_request, type HttpResult, type Request, type Result } from "../core/connectors/types.ts";
 import type { Status } from "../shared/status.ts";
 import { register_color_rule } from "../shared/ui_registry.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { level_for, limit_from, resolve_secret, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { py_str_repr } from "./base/python_text.ts";
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
 
@@ -22,9 +23,9 @@ export function parse_response(stdout: string): Device[] {
   try {
     devices = JSON.parse(stdout);
   } catch (error) {
-    throw new Error(`device list was not JSON (${(error as Error).message}): ${py_str_repr(stdout.slice(0, 200))}`);
+    throw new Error(`device list was not JSON (${(error as Error).message}): ${python_repr(stdout.slice(0, 200))}`);
   }
-  if (!Array.isArray(devices)) throw new Error(`device list was not a list: ${py_str_repr(stdout.slice(0, 200))}`);
+  if (!Array.isArray(devices)) throw new Error(`device list was not a list: ${python_repr(stdout.slice(0, 200))}`);
   return devices as Device[];
 }
 

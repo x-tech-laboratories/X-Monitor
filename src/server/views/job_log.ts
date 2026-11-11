@@ -1,6 +1,8 @@
 // A job's log as its dialog shows it: the job's name, a one-line summary, its command, any error and its output lines,
 // and the watches that poll a running job every few seconds while someone has its log open.
 
+import { Leases } from "@x-tech-laboratories/x-libs/server/leases";
+
 import { action_id_of } from "../../core/coordination/jobs.ts";
 import type { JobDict, JobOutputDict } from "../../core/database/database.ts";
 import type { Plugin } from "../../monitors/base/plugin_base.ts";
@@ -68,55 +70,32 @@ export const JOB_GONE_NOTICE = "That job is no longer kept";
 // Seconds an open log's watch lasts without the page renewing it, so a closed tab stops the fast polling soon.
 export const LEASE_SECONDS = 30;
 
-interface Lease {
-  end: () => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 // The open logs of running jobs: each lease polls its job every few seconds until the page closes the log, the lease
 // runs out, or the job ends.
 export class JobWatches {
-  private readonly leases = new Map<string, Lease>();
-  private next_id = 1;
+  private readonly leases = new Leases(LEASE_SECONDS);
 
   // Starts watching a running job for an open log and returns the lease the page renews and ends; null for a job that
   // is not running.
   open(plugin: Plugin, job: JobDict): string | null {
     if (job.state !== "running" || plugin.jobs === null) return null;
-    const lease_id = `${job.id}-${this.next_id++}`;
-    const end = plugin.jobs.watch(job);
-    this.leases.set(lease_id, { end, timer: this.expiry(lease_id) });
-    return lease_id;
+    return this.leases.open(plugin.jobs.watch(job), String(job.id));
   }
 
   // Keeps a lease going for another LEASE_SECONDS; false when it has already ended.
   renew(lease_id: string): boolean {
-    const lease = this.leases.get(lease_id);
-    if (lease === undefined) return false;
-    clearTimeout(lease.timer);
-    lease.timer = this.expiry(lease_id);
-    return true;
+    return this.leases.renew(lease_id);
   }
 
   close(lease_id: string): void {
-    const lease = this.leases.get(lease_id);
-    if (lease === undefined) return;
-    clearTimeout(lease.timer);
-    lease.end();
-    this.leases.delete(lease_id);
+    this.leases.close(lease_id);
   }
 
   close_all(): void {
-    for (const lease_id of this.leases.keys()) this.close(lease_id);
+    this.leases.close_all();
   }
 
   get size(): number {
     return this.leases.size;
-  }
-
-  private expiry(lease_id: string): ReturnType<typeof setTimeout> {
-    const timer = setTimeout(() => this.close(lease_id), LEASE_SECONDS * 1000);
-    timer.unref?.();
-    return timer;
   }
 }

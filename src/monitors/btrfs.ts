@@ -1,12 +1,13 @@
 // Btrfs filesystem health and capacity, via btrfs-progs. Device errors or usage over the threshold is failed; a probe
 // that could not run, missing btrfs-progs, or no btrfs filesystem to read is unavailable.
 
+import { format_fixed, parse_int, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { format_bytes, level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin, worst_status } from "./base/signal_plugin.ts";
-import { format_fixed, parse_int, split_lines, split_words } from "./base/text_parsing.ts";
 
 // One mountpoint per filesystem, the shortest, so a container with subvolumes mounted all over the tree is reported
 // once under its topmost mount; every command reads through the mountpoint, which needs no privilege.

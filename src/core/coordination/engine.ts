@@ -10,9 +10,11 @@
 // Each background task is a promise with an AbortController; aborting a monitor's loop stops it at its next await, and
 // a cycle still in flight for a retired monitor writes nothing.
 
-import { createHash } from "node:crypto";
-import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname } from "node:path";
+
+import { watch_config } from "@x-tech-laboratories/x-libs/config_watch";
+
+import { python_dumps, python_repr } from "@x-tech-laboratories/x-libs/python_text";
 
 import { AgentConnection } from "../connectors/agent_connector.ts";
 import type { AgentRegistry } from "../connectors/agent_connector.ts";
@@ -25,7 +27,7 @@ import type { EngineLike } from "../contracts.ts";
 import { DatabaseManager } from "../database/database.ts";
 import { open_sqlite_persistence } from "../database/sqlite_persistence.ts";
 import { create_logger_for } from "../logging.ts";
-import { python_dumps, python_repr, deep_equal } from "../python.ts";
+import { deep_equal } from "../python.ts";
 import { ConfigFileManager } from "../settings/config_file.ts";
 import type { ExporterSettings, NotificationSettings, PluginConfig } from "../settings/config_schema.ts";
 import { LogLevels } from "../settings/log_levels.ts";
@@ -1188,50 +1190,17 @@ export class XMonitorEngine implements EngineLike {
     this.db.insert_event(level, `[x_monitor_core] ${result.summary()}`, "x_monitor_core");
   }
 
-  // What the config path points at and when it last changed; a re-pointed symlink or a replaced file changes it.
-  config_fingerprint(): string | null {
-    try {
-      const real = realpathSync(this.config_loader.path);
-      const stat = statSync(real, { bigint: true });
-      return `${real}\u001f${stat.ino}\u001f${stat.mtimeNs}\u001f${stat.size}`;
-    } catch {
-      return null;
-    }
-  }
-
-  private config_file_digest(): string | null {
-    try {
-      return createHash("sha256").update(readFileSync(this.config_loader.path)).digest("hex");
-    } catch {
-      return null;
-    }
-  }
-
   // Reloads when the config changes: checked every few seconds, and applied once it has held still for one check.
   private async watch_config(signal: AbortSignal): Promise<void> {
-    let seen: string | null = null;
-    let pending: string | null = null;
+    const watch = watch_config({
+      path: this.config_loader.path, loaded_digest: () => this.config_digest, reload: () => this.reload_config("file change"),
+      // A failed reload is already reported; the watcher keeps watching.
+      on_error: (error) => log.error(`Config reload after a file change failed: ${(error as Error).message}`),
+    }, false);
     while (!signal.aborted) {
       await this.sleep(this.config_poll_seconds, signal);
       if (signal.aborted) return;
-      const current = this.config_fingerprint();
-      if (current === null || current === seen) {
-        pending = null;
-        continue;
-      }
-      if (current !== pending) {
-        pending = current;
-        continue;
-      }
-      seen = current;
-      pending = null;
-      if (this.config_file_digest() === this.config_digest) continue;
-      // A failed reload is already reported; the watcher keeps watching.
-      try {
-        await this.reload_config("file change");
-      } catch (error) {
-        log.error(`Config reload after a file change failed: ${(error as Error).message}`);
-      }
+      await watch.check();
     }
   }
 }

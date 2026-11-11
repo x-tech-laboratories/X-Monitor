@@ -10,13 +10,14 @@
 // io_call that awaits the engine's HTTP connector. A container whose image's RepoDigests lack that digest has an update
 // available; one pinned by digest or running a locally built image is unknown. A registry failure is only logged.
 
+import { partition, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { action_plan, command, CollectResult, type ActionOutcome, type ActionPlanResult, type CmdResult, type Command, type LogEntry, type Result } from "../../core/connectors/types.ts";
 import type { StreamSpec } from "../../shared/agent_protocol.ts";
 import type { Status } from "../../shared/status.ts";
 import type { ActionButtonSpec, CardSpec, ColumnSpec, LayoutRow, UISpec } from "../../shared/ui_spec.ts";
 import { Plugin } from "../base/plugin_base.ts";
 import { parse_duration, resolve_secret, type PluginConfig } from "../base/plugin_helpers.ts";
-import { partition, split_lines, split_words } from "../base/text_parsing.ts";
 import { check_images, local_digests, normalise_registry, parse_reference, RegistryAuth, type ImageRef, type RemoteDigest } from "./registry.ts";
 
 const ps_format = "ps -a --format '{{.Names}}\t{{.State}}'";

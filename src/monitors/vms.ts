@@ -4,11 +4,12 @@
 // offline_warning is on, while cleanly shut-off VMs count as benign. A missing virsh or an unreachable libvirt measured
 // nothing, so both are unavailable.
 
+import { partition, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { action_plan, command, CollectResult, type ActionOutcome, type ActionPlanResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import type { ActionButtonSpec, LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
-import { partition, split_lines, split_words } from "./base/text_parsing.ts";
 
 const running_states = new Set(["running"]);
 const benign_states = new Set(["shut off", "shutoff"]);

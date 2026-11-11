@@ -19,6 +19,8 @@
 
 import { readFileSync } from "node:fs";
 
+import { python_dumps, python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { launch_command, parse_launch, parse_poll, poll_command, split_lines, workdir_for } from "../../core/connectors/job_commands.ts";
 import { action_plan, cmd_result, command, CollectResult, type ActionOutcome, type ActionPlan, type ActionPlanResult, type CmdResult, type Command, type LogEntry } from "../../core/connectors/types.ts";
 import { shell_quote } from "../../core/shell.ts";
@@ -26,7 +28,6 @@ import type { JobDict } from "../../core/state/records.ts";
 import type { ActionButtonSpec, LayoutRow, TableSpec, UISpec } from "../../shared/ui_spec.ts";
 import { Plugin, type ActionState, type CustomView } from "../base/plugin_base.ts";
 import { format_age, format_duration, KILL_GRACE_SECONDS, parse_duration, type PluginConfig } from "../base/plugin_helpers.ts";
-import { json_dumps, py_repr } from "../base/python_text.ts";
 import { browser_view_data } from "./browser.ts";
 import {
   canary_verdict, CHECK_KINDS, check_job_kind, check_unit_script, covered_by_check_job, merge_unit, observed_unit, parse_check_units,
@@ -214,7 +215,7 @@ export class Borg extends Plugin {
     this.job_lock = text_of(config.job_lock);
     this.check_kinds = new Map(Object.entries((config.check_kinds as Record<string, unknown> | null | undefined) || {}).map(([kind, age]) => [String(kind), parse_duration(age)]));
     const unknown = [...this.check_kinds.keys()].filter((kind) => !(TRACKED_CHECKS as readonly string[]).includes(kind)).sort();
-    if (unknown.length > 0) throw new Error(`check_kinds has unknown kinds ${py_repr(unknown)}; use repository, archives, data or extract`);
+    if (unknown.length > 0) throw new Error(`check_kinds has unknown kinds ${python_repr(unknown)}; use repository, archives, data or extract`);
   }
 
   // ── Commands ─────────────────────────────────────────────────────────────
@@ -431,7 +432,7 @@ export class Borg extends Plugin {
     const metadata: Record<string, string> = {};
     if (view.archives.length > 0) {
       metrics.archive_list = view.archives.length;
-      metadata.archive_list = json_dumps({ archives: view.archives, repository: view.info });
+      metadata.archive_list = python_dumps({ archives: view.archives, repository: view.info });
     }
 
     if (view.raw_count === 0 || view.newest_epoch === 0) {
@@ -456,7 +457,7 @@ export class Borg extends Plugin {
       logs.push(...stats_logs);
       if (merged_archives !== null) {
         metrics.archive_list = merged_archives.length;
-        metadata.archive_list = json_dumps({ archives: merged_archives, repository: view.info });
+        metadata.archive_list = python_dumps({ archives: merged_archives, repository: view.info });
       }
     }
 
@@ -569,7 +570,7 @@ export class Borg extends Plugin {
       else if (!state.ok) problems.push(`${label} has no successful run on record`);
       else if (now - state.ok > max_age) problems.push(`${label} last succeeded ${format_age(now - state.ok)}, exceeds ${setting} of ${format_duration(max_age)}`);
     }
-    metadata.check_ok_epoch = json_dumps(states);
+    metadata.check_ok_epoch = python_dumps(states);
     for (const problem of problems) logs.push([`Repository check: ${problem}`, "ERROR"]);
     if (oks.length > 0 && problems.length === 0) logs.push([`Repository checks passed, oldest ${format_age(now - Math.min(...oks))}`, "INFO"]);
     const metrics = { check_ok_epoch: oks.length > 0 ? Math.min(...oks) : 0.0, checks_ok: problems.length > 0 ? 0.0 : 1.0 };
@@ -951,7 +952,7 @@ export class Borg extends Plugin {
 
   // A folder's listing as the dialog's text, and as data the server's copy of this monitor caches when its agent listed it.
   private listing_result(archive: string, member: string, entries: ListingEntry[]): CollectResult {
-    const listing = json_dumps({ archive, member, entries });
+    const listing = python_dumps({ archive, member, entries });
     return new CollectResult({ metadata: { content: this.listing_text(archive, member, entries), listing }, success: true });
   }
 
@@ -1003,7 +1004,7 @@ export class Borg extends Plugin {
 
   private plan_check(requested: string | null): ActionPlanResult {
     const kind = requested || (this.check_verify_data ? "data" : "all");
-    if (!Object.hasOwn(CHECK_KINDS, kind)) return Borg.refused(`Unknown check kind ${py_repr(kind)}: use ${Object.keys(CHECK_KINDS).join(", ")}`);
+    if (!Object.hasOwn(CHECK_KINDS, kind)) return Borg.refused(`Unknown check kind ${python_repr(kind)}: use ${Object.keys(CHECK_KINDS).join(", ")}`);
     const refusal = this.job_refusal("check the repository");
     if (refusal) return refusal;
     if (kind === "extract") {

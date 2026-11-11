@@ -15,10 +15,11 @@ import {
   agent_app, ENGINE_CAPABILITY, stream_from_wire, type MonitorActionReply, type NotifyMessage, type PlanAckMessage, type RecordsMessage,
   type ServerAppMessage, type StreamSpec,
 } from "../../shared/agent_protocol.ts";
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { code_version } from "../code_version.ts";
 import type { TransportConnection } from "../contracts.ts";
 import { create_logger_for } from "../logging.ts";
-import { python_repr } from "../python.ts";
 
 const log = create_logger_for("x_monitor.core.connectors.agent_connector");
 

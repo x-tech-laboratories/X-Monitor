@@ -1,13 +1,14 @@
 // Kernel OOM kills, counted from /proc/vmstat and followed in the journal. A new kill is failed (warning when
 // is_warning); an unreadable /proc/vmstat or a kernel without the counter is unavailable.
 
+import { int_or_null, parse_int, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import type { StreamSpec } from "../shared/agent_protocol.ts";
 import type { Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec } from "../shared/ui_spec.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { int_or_null, parse_int, split_lines, split_words } from "./base/text_parsing.ts";
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
 

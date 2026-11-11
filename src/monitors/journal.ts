@@ -4,6 +4,8 @@
 // online unless warning/threshold (new error entries per poll) are set, warning when the account can only read its own
 // journal, and unavailable when journalctl cannot be run. Config: warning, threshold, max_entries.
 
+import { int_or_null, parse_int, split_lines } from "@x-tech-laboratories/x-libs/python_text";
+
 import { action_plan, command, CollectResult, type ActionOutcome, type ActionPlanResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import type { Status } from "../shared/status.ts";
@@ -13,7 +15,6 @@ import { make_inline_layout } from "./base/child_cards.ts";
 import type { CustomView } from "./base/plugin_base.ts";
 import { level_for, limit_from, parse_duration, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { int_or_null, parse_int, split_lines } from "./base/text_parsing.ts";
 
 // ── Journal entries ──────────────────────────────────────────────────────────
 

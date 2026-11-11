@@ -6,13 +6,14 @@
 // stalled_warning are warning (stall counts only apply while at least min_downloading torrents are downloading). An API
 // that did not answer, rejected the credentials, or replied unparseably is unavailable.
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { action_plan, command, CollectResult, type ActionOutcome, type ActionPlanResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import type { Status } from "../shared/status.ts";
 import type { ActionButtonSpec, LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { dq, level_for, limit_from, password_line, SCRIPT_SEP, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { py_str_repr } from "./base/python_text.ts";
 
 export { SCRIPT_SEP };
 
@@ -122,7 +123,7 @@ function build_recheck_script(api_url: string, timeout: number, password_command
 
 export function parse_response(stdout: string): [transfer: Record<string, unknown>, torrents: Torrent[]] {
   const at = stdout.indexOf(SCRIPT_SEP);
-  if (at === -1) throw new Error(`unexpected API response: ${py_str_repr(stdout.slice(0, 200))}`);
+  if (at === -1) throw new Error(`unexpected API response: ${python_repr(stdout.slice(0, 200))}`);
   const transfer_raw = stdout.slice(0, at).trim();
   const torrents_raw = stdout.slice(at + SCRIPT_SEP.length).trim();
 
@@ -133,17 +134,17 @@ export function parse_response(stdout: string): [transfer: Record<string, unknow
   try {
     transfer = JSON.parse(transfer_raw);
   } catch (error) {
-    throw new Error(`transfer info was not JSON (${(error as Error).message}): ${py_str_repr(transfer_raw.slice(0, 200))}`);
+    throw new Error(`transfer info was not JSON (${(error as Error).message}): ${python_repr(transfer_raw.slice(0, 200))}`);
   }
   try {
     torrents = JSON.parse(torrents_raw);
   } catch (error) {
-    throw new Error(`torrent list was not JSON (${(error as Error).message}): ${py_str_repr(torrents_raw.slice(0, 200))}`);
+    throw new Error(`torrent list was not JSON (${(error as Error).message}): ${python_repr(torrents_raw.slice(0, 200))}`);
   }
   if (typeof transfer !== "object" || transfer === null || Array.isArray(transfer) || !("connection_status" in transfer)) {
-    throw new Error(`transfer info missing 'connection_status': ${py_str_repr(transfer_raw.slice(0, 200))}`);
+    throw new Error(`transfer info missing 'connection_status': ${python_repr(transfer_raw.slice(0, 200))}`);
   }
-  if (!Array.isArray(torrents)) throw new Error(`torrent list was not a list: ${py_str_repr(torrents_raw.slice(0, 200))}`);
+  if (!Array.isArray(torrents)) throw new Error(`torrent list was not a list: ${python_repr(torrents_raw.slice(0, 200))}`);
   return [transfer as Record<string, unknown>, torrents as Torrent[]];
 }
 

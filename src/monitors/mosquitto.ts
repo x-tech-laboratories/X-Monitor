@@ -6,13 +6,14 @@
 
 import { randomUUID } from "node:crypto";
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import { register_color_rule, register_formatter } from "../shared/ui_registry.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
-import { py_str_repr } from "./base/python_text.ts";
 
 export const TIMED_OUT = "XMONITOR_MQTT_TIMEOUT";
 export const MISMATCH = "XMONITOR_MQTT_MISMATCH";
@@ -94,7 +95,7 @@ export class Mosquitto extends Plugin {
     if (exit_code !== 0) {
       let message: string;
       if (stderr.includes(TIMED_OUT)) {
-        message = `Publish/subscribe round trip on ${py_str_repr(this.probe_topic)} timed out after ${this.probe_timeout}s — broker accepted the connection but did not deliver the message`;
+        message = `Publish/subscribe round trip on ${python_repr(this.probe_topic)} timed out after ${this.probe_timeout}s — broker accepted the connection but did not deliver the message`;
       } else if (stderr.includes(MISMATCH)) {
         message = `Publish/subscribe round trip returned an unexpected payload: ${stderr.trim()}`;
       } else if (stderr.includes("not found")) {

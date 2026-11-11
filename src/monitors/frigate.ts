@@ -6,13 +6,14 @@
 // malformed payload, or a missing api_url is unavailable, since no camera was measured. No matching cameras is a
 // warning pointing at the 'cameras' list.
 
+import { python_dumps, python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { CollectResult, http_request, io_action_plan, type ActionOutcome, type ActionPlanResult, type HttpRequest, type HttpResult, type Request, type Result } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import { register_color_rule, register_formatter } from "../shared/ui_registry.ts";
 import type { ActionButtonSpec, LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
-import { json_dumps, py_str_repr } from "./base/python_text.ts";
 
 type Json = Record<string, unknown>;
 
@@ -35,10 +36,10 @@ export function parse_response(stdout: string): Json {
   try {
     stats = JSON.parse(stdout);
   } catch (error) {
-    throw new Error(`stats response was not JSON (${(error as Error).message}): ${py_str_repr(stdout.slice(0, 200))}`);
+    throw new Error(`stats response was not JSON (${(error as Error).message}): ${python_repr(stdout.slice(0, 200))}`);
   }
   if (typeof stats !== "object" || stats === null || Array.isArray(stats) || !("cameras" in stats)) {
-    throw new Error(`stats missing 'cameras': ${py_str_repr(stdout.slice(0, 200))}`);
+    throw new Error(`stats missing 'cameras': ${python_repr(stdout.slice(0, 200))}`);
   }
   return stats as Json;
 }
@@ -49,10 +50,10 @@ export function parse_config(stdout: string): Record<string, Json> {
   try {
     config = JSON.parse(stdout);
   } catch (error) {
-    throw new Error(`config response was not JSON (${(error as Error).message}): ${py_str_repr(stdout.slice(0, 200))}`);
+    throw new Error(`config response was not JSON (${(error as Error).message}): ${python_repr(stdout.slice(0, 200))}`);
   }
   const cameras = typeof config === "object" && config !== null && !Array.isArray(config) ? (config as Json).cameras : null;
-  if (typeof cameras !== "object" || cameras === null || Array.isArray(cameras)) throw new Error(`config missing 'cameras': ${py_str_repr(stdout.slice(0, 200))}`);
+  if (typeof cameras !== "object" || cameras === null || Array.isArray(cameras)) throw new Error(`config missing 'cameras': ${python_repr(stdout.slice(0, 200))}`);
   return cameras as Record<string, Json>;
 }
 
@@ -318,7 +319,7 @@ export class Frigate extends Plugin {
     const response = await this.engine!.http_fetch(http_request(`${base}/api/media/sync`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: json_dumps({ media_types: ["recordings"], dry_run, force: false }),
+      body: python_dumps({ media_types: ["recordings"], dry_run, force: false }),
       timeout: this.api_timeout,
     }));
     if (response.error !== null || response.status_code === null) return { ok: false, log: `${name} request failed: ${response.error}` };

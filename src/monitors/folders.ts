@@ -4,13 +4,14 @@
 // or threshold makes the status warning or failed; a du timeout, failure or unparseable output means that folder went
 // unmeasured, which reads as unavailable unless another folder measured worse.
 
+import { parse_int } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import { log_level_of, severity, type Status } from "../shared/status.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { du_command, parse_du, path_key } from "./base/disk_usage.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_bytes, type PluginConfig } from "./base/plugin_helpers.ts";
-import { parse_int } from "./base/text_parsing.ts";
 
 const default_layout: LayoutRow[] = [["host_card", "count_card"], ["folders"], ["events"]];
 
