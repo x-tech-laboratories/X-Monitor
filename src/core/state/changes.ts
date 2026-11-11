@@ -32,7 +32,7 @@ export class ChangeBus {
   }
 
   publish(kind: ChangeKind, plugin_id: string | null = null): void {
-    for (const subscriber of [...this.subscribers]) {
+    for (const subscriber of this.subscribers) {
       // One failing subscriber must not poison the bus for the others or the publisher.
       try {
         subscriber(kind, plugin_id);

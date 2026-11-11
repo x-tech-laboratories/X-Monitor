@@ -944,7 +944,7 @@ export class XMonitorEngine implements EngineLike {
   // Stops background tasks, closes every transport, and flushes pending writes to disk.
   async shutdown(): Promise<void> {
     this.remove_signal_handlers();
-    for (const task of [...this.tasks]) task.abort();
+    for (const task of this.tasks) task.abort();
     this.exporters.stop();
     this.notifications.stop();
     this.connectors.close();
@@ -1136,7 +1136,7 @@ export class XMonitorEngine implements EngineLike {
       }
       const net = this.exec_contexts.get(plugin.id);
       this.exec_contexts.delete(plugin.id);
-      for (const [stream_id, target] of [...this.event_targets]) {
+      for (const [stream_id, target] of this.event_targets) {
         if (target !== plugin) continue;
         this.event_targets.delete(stream_id);
         this.collection_streams.delete(stream_id);
