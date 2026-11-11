@@ -31,6 +31,7 @@ plugins:
           - {name: "Reboot Required", id: "heimdall-reboot", type: "reboot_required", interval: 10, <<: *ssh}
           - {name: "Interfaces", id: "heimdall-ifaces", type: "interfaces", expect_up: ["eth0"], interval: 10, <<: *ssh}
           - {name: "Sessions", id: "heimdall-sessions", type: "sessions", allowed_users: ["alice", "bob"], interval: 10, <<: *ssh}
+          - {name: "Journal", id: "heimdall-journal", type: "journal", warning: 3, interval: 10, ssh_config: {host: "heimdall.lan", port: 1}}
           - name: "Host Control"
             id: "heimdall-control"
             type: "host_control"
@@ -85,6 +86,7 @@ plugins:
           - {name: "Memory", id: "ragnarok-memory", type: "memory", warning: 80, threshold: 92, interval: 3, <<: *ssh}
           - {name: "Temperature", id: "ragnarok-temp", type: "temperature", warning: 75, threshold: 85, interval: 3, <<: *ssh}
           - {name: "/", id: "ragnarok-root", type: "disk_space", path: "/", warning: 85, threshold: 95, interval: 5, <<: *ssh}
+          - {name: "Journal", id: "ragnarok-journal", type: "journal", interval: 10, ssh_config: {host: "ragnarok.lan", port: 1}}
       - {name: "Vulnerability Scan", id: "ragnarok-scan", type: "vuln_scan", scan_host: "ragnarok.lan", interval: 10, <<: *ssh}
 
   - name: "Odin"
@@ -98,6 +100,7 @@ plugins:
           - {name: "CPU", id: "odin-cpu", type: "cpu", warning: 70, threshold: 90, interval: 3, <<: *ssh}
           - {name: "Memory", id: "odin-memory", type: "memory", warning: 80, threshold: 92, interval: 3, <<: *ssh}
           - {name: "/", id: "odin-root", type: "disk_space", path: "/", warning: 85, threshold: 95, interval: 5, <<: *ssh}
+          - {name: "Journal", id: "odin-journal", type: "journal", interval: 10, ssh_config: {host: "odin.lan", port: 1}}
       - name: "Backups"
         id: "odin-backups"
         type: "group"

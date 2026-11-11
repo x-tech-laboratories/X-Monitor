@@ -99,6 +99,7 @@ config examples. For what X-Monitor is and how to run it, see the
 | [`package_updates`](#package_updates)   | Pending package and security updates   | SSH (`apt list`, `dnf --cacheonly check-update`, `checkupdates`/`pacman -Qu`) | `updates_pending`, `security_updates_pending` | — |
 | [`interfaces`](#interfaces)             | Network interface inventory and addressing | SSH (`ip -j addr`, `/sys/class/net`)        | `interfaces_up`, `interfaces_total`, `interface_<name>_up` | — |
 | [`sessions`](#sessions)                 | Logged-in users and recent logins      | SSH (`loginctl` or `who`, `last`)               | `sessions_total`, `sessions_remote`, `sessions_unexpected` | — |
+| [`journal`](#journal)                   | The whole systemd journal: error counts and search | SSH (`journalctl -o json`)          | `errors_new`, `warnings_new`                    | Query Logs |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
 | [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
 | [`containers`](#containers)             | Docker / Podman containers, image updates | SSH (`docker`/`podman ps`, `inspect`) + registry API | `containers_total`, `containers_running`, `containers_stopped`, `images_update_available` | Restart (per expected container), Prune |
@@ -1408,6 +1409,35 @@ A **Recent logins** table shows the last `recent_logins` logins from `last --tim
   interval: 1m
   allowed_users: ["admin", "deploy"]
   allowed_sources: ["192.0.2.0/24", "*.example.com"]
+  ssh_config:
+    host: "server.example.com"
+```
+
+---
+
+### `journal`
+Every log a host's systemd journal holds, searchable from the dashboard. Each poll reads the warning and error entries written since the last one, after the journal cursor it saw last, and counts them. A search reads the journal live, so it reaches everything journald still keeps and copies nothing into X-Monitor's database; a host that is down cannot be searched.
+
+The monitor's page has a search bar over its own journal: a time range (the last 15 minutes up to a week, this boot, or everything kept), the lowest priority to show, a unit, text the entry must contain, and how many of the newest entries to fetch. The results table sorts on any column, filters further as you type, and groups by unit or priority. The **Logs** page in the sidebar runs the same search on every host that has a `journal` monitor at once, in parallel, and merges the entries newest first with a Host column and grouping by host; a host whose search fails is named above the table with the reason.
+
+By default the status stays online whatever the journal says, since most hosts log some errors all the time. `warning` and `threshold` set how many new error entries (priority `err` or worse) one poll may find before the monitor turns warning or failed, and a poll past either logs an event naming the newest error. The account needs to read the system journal (the `systemd-journal` group, or root); an account that sees only its own journal is a warning.
+
+| Option        | Description                                                                         |
+|---------------|-------------------------------------------------------------------------------------|
+| `warning`     | New error entries in one poll that make the monitor warning (default: off)          |
+| `threshold`   | New error entries in one poll that make it failed (default: off)                    |
+| `max_entries` | Entries a search fetches from this host unless the search asks for more (default: `500`, at most `5000`) |
+| `interval`    | Polling frequency (default: `60`)                                                   |
+| `ssh_config`  | SSH connection details — see [SSH Config](#ssh-config) below                        |
+
+**Metrics**: `errors_new`, `warnings_new`
+
+```yaml
+- name: "Journal"
+  id: "server-journal"
+  type: "journal"
+  interval: 5m
+  warning: 5
   ssh_config:
     host: "server.example.com"
 ```
