@@ -7,13 +7,14 @@
 // machine on a subnet only that host reaches (wake_command overrides how it is sent there). wake_on_down sends one
 // automatically when the host goes down, every wake_retry, up to wake_max_attempts times until the host is seen up.
 
+import { default_broadcast, default_port, magic_packet, remote_send_command, send_wake_packet } from "@x-tech-laboratories/x-libs/agent/wake";
+
 import { action_plan, CollectResult, io_action_plan, ping_request, type ActionOutcome, type ActionPlanResult, type CmdResult, type PingResult, type Request, type Result } from "../core/connectors/types.ts";
 import { create_logger_for } from "../core/logging.ts";
 import { shell_quote } from "../core/shell.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_duration, parse_duration, type PluginConfig } from "./base/plugin_helpers.ts";
-import { DEFAULT_BROADCAST, DEFAULT_PORT, magic_packet, remote_send_command, send_magic_packet } from "../core/connectors/wol.ts";
 
 const log = create_logger_for("x_monitor.plugins.uptime");
 
@@ -88,6 +89,9 @@ export function python_format(template: string, values: Record<string, string | 
 
 // ── Monitor ──────────────────────────────────────────────────────────────────
 
+// Why a remote send failed on a host with neither sender, naming X-Monitor's way around it.
+const MISSING_SENDER = "sending a wake packet needs python3 or socat on this host, or a wake_command";
+
 export class Uptime extends Plugin {
   override readonly RUNS_ON_AGENT = false;
   override readonly AVAILABILITY = true;
@@ -103,13 +107,13 @@ export class Uptime extends Plugin {
   wake_attempts = 0;
   last_wake: number | null = null;
   // Sends a packet from the X-Monitor server; a test swaps it for a recorder.
-  send_packet: (packet: Buffer, address: string, port: number) => Promise<void> = send_magic_packet;
+  send_packet: (packet: Buffer, address: string, port: number) => Promise<void> = send_wake_packet;
 
   constructor(name: string, config: PluginConfig) {
     super(name, config);
     this.mac = (config.mac as string | null | undefined) ?? null;
-    this.wol_broadcast = String(config.wol_broadcast || DEFAULT_BROADCAST);
-    this.wol_port = Math.trunc(Number(config.wol_port || DEFAULT_PORT));
+    this.wol_broadcast = String(config.wol_broadcast || default_broadcast);
+    this.wol_port = Math.trunc(Number(config.wol_port || default_port));
     this.wol_password = (config.wol_password as string | null | undefined) ?? null;
     this.wake_via = (config.wake_via as string | null | undefined) ?? null;
     this.wake_command = (config.wake_command as string | null | undefined) ?? null;
@@ -174,7 +178,7 @@ export class Uptime extends Plugin {
   }
 
   private remote_command(packet: Buffer): string {
-    if (!this.wake_command) return remote_send_command(packet, this.wol_broadcast, this.wol_port);
+    if (!this.wake_command) return remote_send_command(packet, this.wol_broadcast, this.wol_port, MISSING_SENDER);
     return python_format(String(this.wake_command), {
       mac: shell_quote(String(this.mac)),
       hex: packet.toString("hex"),
