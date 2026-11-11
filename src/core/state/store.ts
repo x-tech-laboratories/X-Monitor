@@ -148,7 +148,8 @@ export class StateStore {
 
   // Every series of one plugin, newest first: the metric table.
   collector_metrics(plugin_id: string, limit = 15): MetricRecord[] {
-    const records = (this.by_plugin.get(plugin_id) ?? []).flatMap((series) => series.tail(limit));
+    // Reversed first, so records sharing a millisecond keep newest-first order through the stable sort.
+    const records = (this.by_plugin.get(plugin_id) ?? []).flatMap((series) => series.tail(limit)).reverse();
     records.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
     return limit ? records.slice(0, limit) : records;
   }
@@ -165,7 +166,7 @@ export class StateStore {
 
   // The newest metrics across every series.
   recent_metrics(limit = 20): MetricRecord[] {
-    const records = [...this.metrics.values()].flatMap((series) => series.items);
+    const records = [...this.metrics.values()].flatMap((series) => series.items).reverse();
     records.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
     return limit ? records.slice(0, limit) : records;
   }
@@ -273,7 +274,7 @@ export class StateStore {
     const finished = [...this.jobs.values()].filter((record) => record.plugin_id === plugin_id && record.state !== "running");
     const excess = finished.length - this.buffers.jobs_per_plugin;
     if (excess <= 0) return;
-    finished.sort((a, b) => a.started.getTime() - b.started.getTime());
+    finished.sort((a, b) => a.started.getTime() - b.started.getTime() || a.id - b.id);
     for (const record of finished.slice(0, excess)) {
       this.jobs.delete(record.id);
       this.job_output_buffers.delete(record.id);
@@ -289,7 +290,7 @@ export class StateStore {
     const records = [...this.jobs.values()].filter(
       (record) => (!plugin_id || record.plugin_id === plugin_id) && (!kind || record.kind === kind) && !exclude_kinds.includes(record.kind),
     );
-    records.sort((a, b) => b.started.getTime() - a.started.getTime());
+    records.sort((a, b) => b.started.getTime() - a.started.getTime() || b.id - a.id);
     return records.slice(0, limit).map((record) => job_as_dict(record));
   }
 
@@ -297,7 +298,7 @@ export class StateStore {
     const records = [...this.jobs.values()].filter(
       (record) => record.state === "running" && (!plugin_id || record.plugin_id === plugin_id) && (!with_pid || record.pid !== null),
     );
-    records.sort((a, b) => b.started.getTime() - a.started.getTime());
+    records.sort((a, b) => b.started.getTime() - a.started.getTime() || b.id - a.id);
     return records.map((record) => job_as_dict(record));
   }
 
