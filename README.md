@@ -48,6 +48,12 @@ plugins:
 
 With Nix, `nix run . -- --config config.yaml` runs it and `nix develop` opens a dev shell. To look around without any hosts, `dev/demo/run.sh --sample` starts the dashboard on a made-up fleet.
 
+## Accounts, API and backups
+
+- **Sign in**: the users in the accounts file named by `X_MONITOR_PASSWORD_HASH_FILE` (written by `npm run hash-password`) and the one in config's `auth.username` and `auth.password` are admins, who add viewers and operators on the Users page. Single sign-on comes from `X_MONITOR_OIDC_*`. With no user anywhere, the dashboard stays open as before.
+- **API**: every call the page makes is served at `/api/call/<name>`, described at `/api/openapi.json` and offered as MCP tools at `/api/mcp`, beside the REST routes scripts already use. A script sends a token made on Your account, or one declared in `auth.tokens` (`x-monitor token new`).
+- **Backups**: the state database is backed up daily beside it in `backups/`, at `/api/state-backups` and on the Settings page. History of edits is left out: the database is a log of readings and events that are never edited, so there are no versions to keep.
+
 ## Documentation
 
 - [Configuration](docs/configuration.md): the config file, links, sign-in and API tokens, live reload
