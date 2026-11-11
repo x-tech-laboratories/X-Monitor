@@ -30,7 +30,7 @@
     "@fastify/static": "^10.1.7",
     "@fastify/websocket": "^11.3.5",
     "@modelcontextprotocol/server": "^2.4.0",
-    "@x-tech-laboratories/halon": "^0.14.0",
+    "@x-tech-laboratories/halon": "file:../../../../../../../../home/beatlink/.claude/tmp/claude-1000/-Storage-Files-Projects-X-Tech-Laboratories-X-Monitor/8365cc87-5aad-42bc-b399-ef1eb2cb1a81/scratchpad/halon-0.14.0-x-monitor.tgz",
     "@x-tech-laboratories/x-libs": "file:../../../../../../../../home/beatlink/.claude/tmp/claude-1000/-Storage-Files-Projects-X-Tech-Laboratories-X-Monitor/8365cc87-5aad-42bc-b399-ef1eb2cb1a81/scratchpad/x-libs-0.34.2-x-monitor.tgz",
     "fastify": "^5.12.7",
     "mqtt": "^5.15.0",
