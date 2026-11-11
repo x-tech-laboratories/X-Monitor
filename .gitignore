@@ -222,3 +222,10 @@ __marimo__/
 # Claude Code per-user state
 .claude/settings.local.json
 .claude/worktrees/
+
+# Node
+node_modules
+dist/
+*.tsbuildinfo
+password.hash
+/state/
