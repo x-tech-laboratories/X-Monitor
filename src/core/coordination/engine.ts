@@ -12,7 +12,7 @@
 
 import { dirname } from "node:path";
 
-import { watch_config } from "@x-tech-laboratories/x-libs/server/config_watch";
+import { watch_config } from "@x-tech-laboratories/x-libs/config_watch";
 
 import { AgentConnection } from "../connectors/agent_connector.ts";
 import type { AgentRegistry } from "../connectors/agent_connector.ts";
