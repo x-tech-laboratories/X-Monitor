@@ -208,21 +208,49 @@ export async function build_app(options: AppOptions): Promise<XMonitorApp> {
 
     // ── The page's own routes ────────────────────────────────────────────
 
-    scope.get("/dashboard", async () => methods.get_dashboard());
+    type Monitor = { Params: { monitor_id: string } };
+    type MonitorJob = { Params: { monitor_id: string; job_id: string } };
+    type Body = Record<string, unknown> | undefined;
+    const body_of = (request: FastifyRequest): Record<string, unknown> => {
+      const body = request.body as Body;
+      return typeof body === "object" && body !== null && !Array.isArray(body) ? body : {};
+    };
+    const args_of = (value: unknown): Record<string, unknown> => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
+
+    scope.get("/sidebar", async () => methods.get_sidebar());
     scope.get("/overview", async () => methods.get_overview());
     scope.get("/schedules", async () => methods.list_schedules());
     scope.get("/notifications", async () => methods.get_notifications());
     scope.get("/logs/monitors", async () => methods.list_journal_monitors());
-    scope.get<{ Params: { monitor_id: string } }>("/monitors/:monitor_id/page", async (request, reply) => answer(reply, () => methods.get_monitor_page(request.params.monitor_id)));
-    scope.get<{ Params: { monitor_id: string; job_id: string } }>("/monitors/:monitor_id/jobs/:job_id", async (request, reply) =>
-      answer(reply, () => methods.get_job(request.params.monitor_id, Number(request.params.job_id))));
-    scope.get<{ Params: { monitor_id: string; job_id: string } }>("/monitors/:monitor_id/jobs/:job_id/log", async (request, reply) =>
-      answer(reply, () => methods.get_job_log(request.params.monitor_id, Number(request.params.job_id))));
-    scope.post<{ Params: { monitor_id: string } }>("/monitors/:monitor_id/jobs/cancel", async (request, reply) => answer(reply, () => methods.cancel_job(request.params.monitor_id)));
-    scope.post<{ Params: { monitor_id: string }; Body: { muted?: unknown } }>("/monitors/:monitor_id/mute", async (request, reply) =>
-      answer(reply, () => methods.set_muted(request.params.monitor_id, Boolean(request.body?.muted))));
-    scope.post<{ Params: { monitor_id: string }; Body: { action_id?: unknown; args?: unknown } }>("/monitors/:monitor_id/run", async (request, reply) =>
-      answer(reply, () => methods.run_action(request.params.monitor_id, String(request.body?.action_id ?? ""), (request.body?.args as Record<string, unknown>) ?? {}, caller_of(request, stream))));
+    scope.post("/logs/search", async (request, reply) => {
+      const body = body_of(request);
+      const ids = Array.isArray(body.monitor_ids) ? body.monitor_ids.map(String) : [];
+      return answer(reply, () => methods.search_logs(ids, String(body.since ?? "1h"), Number(body.priority ?? 6), String(body.unit ?? ""), String(body.text ?? ""), Number(body.limit ?? 500)));
+    });
+    scope.get<Monitor>("/monitors/:monitor_id/page", async (request, reply) => answer(reply, () => methods.get_monitor_page(request.params.monitor_id)));
+    scope.post<Monitor>("/monitors/:monitor_id/run", async (request, reply) => {
+      const body = body_of(request);
+      return answer(reply, () => methods.run_action(request.params.monitor_id, String(body.action_id ?? ""), args_of(body.args), body.label === undefined || body.label === null ? null : String(body.label), caller_of(request, stream)));
+    });
+    scope.post<Monitor>("/monitors/:monitor_id/toggle", async (request, reply) => {
+      const body = body_of(request);
+      return answer(reply, () => methods.run_toggle(request.params.monitor_id, String(body.action_id ?? ""), args_of(body.args), Boolean(body.wanted), String(body.label ?? ""), body.row_key ?? null));
+    });
+    scope.post<Monitor>("/monitors/:monitor_id/mute", async (request, reply) => answer(reply, () => methods.set_muted(request.params.monitor_id, Boolean(body_of(request).muted))));
+    scope.post<{ Params: { monitor_id: string; child_id: string } }>("/monitors/:monitor_id/children/:child_id/open", async (request, reply) =>
+      answer(reply, () => methods.set_child_open(request.params.monitor_id, request.params.child_id, Boolean(body_of(request).open))));
+    scope.get<Monitor & { Querystring: { archive?: string; path?: string } }>("/monitors/:monitor_id/browse", async (request, reply) =>
+      answer(reply, () => methods.get_archive_folder(request.params.monitor_id, request.query.archive ?? "", request.query.path ?? "")));
+    scope.post<Monitor>("/monitors/:monitor_id/jobs/cancel", async (request, reply) => answer(reply, () => methods.cancel_job(request.params.monitor_id)));
+    scope.post<Monitor>("/monitors/:monitor_id/jobs/start", async (request, reply) => {
+      const body = body_of(request);
+      return answer(reply, () => methods.start_job(request.params.monitor_id, String(body.action_id ?? ""), body.label === undefined ? null : String(body.label)));
+    });
+    scope.get<MonitorJob & { Querystring: { after?: string } }>("/monitors/:monitor_id/jobs/:job_id/log", async (request, reply) =>
+      answer(reply, () => methods.get_job_log(request.params.monitor_id, Number(request.params.job_id), request.query.after === undefined ? -1 : Number(request.query.after))));
+    scope.post<MonitorJob>("/monitors/:monitor_id/jobs/:job_id/watch", async (request, reply) => answer(reply, () => methods.watch_job(request.params.monitor_id, Number(request.params.job_id))));
+    scope.post<{ Params: { lease: string } }>("/job-watches/:lease/renew", async (request) => methods.renew_job_watch(request.params.lease));
+    scope.delete<{ Params: { lease: string } }>("/job-watches/:lease", async (request) => methods.end_job_watch(request.params.lease));
     scope.put<{ Params: { key: string }; Body: { value?: unknown } }>("/ui-settings/:key", async (request, reply) =>
       answer(reply, () => methods.set_ui_setting(request.params.key, String(request.body?.value ?? ""))));
 

@@ -34,7 +34,7 @@ describe("Poll Now", () => {
     draw();
     fireEvent.click(screen.getByRole("button", { name: "Poll Now" }));
     expect(screen.getByRole("button", { name: "Polling..." })).toBeTruthy();
-    await act(async () => finish(reply({ notice: "Host polled" })));
+    await act(async () => finish({ polled: true }));
     expect(await screen.findByText("Host polled")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Poll Now" })).toBeTruthy();
   });
@@ -56,7 +56,7 @@ describe("a toggle", () => {
     draw({ actions: [toggle(false)] });
     fireEvent.click(screen.getByRole("button", { name: "Start on Boot" }));
     expect(await screen.findByText("Start on Boot: on")).toBeTruthy();
-    expect(mocked.toggle).toHaveBeenCalledWith("host", { name: "Start on Boot", on_action_id: "enable_service", off_action_id: "disable_service", wanted: true });
+    expect(mocked.toggle).toHaveBeenCalledWith("host", { action_id: "enable_service", wanted: true, label: "Start on Boot" });
   });
 
   it("is disabled before the state is known", () => {
@@ -67,7 +67,7 @@ describe("a toggle", () => {
 
 describe("an action button", () => {
   it("runs a normal action and shows its notice", async () => {
-    mocked.run_header_action.mockResolvedValue(reply({ notice: "Rebuild succeeded" }));
+    mocked.run_action.mockResolvedValue(reply({ notice: "Rebuild succeeded" }));
     draw({ actions: [action({})] });
     fireEvent.click(screen.getByRole("button", { name: "Rebuild" }));
     expect(await screen.findByText("Rebuild succeeded")).toBeTruthy();
@@ -79,14 +79,14 @@ describe("an action button", () => {
     expect(await screen.findByText("Rebuild now?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByText("Rebuild now?")).toBeNull());
-    expect(mocked.run_header_action).not.toHaveBeenCalled();
+    expect(mocked.run_action).not.toHaveBeenCalled();
   });
 
   it("is greyed out while disabled and ignores clicks while running", () => {
     draw({ actions: [action({ state: "disabled" }), action({ action_id: "verify", name: "Verify", state: "accent" })] });
     expect((screen.getByRole("button", { name: "Rebuild" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
-    expect(mocked.run_header_action).not.toHaveBeenCalled();
+    expect(mocked.run_action).not.toHaveBeenCalled();
   });
 
   it("is not shown while hidden", () => {
@@ -95,7 +95,7 @@ describe("an action button", () => {
   });
 
   it("opens the live log of a detached job it started", async () => {
-    mocked.run_header_action.mockResolvedValue(reply({ notice: "Sync started", job_id: 9 }));
+    mocked.run_action.mockResolvedValue(reply({ notice: "Sync started", job_id: 9 }));
     mocked.job_log.mockResolvedValue({ id: 9, title: "Sync log", summary: "Started now · running", command: "sync-all", error: null, running: false, lines: [{ seq: 0, stream: "stdout", message: "copied 1", timestamp: "" }] });
     draw({ actions: [action({ action_id: "custom:sync", name: "Sync" })] });
     fireEvent.click(screen.getByRole("button", { name: "Sync" }));

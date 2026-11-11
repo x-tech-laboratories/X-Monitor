@@ -13,8 +13,8 @@ import { CHANGES } from "../../src/core/state/changes.ts";
 import { CronSchedule } from "../../src/core/coordination/schedule.ts";
 import type { XMonitorApp } from "../../src/server/app.ts";
 import { NotificationEngine } from "../../src/server/notifications/index.ts";
-import { resolve_spec } from "../../src/server/spec.ts";
-import { FORMATTERS } from "../../src/shared/ui_registry.ts";
+import { make_plugin } from "../harness.ts";
+import { apply, SpecPlugin } from "../views/helpers.ts";
 import { CONTROL_TOKEN, READ_TOKEN, bearer, fake_engine, fake_monitor, serve, type FakeEngine } from "./fake_server.ts";
 
 let server: XMonitorApp | null = null;
@@ -28,7 +28,7 @@ const open = (engine: FakeEngine, options: Parameters<typeof serve>[1] = {}) => 
 
 // ── The shell and the overview ───────────────────────────────────────────────
 
-describe("the dashboard", () => {
+describe("the sidebar", () => {
   it("shows the tree with statuses, keyed by path, and the kept sidebar settings", async () => {
     const db = new DatabaseManager();
     db.insert_status("nas", "failed");
@@ -36,14 +36,14 @@ describe("the dashboard", () => {
     db.set_setting("drawer_width", "300");
     const nas = fake_monitor("nas");
     const host = fake_monitor("host", { name: "Host", children: [nas], restates_children: true });
-    const storage = fake_monitor("storage", { name: "Storage", children: [nas], restates_children: true, links: { nas: "On host" } });
+    const storage = fake_monitor("storage", { name: "Storage", children: [nas], restates_children: true, links: new Map([["nas", "On host"]]) });
     server = await open(fake_engine([host, storage], db));
-    const body = (await server.app.inject({ url: "/api/dashboard" })).json();
-    expect(body.tree).toEqual([
-      { id: "host", monitor: "host", label: "Host", status: "unavailable", children: [{ id: "host/nas", monitor: "nas", label: "nas", status: "failed" }] },
-      { id: "storage", monitor: "storage", label: "Storage", status: "unavailable", children: [{ id: "storage/nas", monitor: "nas", label: "On host", status: "failed" }] },
+    const body = (await server.app.inject({ url: "/api/sidebar" })).json();
+    expect(body.nodes).toEqual([
+      { id: "host", monitor: "host", label: "Host", state: "unavailable", children: [{ id: "host/nas", monitor: "nas", label: "nas", state: "failed" }] },
+      { id: "storage", monitor: "storage", label: "Storage", state: "unavailable", children: [{ id: "storage/nas", monitor: "nas", label: "On host", state: "failed" }] },
     ]);
-    expect([body.drawer_width, body.tree_expanded, body.tree_accordion, body.notifications_enabled]).toEqual([300, ["host"], false, false]);
+    expect(body.settings).toEqual({ drawer_width: 300, expanded: ["host"], accordion: false });
   });
 
   it("keeps only the page's own settings", async () => {
@@ -79,9 +79,8 @@ describe("the overview", () => {
     expect(body.status_counts).toMatchObject({ online: 1, failed: 1, unavailable: 2 });
     expect(body.type_tiles[0]).toMatchObject({ value: 1 });
     const fleet = body.fleet;
-    expect(fleet.sections).toEqual(["hosts", "strips", "backups", "deploys", "findings"]);
     expect(fleet.hosts[0]).toMatchObject({ id: "host", state: "failed", caption: "4 monitors · 1 failed" });
-    expect(fleet.strips[0]).toMatchObject({ id: "web", host: "Host", metric: "probe_ok", history: [1, 0, 1] });
+    expect(fleet.reachability[0]).toMatchObject({ id: "web", host: "Host", metric: "probe_ok", share_text: "66.7% up" });
     expect(fleet.backups[0]).toMatchObject({ label: "Host · Repo", value_text: "No archive yet", percent: 0, state: "failed" });
     expect(fleet.deploys[0]).toMatchObject({ caption: "gen 42 · drift" });
     expect(fleet.findings[0]).toMatchObject({ vulnerable: 2, text: "2 · 0 · 0 · 5 open ports" });
@@ -108,51 +107,29 @@ describe("the schedules", () => {
 // ── A monitor's page ─────────────────────────────────────────────────────────
 
 describe("a monitor's page", () => {
-  const inline_format = (value: number | null) => `${value} units`;
-  const spec = {
-    cards: {
-      load: { title: "Load", metric: "load", format: FORMATTERS.decimal1, color: { warning: 1, threshold: 2 } },
-      odd: { title: "Odd", metric: "load", format: inline_format },
-      items: { title: "Disks", repeat: { source: "snapshot", item_value: "used", item_color_by: (item: Record<string, unknown>) => (Number(item.used) > 50 ? "failed" : "online") } },
-    },
-    charts: { load: { title: "Load", metric: "load" } },
-    tables: { services: { rows_attr: "service_rows", columns: [{ name: "name", field: "name" }] } },
-    buttons: { header: [{ id: "reset", label: "Reset", visible_if: (plugin: { allow_reset: boolean }) => plugin.allow_reset }] },
-    events: true,
-  };
-
-  it("resolves the spec's functions into names and server rules", () => {
-    const { spec: resolved, rules } = resolve_spec(spec);
-    const cards = (resolved as { cards: Record<string, Record<string, unknown>> }).cards;
-    expect(cards.load!.format).toBe("decimal1");
-    expect(cards.odd!.format).toEqual({ server_rule: "rule0" });
-    expect(rules.map((rule) => rule.applies_to)).toEqual(["value", "item", "plugin"]);
-  });
-
-  it("carries the actions, notification state, resolved spec and every reading the widgets show", async () => {
+  it("carries the header, actions, notification state, dialogs and the widgets with their readings", async () => {
     const db = new DatabaseManager();
-    db.insert_metric("host.lan", "web", "load", 1.5);
-    db.insert_status("web", "warning");
-    db.set_snapshot("web", [{ name: "/", used: 80 }, { name: "/home", used: 10 }]);
-    db.write_event("host.lan", "web", "web", "restarted", "INFO");
-    const plugin = fake_monitor("web", { UI_SPEC: spec, allow_reset: true, service_rows: () => [{ name: "nginx" }] });
+    const plugin = make_plugin(SpecPlugin, {
+      name: "web", id: "web",
+      ui_spec: {
+        layout: [["load"], ["events"]],
+        cards: { load: { title: "Load", metric: "load", format: "decimal1", color: { warning: 1, threshold: 2 } } },
+        events: true,
+        dialogs: { preview: { kind: "read", title: "Preview of {plugin.name}", action_id: "preview" } },
+      },
+    }, db);
+    apply(plugin, { metrics: { load: 1.5 }, status: "warning" });
     const notifications = new NotificationEngine(db, {}, null);
-    notifications.channels = new Map([["desk", { id: "desk", send: async () => {} }]]);
-    notifications.start([plugin]);
-    server = await open(fake_engine([plugin], db), { notifications: () => notifications });
+    notifications.channels = new Map([["desk", { id: "desk", type: "desktop", send: async () => {} }]]);
+    notifications.start([plugin as never]);
+    server = await open(fake_engine([plugin as never], db), { notifications: () => notifications });
     const page = (await server.app.inject({ url: "/api/monitors/web/page" })).json();
-    expect(page).toMatchObject({ id: "web", status: "warning", jobs: null, notifications: { maintenance: null, muted_by: null, muted: false } });
-    expect(page.actions[0]).toMatchObject({ action_id: "restart", state: "normal" });
-    expect(page.data.metrics).toEqual({ load: 1.5 });
-    expect(page.data.histories.load.map((point: { value: number }) => point.value)).toEqual([1.5]);
-    expect(page.data.rules).toEqual({ rule0: "1.5 units", rule2: true });
-    expect(page.data.snapshot.map((item: { __rules: Record<string, unknown> }) => item.__rules.rule1)).toEqual(["failed", "online"]);
-    expect(page.data.attributes.service_rows).toMatchObject([{ name: "nginx" }]);
-    expect(page.data.events[0].message).toBe("restarted");
+    expect(page).toMatchObject({ id: "web", name: "web", mute: { present: true, sending: true }, dialogs: { web: { preview: { title: "Preview of web" } } } });
+    expect(page.body.rows[0].cells[0].content[0]).toEqual({ type: "value", title: "Load", text: "1.5", state: "warning" });
 
-    expect((await server.app.inject({ method: "POST", url: "/api/monitors/web/mute", payload: { muted: true } })).json()).toEqual({ muted: true, muted_by: "web" });
-    expect((await server.app.inject({ url: "/api/monitors/web/page" })).json().notifications.muted).toBe(true);
-    expect((await server.app.inject({ url: "/api/notifications" })).json()).toEqual({ channels: [{ id: "desk", type: "" }], windows: [], muted: [{ id: "web", name: "web" }] });
+    expect((await server.app.inject({ method: "POST", url: "/api/monitors/web/mute", payload: { muted: true } })).json()).toEqual({ muted: true, muted_by: "web", message: "web muted" });
+    expect((await server.app.inject({ url: "/api/monitors/web/page" })).json().mute.sending).toBe(false);
+    expect((await server.app.inject({ url: "/api/notifications" })).json()).toEqual({ channels: [{ id: "desk", type: "desktop" }], windows: [], muted: [{ id: "web", name: "web" }] });
     notifications.stop();
   });
 
@@ -160,8 +137,8 @@ describe("a monitor's page", () => {
     const plugin = fake_monitor("web");
     const engine = fake_engine([plugin]);
     server = await open(engine);
-    const ran = await server.app.inject({ method: "POST", url: "/api/monitors/web/run", headers: { "x-client-id": "page-1" }, payload: { action_id: "save", args: { content: "x" } } });
-    expect(ran.json()).toEqual({ success: true, content: "restarted", job_id: null });
+    const ran = await server.app.inject({ method: "POST", url: "/api/monitors/web/run", headers: { "x-client-id": "page-1" }, payload: { action_id: "save", args: { content: "x" }, label: "Save" } });
+    expect(ran.json()).toEqual({ success: true, content: "restarted", notice: "restarted", tone: "positive", job_id: null });
     expect(plugin.actions).toEqual([["save", { content: "x" }]]);
     expect(engine.applied).toEqual([]);
   });
@@ -177,14 +154,11 @@ describe("the logs search", () => {
     const engine = fake_engine([fake_monitor("a", { config: { type: "journal" }, max_entries: 200 }), fake_monitor("b", { config: { type: "journal" } })]);
     engine.dispatch_answer = (plugin_id) => (plugin_id === "a" ? [true, { entries: JSON.stringify([{ epoch: 1, message: "hi" }]) }] : [false, { content: "journalctl failed" }]);
     server = await open(engine);
-    expect((await server.app.inject({ url: "/api/logs/monitors" })).json()).toEqual([
-      { id: "a", name: "a", target: "host.lan", max_entries: 200 }, { id: "b", name: "b", target: "host.lan", max_entries: 500 },
-    ]);
-    const found = (await server.app.inject({ method: "POST", url: "/api/call/search_logs", payload: { monitor_ids: ["a", "b"], since: "6h", priority: 4 } })).json();
-    expect(found).toEqual([
-      { monitor_id: "a", host: "host.lan", error: null, entries: [{ epoch: 1, message: "hi" }] },
-      { monitor_id: "b", host: "host.lan", error: "journalctl failed", entries: [] },
-    ]);
+    expect((await server.app.inject({ url: "/api/logs/monitors" })).json()).toEqual({ monitors: [{ id: "a", target: "host.lan" }, { id: "b", target: "host.lan" }], default_limit: 500 });
+    const found = (await server.app.inject({ method: "POST", url: "/api/logs/search", payload: { monitor_ids: ["a", "b"], since: "6h", priority: 4 } })).json();
+    expect(found.summary).toBe("1 entry from 1 host. Not searched: host.lan (journalctl failed)");
+    expect(found.rows.map((row: { message: string }) => row.message)).toEqual(["hi"]);
+    expect((await server.app.inject({ method: "POST", url: "/api/call/search_logs", payload: { monitor_ids: ["a"], since: "1y" } })).statusCode).toBe(400);
     expect(engine.dispatched[0]).toEqual(["a", "query_logs", { since: "6h", priority: 4, unit: "", text: "", limit: 500 }]);
   });
 });

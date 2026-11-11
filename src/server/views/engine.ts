@@ -12,9 +12,15 @@ export interface MaintenanceWindowLike {
   describe(): string;
 }
 
+// A channel as the notifications dialog names it: its type, under either spelling.
+export interface ChannelLike {
+  type?: string;
+  TYPE?: string;
+}
+
 // The notification manager the mute toggle and the notifications dialog use.
 export interface NotificationsLike {
-  readonly channels: Record<string, { TYPE: string }> | Map<string, { TYPE: string }>;
+  readonly channels: Record<string, ChannelLike> | Map<string, ChannelLike>;
   readonly windows: readonly MaintenanceWindowLike[];
   maintenance_for(plugin_id: string): string | null;
   muted_by(plugin_id: string): string | null;

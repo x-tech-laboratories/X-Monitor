@@ -10,9 +10,17 @@ import type { ActionReply, MonitorPageView } from "../shared/page_view.ts";
 import type { Status } from "../shared/status.ts";
 import type { StripState } from "../shared/charts.ts";
 
-export const api = create_api({ open_paths: ["/api/login"] });
+// The change feed's client id, sent with every call, so a change the page makes is not audited as a script's.
+let feed_client_id = (): string => "";
+
+export function use_feed_client_id(read: () => string): void {
+  feed_client_id = read;
+}
+
+export const api = create_api({ open_paths: ["/api/login"], headers: (): Record<string, string> => (feed_client_id() ? { "x-client-id": feed_client_id() } : {}) });
 export const accounts = create_accounts_client();
-export const backups = backup_client(api);
+// The state database's backups; /api/backups is the backup monitors' list.
+export const backups = backup_client(api, "/api/state-backups");
 
 // Bumped whenever the server says something changed, so every open view loads again.
 export const changes = create_watch();
@@ -129,12 +137,6 @@ export interface NotificationsView {
   muted: { id: string; name: string }[];
 }
 
-export interface LogLevelsView {
-  levels: Record<string, string>;
-  known: string[];
-  level_names: string[];
-}
-
 export interface JobLog {
   id: number;
   title: string;
@@ -150,40 +152,42 @@ export interface BrowseFolder {
   rows: { name: string; path: string; dir: boolean; size: string; size_bytes: number | null; mtime: string }[];
 }
 
-export interface Message {
-  ok: boolean;
-  message: string;
-  tone?: "positive" | "warning" | "negative";
-}
-
 // ── Calls ────────────────────────────────────────────────────────────────────
+
+// What a toggle or cell toggle sends.
+export interface ToggleRequest {
+  action_id: string;
+  args?: Record<string, unknown>;
+  wanted: boolean;
+  label: string;
+  row_key?: unknown;
+}
 
 export const calls = {
   sidebar: () => api<SidebarView>("/api/sidebar"),
-  save_sidebar: (changes_made: Partial<SidebarSettings>) => api<void>("/api/sidebar", "PUT", changes_made),
+  save_ui_setting: (key: string, value: string) => api<void>(`/api/ui-settings/${encoded(key)}`, "PUT", { value }),
   overview: () => api<OverviewView>("/api/overview"),
   monitor: (id: string) => api<MonitorPageView>(`/api/monitors/${encoded(id)}/page`),
-  poll: (id: string) => api<ActionReply>(`/api/monitors/${encoded(id)}/poll`, "POST"),
-  run_action: (id: string, action_id: string, args: Record<string, unknown>, label: string) => api<ActionReply>(`/api/monitors/${encoded(id)}/actions/${encoded(action_id)}`, "POST", { args, label }),
-  run_header_action: (id: string, action_id: string) => api<ActionReply>(`/api/monitors/${encoded(id)}/header-actions/${encoded(action_id)}`, "POST"),
-  toggle: (id: string, body: { name: string; on_action_id: string; off_action_id: string; wanted: boolean }) => api<ActionReply>(`/api/monitors/${encoded(id)}/toggle`, "POST", body),
-  cell_toggle: (id: string, body: { column_label: string; row_key: unknown; action_id: string; args: Record<string, unknown>; wanted: boolean }) => api<ActionReply>(`/api/monitors/${encoded(id)}/cell-toggle`, "POST", body),
-  cancel: (id: string) => api<ActionReply>(`/api/monitors/${encoded(id)}/cancel`, "POST"),
+  poll: (id: string) => api<{ polled: boolean }>(`/api/monitors/${encoded(id)}/poll`, "POST"),
+  run_action: (id: string, action_id: string, args: Record<string, unknown>, label: string) => api<ActionReply>(`/api/monitors/${encoded(id)}/run`, "POST", { action_id, args, label }),
+  toggle: (id: string, body: ToggleRequest) => api<ActionReply>(`/api/monitors/${encoded(id)}/toggle`, "POST", body),
+  cancel: (id: string) => api<ActionReply>(`/api/monitors/${encoded(id)}/jobs/cancel`, "POST"),
   start_job: (id: string, action_id: string, label: string) => api<ActionReply>(`/api/monitors/${encoded(id)}/jobs/start`, "POST", { action_id, label }),
   job_log: (id: string, job_id: number, after: number) => api<JobLog>(`/api/monitors/${encoded(id)}/jobs/${job_id}/log?after=${after}`),
   watch_job: (id: string, job_id: number) => api<{ lease: string | null }>(`/api/monitors/${encoded(id)}/jobs/${job_id}/watch`, "POST"),
   renew_watch: (lease: string) => api<{ ok: boolean }>(`/api/job-watches/${encoded(lease)}/renew`, "POST"),
-  end_watch: (lease: string) => api<void>(`/api/job-watches/${encoded(lease)}`, "DELETE"),
-  open_child: (id: string, child_id: string, open: boolean) => api<void>(`/api/monitors/${encoded(id)}/children/${encoded(child_id)}/open`, "POST", { open }),
+  end_watch: (lease: string) => api<{ ok: boolean }>(`/api/job-watches/${encoded(lease)}`, "DELETE"),
+  open_child: (id: string, child_id: string, open: boolean) => api<{ open: boolean }>(`/api/monitors/${encoded(id)}/children/${encoded(child_id)}/open`, "POST", { open }),
   browse: (id: string, archive: string, path: string) => api<BrowseFolder>(`/api/monitors/${encoded(id)}/browse?archive=${encoded(archive)}&path=${encoded(path)}`),
   mute: (id: string, muted: boolean) => api<{ message: string }>(`/api/monitors/${encoded(id)}/mute`, "POST", { muted }),
-  events: (filter: { level: string; target: string; search: string }) => api<{ lede: string; rows: EventRow[] }>(`/api/event-log?level=${encoded(filter.level)}&target=${encoded(filter.target)}&search=${encoded(filter.search)}`),
+  // Python's REST event log, which the Events page reads.
+  events: (filter: { level: string; target: string; search: string }) => api<EventRow[]>(`/api/events?limit=500&level=${encoded(filter.level)}&target=${encoded(filter.target)}&search=${encoded(filter.search)}`),
   schedules: () => api<ScheduleRow[]>("/api/schedules"),
-  logs: () => api<LogsView>("/api/logs"),
+  logs: () => api<LogsView>("/api/logs/monitors"),
   search_logs: (body: { monitor_ids: string[] | null; since: string; priority: number; unit: string; text: string; limit: number }) => api<{ rows: EntryRow[]; summary: string }>("/api/logs/search", "POST", body),
   notifications: () => api<NotificationsView>("/api/notifications"),
-  send_test: (channel_id: string) => api<Message>(`/api/notifications/test/${encoded(channel_id)}`, "POST"),
-  log_levels: () => api<LogLevelsView>("/api/system/log-levels"),
-  set_log_level: (logger: string, level: string | null) => api<Message>("/api/system/log-levels", "PUT", { logger, level }),
-  reload: () => api<Message>("/api/system/reload", "POST"),
+  send_test: (channel_id: string) => api<{ sent: boolean }>(`/api/notifications/${encoded(channel_id)}/test`, "POST"),
+  log_levels: () => api<{ levels: Record<string, string>; loggers: string[] }>("/api/log-levels"),
+  set_log_level: (logger: string, level: string | null) => api<{ levels: Record<string, string> }>("/api/log-levels", "POST", { logger, level }),
+  reload: () => api<{ ok: boolean; summary: string; restart_required?: string[] }>("/api/config/reload", "POST"),
 };

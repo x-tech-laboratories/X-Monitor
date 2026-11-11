@@ -42,7 +42,7 @@ export function EventsView() {
           {(found) => (
             <DataTable
               caption="Events"
-              rows={filter_rows(found.rows, term, ["timestamp", "level", "target", "message"])}
+              rows={filter_rows(found, term, ["timestamp", "level", "target", "message"])}
               row_key={(row) => `${row.timestamp}|${row.target}|${row.message}`}
               columns={[
                 { label: "Time", sort: (row) => row.timestamp, cell: (row) => row.timestamp },
@@ -99,10 +99,11 @@ function NotificationsDialog({ on_close }: { on_close: () => void }) {
   const view = use_resource(() => calls.notifications(), [], live);
   const send_test = async (channel_id: string) => {
     try {
-      const answer = await calls.send_test(channel_id);
-      toast(answer.message, { tone: answer.ok ? "good" : "bad" });
+      await calls.send_test(channel_id);
+      toast(`Test sent to ${channel_id}`, { tone: "good" });
     } catch (error) {
-      notify_error(error);
+      // A failed test is the answer the operator asked for, so it is shown in full.
+      toast(`Test to ${channel_id} failed: ${error instanceof Error ? error.message : String(error)}`, { tone: "bad" });
     }
   };
   const unmute = async (id: string, name: string) => {
@@ -167,14 +168,16 @@ export function open_notifications(): void {
 
 const ROOT = "root";
 
+const LEVEL_NAMES = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
+
 function LogLevelsDialog({ on_close }: { on_close: () => void }) {
   const view = use_resource(() => calls.log_levels(), []);
   const [logger, set_logger] = useState(ROOT);
   const [level, set_level] = useState("DEBUG");
   const apply = async (name: string, chosen: string | null) => {
     try {
-      const answer = await calls.set_log_level(name, chosen);
-      toast(answer.message, { tone: answer.ok ? "good" : "bad" });
+      await calls.set_log_level(name, chosen);
+      toast(`${name || ROOT} is now ${chosen || "inherited"}`, { tone: "good" });
     } catch (error) {
       notify_error(error);
     }
@@ -199,9 +202,9 @@ function LogLevelsDialog({ on_close }: { on_close: () => void }) {
               <label className="field">
                 <span className="field-label">Logger</span>
                 <input type="text" list="known-loggers" value={logger} onChange={(event) => set_logger(event.currentTarget.value)} />
-                <datalist id="known-loggers">{found.known.map((name) => <option key={name} value={name} />)}</datalist>
+                <datalist id="known-loggers">{[ROOT, ...found.loggers].map((name) => <option key={name} value={name} />)}</datalist>
               </label>
-              <Select label="Level" options={found.level_names.map((name): [string, string] => [name, name])} value={level} on_change={set_level} />
+              <Select label="Level" options={LEVEL_NAMES.map((name): [string, string] => [name, name])} value={level} on_change={set_level} />
               <button type="button" className="flat" onClick={() => void apply(logger, level)}>Apply</button>
             </div>
           </>
@@ -219,9 +222,10 @@ export function open_log_levels(): void {
 export async function reload_config(): Promise<void> {
   try {
     const answer = await calls.reload();
-    toast(answer.message, { tone: answer.tone === "positive" ? "good" : answer.tone === "warning" ? "warn" : "bad", sticky: answer.tone === "negative" });
+    toast(answer.summary, { tone: answer.restart_required?.length ? "warn" : "good" });
   } catch (error) {
-    notify_error(error);
+    // A failed reload names why in its summary, which stays until it is read.
+    toast(error instanceof Error ? error.message : String(error), { tone: "bad", sticky: true });
   }
 }
 

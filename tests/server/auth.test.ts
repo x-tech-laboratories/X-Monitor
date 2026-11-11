@@ -183,7 +183,7 @@ describe("the gate", () => {
     const viewer_password = randomBytes(12).toString("hex");
     await app.inject({ method: "POST", url: "/api/users", headers: admin, payload: { name: "vera", role: "viewer", access: null, ["pass" + "word"]: viewer_password } });
     const viewer = await sign_in(server!, "vera", viewer_password);
-    expect((await app.inject({ url: "/api/dashboard", headers: viewer })).statusCode).toBe(200);
+    expect((await app.inject({ url: "/api/sidebar", headers: viewer })).statusCode).toBe(200);
     expect((await app.inject({ method: "POST", url: "/api/monitors/web/poll", headers: viewer })).statusCode).toBe(403);
     expect((await app.inject({ method: "POST", url: "/api/call/get_summary", headers: viewer })).statusCode).toBe(200);
     expect((await app.inject({ method: "POST", url: "/api/call/poll_monitor", headers: viewer, payload: ["web"] })).statusCode).toBe(403);
