@@ -37,7 +37,7 @@ export class Probe extends Plugin {
     return this.command_list;
   }
 
-  override parse(): CollectResult {
+  override parse(_results: CmdResult[] = []): CollectResult {
     this.collections++;
     return new CollectResult({ status: this.status });
   }

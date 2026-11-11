@@ -363,7 +363,7 @@ describe("what starts a reload", () => {
   it("reloads nothing for a touch without an edit", async () => {
     await start([probe("a")]);
     let reloads = 0;
-    engine.reload_config = async (source) => {
+    engine.reload_config = async (source = "api") => {
       reloads++;
       return new ReloadResult(source);
     };
