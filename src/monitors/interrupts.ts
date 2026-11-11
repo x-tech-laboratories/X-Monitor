@@ -5,7 +5,7 @@ import { log_level_of } from "../shared/status.ts";
 import type { CardSpec, ChartSpec } from "../shared/ui_spec.ts";
 import { level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { int_or_null, split_lines, split_words } from "./base/text_parsing.ts";
+import { format_fixed, int_or_null, split_lines, split_words } from "./base/text_parsing.ts";
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ export class Interrupts extends SignalPlugin {
     const status = level_for(irq_rate, this.warning, this.threshold);
     return new CollectResult({
       metrics,
-      logs: [[`${irq_rate.toFixed(0)} interrupts/sec (${limits_text(this.warning, this.threshold)})`, log_level_of(status)]],
+      logs: [[`${format_fixed(irq_rate, 0)} interrupts/sec (${limits_text(this.warning, this.threshold)})`, log_level_of(status)]],
       status,
     });
   }

@@ -5,7 +5,7 @@ import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin, worst_status } from "./base/signal_plugin.ts";
-import { parse_float, split_lines, split_words } from "./base/text_parsing.ts";
+import { format_fixed, parse_float, split_lines, split_words } from "./base/text_parsing.ts";
 
 const unhealthy = new Set(["DEGRADED", "FAULTED", "OFFLINE", "UNAVAIL", "REMOVED"]);
 
@@ -16,7 +16,7 @@ export function sanitize_pool(name: string): string {
 
 // A pool tile's caption: its health word and how full it is.
 export function pool_caption(item: Record<string, unknown>): string {
-  return `${item.health ?? "--"} · ${(Number(item.usage) || 0).toFixed(0)}%`;
+  return `${item.health ?? "--"} · ${format_fixed(Number(item.usage) || 0, 0)}%`;
 }
 
 // ── Monitor ──────────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ export class Zfs extends SignalPlugin {
         status = level_for(usage_pct, this.warning, this.threshold);
       }
       statuses.push(status);
-      logs.push([`Pool ${pool}: ${health}, ${usage_pct.toFixed(0)}% used (${limits_text(this.warning, this.threshold, "%")})`, log_level_of(status)]);
+      logs.push([`Pool ${pool}: ${health}, ${format_fixed(usage_pct, 0)}% used (${limits_text(this.warning, this.threshold, "%")})`, log_level_of(status)]);
     }
 
     if (usage.size === 0) {

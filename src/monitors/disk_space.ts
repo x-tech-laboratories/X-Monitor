@@ -7,6 +7,7 @@ import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { df_command, parse_df } from "./base/disk_usage.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_bytes, level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";
+import { format_fixed } from "./base/text_parsing.ts";
 
 const columns = ["size", "used", "avail", "pcent"];
 
@@ -52,7 +53,7 @@ export class DiskSpace extends Plugin {
     return new CollectResult({
       metrics: { used_pct, size_gb, used_gb, avail_gb },
       logs: [[
-        `${this.path}: ${used_pct.toFixed(1)}% used (${format_bytes(used_gb)} of ${format_bytes(size_gb)}, ${format_bytes(avail_gb)} free, ${limits_text(this.warning, this.threshold, "%")})`,
+        `${this.path}: ${format_fixed(used_pct, 1)}% used (${format_bytes(used_gb)} of ${format_bytes(size_gb)}, ${format_bytes(avail_gb)} free, ${limits_text(this.warning, this.threshold, "%")})`,
         status === "online" ? "INFO" : "WARNING",
       ]],
       status,

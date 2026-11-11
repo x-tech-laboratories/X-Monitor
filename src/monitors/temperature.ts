@@ -5,7 +5,7 @@ import { log_level_of } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { parse_int, split_lines } from "./base/text_parsing.ts";
+import { format_fixed, parse_int, split_lines } from "./base/text_parsing.ts";
 
 const query =
   "for d in /sys/class/thermal/thermal_zone*; do " +
@@ -76,7 +76,7 @@ export class Temperature extends SignalPlugin {
     const status = level_for(max_temp, this.warning, this.threshold);
     return new CollectResult({
       metrics,
-      logs: [[`Max ${max_temp.toFixed(1)}°C across ${sensors.size} zone(s) (${limits_text(this.warning, this.threshold, "°C")})`, log_level_of(status)]],
+      logs: [[`Max ${format_fixed(max_temp, 1)}°C across ${sensors.size} zone(s) (${limits_text(this.warning, this.threshold, "°C")})`, log_level_of(status)]],
       status,
     });
   }

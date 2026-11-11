@@ -13,7 +13,7 @@ import { df_command, parse_df, path_key, PSEUDO_FS_TYPES } from "./base/disk_usa
 import { scan_metric_family } from "./base/metric_family.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_bytes, level_for, limit_from, limits_text, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { split_lines, split_words } from "./base/text_parsing.ts";
+import { format_fixed, split_lines, split_words } from "./base/text_parsing.ts";
 
 export const SNAP = "---SNAP---";
 
@@ -77,7 +77,7 @@ function assess_filesystems(filesystems: SpaceRow[], inode_pct: Map<string, numb
     worst = Math.max(worst, used_pct);
     const level = space_level_for(used_pct);
     accumulator.escalate(level);
-    if (level !== "online") logs.push([`${mountpoint}: ${used_pct.toFixed(0)}% used (${format_bytes(size_bytes, "B")})`, log_level_of(level)]);
+    if (level !== "online") logs.push([`${mountpoint}: ${format_fixed(used_pct, 0)}% used (${format_bytes(size_bytes, "B")})`, log_level_of(level)]);
 
     const inode_used_pct = inode_pct.get(mountpoint);
     if (inode_used_pct !== undefined) {
@@ -86,7 +86,7 @@ function assess_filesystems(filesystems: SpaceRow[], inode_pct: Map<string, numb
       const inode_level = inode_level_for(inode_used_pct);
       accumulator.escalate(inode_level);
       if (inode_level !== "online") {
-        logs.push([`${mountpoint}: ${inode_used_pct.toFixed(0)}% of inodes used — writes may fail with ENOSPC despite free space`, log_level_of(inode_level)]);
+        logs.push([`${mountpoint}: ${format_fixed(inode_used_pct, 0)}% of inodes used — writes may fail with ENOSPC despite free space`, log_level_of(inode_level)]);
       }
     }
 
@@ -156,8 +156,8 @@ export class Filesystems extends Plugin {
     metrics.worst_inodes_pct = worst_inode;
     metrics.readonly_count = ro_mounts.length;
 
-    let summary = `${filesystems.length} filesystem(s), worst ${worst.toFixed(0)}% (${limits_text(this.warning, this.threshold, "%")})`;
-    if (inode_pct.size > 0) summary += `, worst inodes ${worst_inode.toFixed(0)}%`;
+    let summary = `${filesystems.length} filesystem(s), worst ${format_fixed(worst, 0)}% (${limits_text(this.warning, this.threshold, "%")})`;
+    if (inode_pct.size > 0) summary += `, worst inodes ${format_fixed(worst_inode, 0)}%`;
     if (ro_mounts.length > 0) summary += `, ${ro_mounts.length} read-only: ${ro_mounts.join(", ")}`;
     logs.push([summary, accumulator.log_level]);
     return new CollectResult({ metrics, logs, status: accumulator.status });
@@ -179,9 +179,9 @@ export class Filesystems extends Plugin {
 
   readonly item_text = (item: Record<string, unknown>): string => {
     const value = Number(item.used_pct) || 0;
-    let text = `${value.toFixed(0)}%`;
+    let text = `${format_fixed(value, 0)}%`;
     const inode_pct = item.inodes_pct;
-    if (inode_pct !== null && inode_pct !== undefined && this.inode_level_for(Number(inode_pct)) !== "online") text += `  ·  inodes ${Number(inode_pct).toFixed(0)}%`;
+    if (inode_pct !== null && inode_pct !== undefined && this.inode_level_for(Number(inode_pct)) !== "online") text += `  ·  inodes ${format_fixed(Number(inode_pct), 0)}%`;
     return text;
   };
 

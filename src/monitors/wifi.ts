@@ -5,7 +5,7 @@ import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec } from "../shared/ui_spec.ts";
 import { floor_level_for, limit_from, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { parse_float, split_lines, split_words } from "./base/text_parsing.ts";
+import { format_fixed, parse_float, split_lines, split_words } from "./base/text_parsing.ts";
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ export class Wifi extends SignalPlugin {
     const status = this.level_for_quality(quality);
     return new CollectResult({
       metrics: { link_quality: quality, signal_dbm: signal },
-      logs: [[`${interface_name}: link quality ${quality.toFixed(0)}, signal ${signal.toFixed(0)} dBm`, log_level_of(status)]],
+      logs: [[`${interface_name}: link quality ${format_fixed(quality, 0)}, signal ${format_fixed(signal, 0)} dBm`, log_level_of(status)]],
       status,
       settings: { [this.setting_key]: interface_name },
     });

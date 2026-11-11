@@ -6,7 +6,7 @@ import { log_level_of } from "../shared/status.ts";
 import type { CardSpec, ChartSpec } from "../shared/ui_spec.ts";
 import { level_for, limit_from, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { parse_float, parse_int, split_lines, split_words } from "./base/text_parsing.ts";
+import { format_fixed, parse_float, parse_int, split_lines, split_words } from "./base/text_parsing.ts";
 
 // ── Monitor ──────────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ export class Load extends SignalPlugin {
     const status = level_for(load_pct_1m, this.warning, this.threshold);
     return new CollectResult({
       metrics: { load_pct_1m, load_pct_5m, load_pct_15m },
-      logs: [[`LOAD ${load_pct_1m.toFixed(0)}% / ${load_pct_5m.toFixed(0)}% / ${load_pct_15m.toFixed(0)}% (1m/5m/15m, ${cpu_count} cores)`, log_level_of(status)]],
+      logs: [[`LOAD ${format_fixed(load_pct_1m, 0)}% / ${format_fixed(load_pct_5m, 0)}% / ${format_fixed(load_pct_15m, 0)}% (1m/5m/15m, ${cpu_count} cores)`, log_level_of(status)]],
       status,
     });
   }

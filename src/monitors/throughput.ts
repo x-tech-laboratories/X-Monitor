@@ -4,7 +4,7 @@ import { command, CollectResult, type CmdResult, type Command } from "../core/co
 import type { CardSpec, ChartSpec } from "../shared/ui_spec.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { parse_int, split_lines, split_words } from "./base/text_parsing.ts";
+import { format_fixed, parse_int, split_lines, split_words } from "./base/text_parsing.ts";
 
 const virtual_prefixes = ["lo", "veth", "docker", "virbr", "br-", "tun", "tap"];
 
@@ -40,8 +40,8 @@ export function busiest_interface(stats: Map<string, [number, number]>): string 
 }
 
 export function format_rate(kbps: number): string {
-  if (kbps >= 1024) return `${(kbps / 1024).toFixed(1)} MB/s`;
-  return `${kbps.toFixed(1)} KB/s`;
+  if (kbps >= 1024) return `${format_fixed((kbps / 1024), 1)} MB/s`;
+  return `${format_fixed(kbps, 1)} KB/s`;
 }
 
 // ── Monitor ──────────────────────────────────────────────────────────────────
