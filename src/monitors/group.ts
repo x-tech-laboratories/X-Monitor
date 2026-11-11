@@ -5,6 +5,8 @@
 // statuses. Config: aggregate, layout (compose individual descendant widgets into the group's own grid) plus the
 // grid_min_width default and the per-child grid_* sizing keys; without a layout it shows one collapsible card per child.
 
+import { int_or_null } from "@x-tech-laboratories/x-libs/python_text";
+
 import { CollectResult, type Result } from "../core/connectors/types.ts";
 import { create_logger_for } from "../core/logging.ts";
 import { best_status, log_level_of, status_of, worst_status, type Status } from "../shared/status.ts";
@@ -12,7 +14,6 @@ import type { LayoutCell, LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { child_cards_view, child_label, iter_monitors, split_item, type ChildCardsView } from "./base/child_cards.ts";
 import { Plugin, type CustomView } from "./base/plugin_base.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
-import { int_or_null } from "./base/text_parsing.ts";
 
 const log = create_logger_for("x_monitor.plugins.group");
 

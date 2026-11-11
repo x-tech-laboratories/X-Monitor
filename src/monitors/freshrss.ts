@@ -9,12 +9,13 @@
 
 import { createHash } from "node:crypto";
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { CollectResult, http_request, type HttpResult, type Request, type Result } from "../core/connectors/types.ts";
 import { register_formatter } from "../shared/ui_registry.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { level_for, limit_from, resolve_secret, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { py_str_repr } from "./base/python_text.ts";
 
 type Json = Record<string, unknown>;
 
@@ -33,10 +34,10 @@ export function parse_response(stdout: string): Json {
   try {
     data = JSON.parse(stdout);
   } catch (error) {
-    throw new Error(`Fever API response was not JSON (${(error as Error).message}): ${py_str_repr(stdout.slice(0, 200))}`);
+    throw new Error(`Fever API response was not JSON (${(error as Error).message}): ${python_repr(stdout.slice(0, 200))}`);
   }
   if (typeof data !== "object" || data === null || Array.isArray(data) || !("auth" in data)) {
-    throw new Error(`response missing 'auth': ${py_str_repr(stdout.slice(0, 200))}`);
+    throw new Error(`response missing 'auth': ${python_repr(stdout.slice(0, 200))}`);
   }
   if ((data as Json).auth !== 1) throw new FeverAuthError("Fever API rejected the credentials (check username / api_password_command)");
   return data as Json;

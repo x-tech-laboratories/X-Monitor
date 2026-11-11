@@ -2,9 +2,10 @@
 // (a resolve inside its io_call): the record-type reading, the text each answer is compared as, the message a failed
 // lookup reports, and the resolver and error mapping the DNS connector uses too.
 
+import { python_float_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { build_resolver, resolve_with, type ResolverLike } from "../../core/connectors/dns_connector.ts";
 import { type DnsAnswer, type DnsQuery, type DnsRecordValue, type DnsResult } from "../../core/connectors/types.ts";
-import { py_float } from "./python_text.ts";
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ export function failure_message(result: DnsResult, query: DnsQuery): string | nu
     case "no_answer":
       return `${query.domain} has no ${query.record_type} record`;
     case "timeout":
-      return `Query for ${query.domain} (${query.record_type}) timed out after ${py_float(query.timeout)}s`;
+      return `Query for ${query.domain} (${query.record_type}) timed out after ${python_float_repr(query.timeout)}s`;
     case "dns_error":
       return `DNS query failed: ${result.error}`;
     default:

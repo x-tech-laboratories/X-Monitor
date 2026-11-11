@@ -2,12 +2,13 @@
 // since a burst of short-lived sockets (a port scan, a busy client) is normal; a table that could not be read is
 // unavailable.
 
+import { split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { log_level_of } from "../shared/status.ts";
 import type { CardSpec, ChartSpec } from "../shared/ui_spec.ts";
 import { level_for, limit_from, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { split_lines, split_words } from "./base/text_parsing.ts";
 
 const tcp_states: Record<string, string> = {
   "01": "ESTABLISHED",

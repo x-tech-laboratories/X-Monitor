@@ -4,12 +4,13 @@
 // (ledctl or beep) and identify_device. A control surface rather than a health check: it is online whenever the host
 // answers, and a host lacking one of the tools just shows that control as unavailable.
 
+import { partition, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { action_plan, command, CollectResult, CONNECT_FAILED, type ActionOutcome, type ActionPlanResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import type { ButtonSpec, LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
-import { partition, split_lines, split_words } from "./base/text_parsing.ts";
 
 export const ACTIONS = ["reboot", "shutdown", "suspend", "power_profile", "identify"];
 

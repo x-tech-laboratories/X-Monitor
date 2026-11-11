@@ -1,12 +1,13 @@
 // Disk read/write throughput, sampled from /proc/diskstats. It has no thresholds; a sample that could not be read, or a
 // device that is not in it, is unavailable.
 
+import { format_fixed, parse_int, partition, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import type { CardSpec, ChartSpec } from "../shared/ui_spec.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { format_fixed, parse_int, partition, split_lines, split_words } from "./base/text_parsing.ts";
 
 const sector_bytes = 512;
 const virtual_prefixes = ["loop", "ram", "dm-", "sr", "fd", "md"];

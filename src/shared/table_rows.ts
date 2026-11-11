@@ -1,7 +1,7 @@
+import { python_str } from "@x-tech-laboratories/x-libs/python_text";
 // Rows the way every dashboard table orders, filters and keys them: by several columns at once, on a typed term, and as
 // a tree, the same on the server building a view and in the page showing it.
 
-import { python_str } from "./python_text.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

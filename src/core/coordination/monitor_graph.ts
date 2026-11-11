@@ -2,8 +2,9 @@
 // group its config nests it in, and any other group can also hold it through a link, a `ref:` entry naming its id, so
 // one monitor can sit at several points of the tree. A link may carry its own `name`, which labels that edge only.
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { create_logger_for } from "../logging.ts";
-import { python_repr } from "../python.ts";
 
 const log = create_logger_for("x_monitor.core.coordination.monitor_graph");
 

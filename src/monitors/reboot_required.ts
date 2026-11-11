@@ -3,13 +3,14 @@
 // initrd, modules and systemd, and on any other host a running kernel whose module directory is gone. A reboot any
 // check asks for is reboot_status (warning by default); a host where no check applies is unavailable.
 
+import { partition, split_lines } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, TableSpec } from "../shared/ui_spec.ts";
 import { boot_parts_script, changed_parts, reboot_required } from "./base/nixos_boot.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { partition, split_lines } from "./base/text_parsing.ts";
 
 const severities: readonly string[] = ["online", "warning", "failed"];
 

@@ -5,12 +5,13 @@
 // privacy addresses rotate by design and are left out of that comparison. Config: include, exclude, include_loopback,
 // expect_up.
 
+import { fnmatch, int_or_null, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, TableSpec } from "../shared/ui_spec.ts";
 import { SCRIPT_SEP, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { fnmatch, int_or_null, split_lines, split_words } from "./base/text_parsing.ts";
 
 // The kernel's ARPHRD_LOOPBACK link type, as /sys/class/net/<if>/type reports it.
 const loopback_type = "772";

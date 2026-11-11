@@ -7,8 +7,10 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { parse as parse_yaml } from "yaml";
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { create_logger_for } from "../logging.ts";
-import { close_matches, python_float, python_int, python_repr, python_type_name } from "../python.ts";
+import { close_matches, python_float, python_int, python_type_name } from "../python.ts";
 import { default_buffer_sizes, type BufferSizes } from "../state/store.ts";
 import type {
   AgentSettings, AuthSettings, DatabaseSettings, ExporterSettings, NotificationSettings, PluginConfig, SSHConfig, ThemeSettings, XMonitorConfig,

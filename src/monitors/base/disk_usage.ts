@@ -2,9 +2,10 @@
 // their output: one df builder and parser for any --output column list, one du builder and parser, and the metric key
 // a path is stored under.
 
+import { parse_float, parse_int, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import type { CmdResult } from "../../core/connectors/types.ts";
 import { shell_quote } from "../../core/shell.ts";
-import { parse_float, parse_int, split_lines, split_words } from "./text_parsing.ts";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

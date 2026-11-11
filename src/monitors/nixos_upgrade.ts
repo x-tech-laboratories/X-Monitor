@@ -14,6 +14,8 @@
 // job. Config: flake, configuration, eval_agent, eval_interval, retry_interval, eval_timeout, job_poll,
 // max_input_age, drift_status, reboot_status, nix_bin, nix_args.
 
+import { python_dumps } from "@x-tech-laboratories/x-libs/python_text";
+
 import { launch_command, parse_launch, parse_poll, poll_command, stream_stderr, workdir_for } from "../core/connectors/job_commands.ts";
 import { cmd_result, command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import type { JobDict } from "../core/state/records.ts";
@@ -23,7 +25,6 @@ import type { LayoutRow, TableSpec, UISpec } from "../shared/ui_spec.ts";
 import { boot_parts_script, reboot_required as nixos_reboot_required } from "./base/nixos_boot.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_age, format_duration, parse_duration, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { json_dumps } from "./base/python_text.ts";
 
 const default_layout: LayoutRow[] = [
   ["host_card", "drift_card", "reboot_card", "generation_card"],
@@ -525,7 +526,7 @@ export class NixosUpgrade extends Plugin {
     }
 
     metrics[state_metric] = Number(state.evaluated_epoch || 0);
-    metadata[state_metric] = json_dumps(state);
+    metadata[state_metric] = python_dumps(state);
 
     return new CollectResult({
       metrics,
@@ -655,7 +656,7 @@ export class NixosUpgrade extends Plugin {
 function keep_state(result: CollectResult, state: EvalState | null): CollectResult {
   if (state !== null) {
     result.metrics[state_metric] = Number(state.evaluated_epoch || 0);
-    result.metadata[state_metric] = json_dumps(state);
+    result.metadata[state_metric] = python_dumps(state);
   }
   return result;
 }

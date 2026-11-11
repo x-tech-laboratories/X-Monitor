@@ -8,6 +8,8 @@
 // ran. Both modes record whether the unit starts on boot, which drives the Start on Boot toggle; continuous mode also
 // has a Running toggle that starts and stops the unit.
 
+import { int_or_null, partition, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { action_plan, command, CollectResult, type ActionOutcome, type ActionPlanResult, type CmdResult, type Command, type LogEntry, type LogLineEntry } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import type { StreamSpec } from "../shared/agent_protocol.ts";
@@ -17,7 +19,6 @@ import type { ActionButtonSpec, ButtonSpec, DialogSpec, LayoutRow, UISpec } from
 import { make_inline_layout } from "./base/child_cards.ts";
 import { Plugin, type CustomView } from "./base/plugin_base.ts";
 import { format_age, format_duration, parse_duration, type PluginConfig } from "./base/plugin_helpers.ts";
-import { int_or_null, partition, split_lines, split_words } from "./base/text_parsing.ts";
 
 const default_unit_file_write_paths = ["/etc/systemd/system", "/run/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"];
 

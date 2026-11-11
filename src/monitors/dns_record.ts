@@ -3,12 +3,13 @@
 // answer, a query timeout or error, or any answer outside the expected list is failed; a resolving record, matching
 // expected when that is set, is online. This monitor has no warning tier.
 
+import { python_dumps, python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { CollectResult, dns_query, type DnsQuery, type DnsResult, type Request, type Result } from "../core/connectors/types.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { answer_values, failure_message, record_type } from "./base/dns_lookup.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
-import { json_dumps, py_repr } from "./base/python_text.ts";
 
 const default_layout: LayoutRow[] = [
   ["status_card", "type_card", "ttl_card"],
@@ -62,7 +63,7 @@ export class DnsRecord extends Plugin {
 
     const metrics: Record<string, number> = { resolved: 1.0 };
     if (ttl !== null) metrics.ttl = ttl;
-    const settings = { [`dns_record:${this.id}`]: json_dumps(values) };
+    const settings = { [`dns_record:${this.id}`]: python_dumps(values) };
 
     if (this.expected !== null) {
       const unexpected = values.filter((value) => !this.expected!.includes(value));
@@ -70,7 +71,7 @@ export class DnsRecord extends Plugin {
         metrics.matches_expected = 0.0;
         return new CollectResult({
           metrics,
-          logs: [[`${this.domain} (${this.record_type}) resolved to ${py_repr(values)}, expected one of ${py_repr(this.expected)}`, "ERROR"]],
+          logs: [[`${this.domain} (${this.record_type}) resolved to ${python_repr(values)}, expected one of ${python_repr(this.expected)}`, "ERROR"]],
           status: "failed",
           settings,
         });
@@ -80,7 +81,7 @@ export class DnsRecord extends Plugin {
 
     return new CollectResult({
       metrics,
-      logs: [[`${this.domain} (${this.record_type}) -> ${py_repr(values)} (TTL ${ttl ?? "None"})`, "INFO"]],
+      logs: [[`${this.domain} (${this.record_type}) -> ${python_repr(values)} (TTL ${ttl ?? "None"})`, "INFO"]],
       status: "online",
       settings,
     });

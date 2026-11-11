@@ -1,11 +1,12 @@
 // Thermal zone temperatures, read from /sys/class/thermal.
 
+import { format_fixed, parse_int, split_lines } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { log_level_of } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { format_fixed, parse_int, split_lines } from "./base/text_parsing.ts";
 
 const query =
   "for d in /sys/class/thermal/thermal_zone*; do " +

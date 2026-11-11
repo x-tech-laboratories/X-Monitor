@@ -2,9 +2,10 @@
 // monitor's UI_SPEC, custom_view() and readings into these shapes (src/server/views/); the page only draws them, runs
 // the actions they name, and fills each `{row[field]}` from the row a click came from.
 
+import { python_format, python_str } from "@x-tech-laboratories/x-libs/python_text";
+
 import type { SortColumn, TableRow } from "./table_rows.ts";
 import type { StripState } from "./charts.ts";
-import { python_format, python_str } from "./python_text.ts";
 import type { Status } from "./status.ts";
 
 // ── Marks ────────────────────────────────────────────────────────────────────

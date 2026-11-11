@@ -5,12 +5,13 @@
 // against warning and threshold, each optional (reversed when invert is set), and a timeout or a non-matching output is
 // failed. A command that never ran because the host was unreachable is unavailable.
 
+import { parse_float, parse_int, python_float_repr, python_regex } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { floor_level_for, level_for, limit_from, python_g, type PluginConfig } from "./base/plugin_helpers.ts";
-import { parse_float, parse_int, python_float_repr, python_regex } from "./base/text_parsing.ts";
 
 const default_layout_metric: LayoutRow[] = [["host_card", "exit_card", "value_card"], ["chart"], ["events"]];
 const default_layout_plain: LayoutRow[] = [["host_card", "exit_card"], ["events"]];

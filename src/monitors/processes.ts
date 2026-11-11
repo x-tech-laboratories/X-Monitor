@@ -5,12 +5,13 @@
 // CPU share ranks against cpu_warning for warning and cpu_threshold for failed, each optional; with neither the monitor
 // only reports. A failed or unparseable collection measured nothing and is unavailable.
 
+import { format_fixed, parse_float, parse_int, round_half_even, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { action_plan, command, CollectResult, type ActionOutcome, type ActionPlanResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import type { LayoutRow, TableSpec, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { level_for, limit_from, type PluginConfig } from "./base/plugin_helpers.ts";
-import { format_fixed, parse_float, parse_int, round_half_even, split_lines, split_words } from "./base/text_parsing.ts";
 
 const kill_signals: Record<string, string> = { kill_term: "TERM", kill_kill: "KILL" };
 

@@ -5,13 +5,14 @@
 // warning, with rates only judged once min_queries have been answered. A script that exits non-zero or prints
 // unparseable output is unavailable.
 
+import { python_float_repr, python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import { fixed, register_color_rule, register_formatter, threshold_color } from "../shared/ui_registry.ts";
 import type { ColorRule, LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { level_for, limit_from, SCRIPT_SEP, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { py_float, py_str_repr } from "./base/python_text.ts";
 
 export { SCRIPT_SEP };
 
@@ -57,7 +58,7 @@ export function resolved_ok(query_output: string): boolean {
 
 export function split_response(stdout: string): [stats_raw: string, query_raw: string] {
   const at = stdout.indexOf(SCRIPT_SEP);
-  if (at === -1) throw new Error(`unexpected control output: ${py_str_repr(stdout.slice(0, 200))}`);
+  if (at === -1) throw new Error(`unexpected control output: ${python_repr(stdout.slice(0, 200))}`);
   return [stdout.slice(0, at).trim(), stdout.slice(at + SCRIPT_SEP.length).trim()];
 }
 
@@ -84,8 +85,8 @@ function accumulate_resolver_problems(resolved: boolean, total_answered: number,
   if (!resolved) accumulator.escalate("failed", `probe lookup of ${query_domain} did not resolve`);
   if (total_answered >= min_queries) {
     const level = level_for(servfail_rate, servfail_warning, servfail_threshold);
-    if (level === "failed") accumulator.escalate("failed", `SERVFAIL rate ${servfail_rate.toFixed(1)}% >= ${py_float(servfail_threshold!)}%`);
-    else if (level === "warning") accumulator.escalate("warning", `SERVFAIL rate ${servfail_rate.toFixed(1)}% >= ${py_float(servfail_warning!)}%`);
+    if (level === "failed") accumulator.escalate("failed", `SERVFAIL rate ${servfail_rate.toFixed(1)}% >= ${python_float_repr(servfail_threshold!)}%`);
+    else if (level === "warning") accumulator.escalate("warning", `SERVFAIL rate ${servfail_rate.toFixed(1)}% >= ${python_float_repr(servfail_warning!)}%`);
   }
   return accumulator;
 }

@@ -1,8 +1,9 @@
 // CPU utilization, overall and per core, sampled from /proc/stat and ranked against warning and threshold; a sample
 // that could not be read or parsed is unavailable.
 
+import { format_fixed } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
-import { format_fixed } from "../shared/numbers.ts";
 import { log_level_of } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";

@@ -4,12 +4,13 @@
 // unit file may be written back. The monitor is online whenever collection succeeds (failed units are surfaced as
 // counts, not escalated), and a systemctl run that could not complete makes it unavailable.
 
+import { parse_int, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { action_plan, command, CollectResult, type ActionOutcome, type ActionPlanResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import type { ActionButtonSpec, LayoutRow, RowActionSpec, TableSpec, ToggleCellSpec, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import type { PluginConfig } from "./base/plugin_helpers.ts";
-import { parse_int, split_lines, split_words } from "./base/text_parsing.ts";
 
 const default_layout: LayoutRow[] = [["host_card", "count_card"], ["table"], ["events"]];
 

@@ -3,10 +3,11 @@
 // bar or uptime strip), then `metrics`, then `metric`, then the static and attribute forms; `host_card` and
 // `status_card` are reserved names with fixed renderings.
 
+import { python_format } from "@x-tech-laboratories/x-libs/python_text";
+
 import type { Plugin } from "../../monitors/base/plugin_base.ts";
 import { fill_percent, share_percents, strip_states, STRIP_CELLS, up_share_text, CARD_KINDS } from "../../shared/charts.ts";
 import type { GaugeView, ShareView, StripView, WidgetView } from "../../shared/page_view.ts";
-import { python_format } from "../../shared/python_text.ts";
 import { status_of, type Status } from "../../shared/status.ts";
 import type { CardSpec, ChartSpec, ColorRule, Formatter, LayoutRow, UISpec } from "../../shared/ui_spec.ts";
 import { COLOR_RULES, FORMATTERS, ITEM_COLOR_RULES, ITEM_FORMATTERS, resolve, threshold_color } from "../../shared/ui_registry.ts";

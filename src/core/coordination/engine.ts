@@ -14,6 +14,8 @@ import { dirname } from "node:path";
 
 import { watch_config } from "@x-tech-laboratories/x-libs/config_watch";
 
+import { python_dumps, python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { AgentConnection } from "../connectors/agent_connector.ts";
 import type { AgentRegistry } from "../connectors/agent_connector.ts";
 import { ConnectorEngine, ExecContext } from "../connectors/engine.ts";
@@ -25,7 +27,7 @@ import type { EngineLike } from "../contracts.ts";
 import { DatabaseManager } from "../database/database.ts";
 import { open_sqlite_persistence } from "../database/sqlite_persistence.ts";
 import { create_logger_for } from "../logging.ts";
-import { python_dumps, python_repr, deep_equal } from "../python.ts";
+import { deep_equal } from "../python.ts";
 import { ConfigFileManager } from "../settings/config_file.ts";
 import type { ExporterSettings, NotificationSettings, PluginConfig } from "../settings/config_schema.ts";
 import { LogLevels } from "../settings/log_levels.ts";

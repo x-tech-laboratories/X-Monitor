@@ -7,6 +7,8 @@
 // Either block_rate limit may be null to turn that level off, and setting both to 0 or null stops the rate being
 // judged at all: it is then charted but sets neither the status nor the card colour.
 
+import { python_dumps, python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { action_plan, command, CollectResult, type ActionOutcome, type ActionPlanResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import type { Status } from "../shared/status.ts";
@@ -14,7 +16,6 @@ import { fixed } from "../shared/ui_registry.ts";
 import type { ActionButtonSpec, LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { dq, limit_from, parse_duration, password_line, python_g, SCRIPT_SEP, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
-import { json_dumps, py_str_repr } from "./base/python_text.ts";
 
 export { SCRIPT_SEP };
 
@@ -59,7 +60,7 @@ export function build_fetch_script(api_url: string, timeout: number, password_co
 export function build_blocking_script(api_url: string, timeout: number, password_command: string | null, password: string | null, enabled: boolean): string {
   const base = base_of(api_url);
   const [auth_lines, auth] = auth_preamble(base, timeout, password_command, password);
-  const body = json_dumps({ blocking: enabled, timer: null });
+  const body = python_dumps({ blocking: enabled, timer: null });
   return [
     "set -e",
     ...auth_lines,
@@ -79,7 +80,7 @@ function json_or_throw(raw: string, what: string): unknown {
   try {
     return JSON.parse(raw.trim());
   } catch (error) {
-    throw new Error(`${what} was not JSON (${(error as Error).message}): ${py_str_repr(raw.slice(0, 200))}`);
+    throw new Error(`${what} was not JSON (${(error as Error).message}): ${python_repr(raw.slice(0, 200))}`);
   }
 }
 
@@ -89,7 +90,7 @@ function as_object(value: unknown): Json {
 
 export function parse_response(stdout: string): [summary: Json, blocking: Json] {
   const at = stdout.indexOf(SCRIPT_SEP);
-  if (at === -1) throw new Error(`unexpected API response: ${py_str_repr(stdout.slice(0, 200))}`);
+  if (at === -1) throw new Error(`unexpected API response: ${python_repr(stdout.slice(0, 200))}`);
   const summary_raw = stdout.slice(0, at);
   const blocking_raw = stdout.slice(at + SCRIPT_SEP.length);
   const summary = as_object(json_or_throw(summary_raw, "summary"));
@@ -101,7 +102,7 @@ export function parse_response(stdout: string): [summary: Json, blocking: Json] 
       const message = (error as Json).message ?? "unknown error";
       throw new Error(`API returned an error: ${message} (set api_password if auth is required)`);
     }
-    throw new Error(`summary missing 'queries': ${py_str_repr(summary_raw.slice(0, 200))}`);
+    throw new Error(`summary missing 'queries': ${python_repr(summary_raw.slice(0, 200))}`);
   }
   return [summary, blocking];
 }

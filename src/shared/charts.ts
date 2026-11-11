@@ -2,7 +2,8 @@
 // into shares, and how several histories line up on one axis. The server uses it to build a page's view and the page
 // uses it to draw one, so it holds no DOM and no colours beyond Halon token names.
 
-import { format_fixed } from "./numbers.ts";
+import { format_fixed } from "@x-tech-laboratories/x-libs/python_text";
+
 import type { Status } from "./status.ts";
 
 // ── Shared geometry ──────────────────────────────────────────────────────────

@@ -11,11 +11,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { plugin_entries } from "@x-tech-laboratories/x-libs/plugin_folder";
 import { create_plugin_host, type Plugin as HostPlugin, type PluginHost } from "@x-tech-laboratories/x-libs/plugins";
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { builtin_monitor_types } from "../../monitors/index.ts";
 import { Plugin, type PluginClass } from "../../monitors/base/plugin_base.ts";
 import { CollectResult, command } from "../connectors/types.ts";
 import { create_logger_for } from "../logging.ts";
-import { python_repr } from "../python.ts";
 
 const log = create_logger_for("x_monitor.core.coordination.plugin_loader");
 

@@ -2,12 +2,13 @@
 // (default /), warning (percent used, default off) and threshold (percent used, default 90), either set to null to turn
 // that level off; usage at or above a limit is that level, and a df or parse error is unavailable.
 
+import { format_fixed } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { df_command, parse_df } from "./base/disk_usage.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { format_bytes, level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";
-import { format_fixed } from "./base/text_parsing.ts";
 
 const columns = ["size", "used", "avail", "pcent"];
 

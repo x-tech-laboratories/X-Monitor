@@ -4,12 +4,13 @@
 // status: older than stale_warning, or missing from the response, is warning; an unreachable API, a non-200 reply, or a
 // malformed payload (usually a bad token) measured nothing, so it is unavailable.
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { CollectResult, http_request, type HttpResult, type Request, type Result } from "../core/connectors/types.ts";
 import { fixed, register_formatter } from "../shared/ui_registry.ts";
 import type { LayoutRow, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { level_for, limit_from, resolve_secret, type PluginConfig } from "./base/plugin_helpers.ts";
-import { py_str_repr } from "./base/python_text.ts";
 
 type Json = Record<string, unknown>;
 
@@ -20,10 +21,10 @@ export function parse_response(stdout: string): Json {
   try {
     data = JSON.parse(stdout);
   } catch (error) {
-    throw new Error(`metrics response was not JSON (${(error as Error).message}): ${py_str_repr(stdout.slice(0, 200))}`);
+    throw new Error(`metrics response was not JSON (${(error as Error).message}): ${python_repr(stdout.slice(0, 200))}`);
   }
   if (typeof data !== "object" || data === null || Array.isArray(data) || !("statistics" in data)) {
-    throw new Error(`response missing 'statistics' (check the ETAPI token): ${py_str_repr(stdout.slice(0, 200))}`);
+    throw new Error(`response missing 'statistics' (check the ETAPI token): ${python_repr(stdout.slice(0, 200))}`);
   }
   return data as Json;
 }

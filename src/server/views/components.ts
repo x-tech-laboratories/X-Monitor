@@ -2,6 +2,8 @@
 // with row actions and toggle cells, button rows, dialogs and the job panel. Each reads the monitor's stored state
 // through its data view and returns plain JSON for the page to draw; nothing here holds a widget or a timer.
 
+import { python_format, python_str } from "@x-tech-laboratories/x-libs/python_text";
+
 import { metric_family_items } from "../../monitors/base/metric_family.ts";
 import type { Plugin } from "../../monitors/base/plugin_base.ts";
 import { format_duration } from "../../monitors/base/plugin_helpers.ts";
@@ -10,7 +12,6 @@ import type {
   ButtonView, ChartView, ColumnView, DialogFieldView, DialogView, FeedRow, FeedView, JobPanelView, RepeatItemView, RepeatView, RowActionView, TableView, ValueCardView,
 } from "../../shared/page_view.ts";
 import { toggle_position } from "../../shared/page_view.ts";
-import { python_format, python_str } from "../../shared/python_text.ts";
 import { status_of, type Status } from "../../shared/status.ts";
 import { keyed_rows, type TableRow } from "../../shared/table_rows.ts";
 import { iso_local } from "../../shared/time.ts";

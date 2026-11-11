@@ -1,11 +1,12 @@
 // SMART health of every physical disk, via smartctl. A disk reporting FAILED is failed; a disk whose verdict could not
 // be read, a host with no disks, or a script that could not run is unavailable, never healthy.
 
+import { format_fixed, format_grouped, parse_float, partition, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import type { Status } from "../shared/status.ts";
 import type { CardSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { format_fixed, format_grouped, parse_float, partition, split_lines, split_words } from "./base/text_parsing.ts";
 
 // Classifies by positive assertion, so any output other than an explicit PASSED or FAILED verdict reads as a check that
 // did not run; it filters out zram, zvols and loop, md and device-mapper nodes, which lsblk calls disks but have no

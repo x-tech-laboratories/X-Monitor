@@ -7,12 +7,13 @@
 
 import { BlockList, isIP } from "node:net";
 
+import { fnmatch, parse_int, partition, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, TableSpec } from "../shared/ui_spec.ts";
 import { format_duration, SCRIPT_SEP, StatusAccumulator, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin } from "./base/signal_plugin.ts";
-import { fnmatch, parse_int, partition, split_lines, split_words } from "./base/text_parsing.ts";
 
 const severities: readonly string[] = ["online", "warning", "failed"];
 

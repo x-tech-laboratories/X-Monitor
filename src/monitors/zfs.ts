@@ -1,11 +1,12 @@
 // ZFS pool state and capacity, via zpool.
 
+import { format_fixed, parse_float, split_lines, split_words } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, type CmdResult, type Command, type LogEntry } from "../core/connectors/types.ts";
 import { log_level_of, type Status } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";
 import { SignalPlugin, worst_status } from "./base/signal_plugin.ts";
-import { format_fixed, parse_float, split_lines, split_words } from "./base/text_parsing.ts";
 
 const unhealthy = new Set(["DEGRADED", "FAULTED", "OFFLINE", "UNAVAIL", "REMOVED"]);
 

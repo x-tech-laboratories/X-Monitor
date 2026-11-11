@@ -6,13 +6,14 @@
 // body_contains_any (at least one). A reply matching every expectation is online, with latency recorded on the http
 // path; anything else is failed, with no warning tier.
 
+import { python_repr } from "@x-tech-laboratories/x-libs/python_text";
+
 import { command, CollectResult, http_request, type CmdResult, type Command, type HttpResult, type Request, type Result } from "../core/connectors/types.ts";
 import { shell_quote } from "../core/shell.ts";
 import { register_color_rule, register_formatter } from "../shared/ui_registry.ts";
 import type { CardSpec, UISpec } from "../shared/ui_spec.ts";
 import { Plugin } from "./base/plugin_base.ts";
 import { resolve_secret, type PluginConfig } from "./base/plugin_helpers.ts";
-import { py_str_repr } from "./base/python_text.ts";
 
 // ── Matching ─────────────────────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ export class HttpCheck extends Plugin {
     if (body_mismatch(result.stdout, this.expect)) {
       return new CollectResult({
         metrics: { probe_ok: 0.0 },
-        logs: [[`WebSocket reply did not match 'expect': ${py_str_repr(result.stdout.slice(0, 200))}`, "ERROR"]],
+        logs: [[`WebSocket reply did not match 'expect': ${python_repr(result.stdout.slice(0, 200))}`, "ERROR"]],
         status: "failed",
       });
     }

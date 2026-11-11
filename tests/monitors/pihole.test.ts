@@ -5,9 +5,10 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { python_dumps } from "@x-tech-laboratories/x-libs/python_text";
+
 import { cmd_result, type ActionPlan, type CollectResult } from "../../src/core/connectors/types.ts";
 import type { PluginConfig } from "../../src/monitors/base/plugin_helpers.ts";
-import { json_dumps } from "../../src/monitors/base/python_text.ts";
 import { build_blocking_script, build_fetch_script, build_gravity_script, format_age_compact, parse_response, Pihole, rate_is_checked, SCRIPT_SEP } from "../../src/monitors/pihole.ts";
 import type { ColorRule } from "../../src/shared/ui_spec.ts";
 import { make_plugin, run_cycle, store_of } from "../harness.ts";
@@ -43,7 +44,7 @@ function summary({ total = 237819, blocked = 38288, percent = 16.1, domains = 34
 }
 
 function response(body: object | null = null, blocking = "enabled"): string {
-  return `${json_dumps(body ?? summary())}\n${SCRIPT_SEP}\n${json_dumps({ blocking, timer: null })}`;
+  return `${python_dumps(body ?? summary())}\n${SCRIPT_SEP}\n${python_dumps({ blocking, timer: null })}`;
 }
 
 const plugin = (extra: PluginConfig = {}) => make_plugin(Pihole, { ...base_config, ...extra });
@@ -150,7 +151,7 @@ describe("parse response", () => {
   });
 
   it("names the cause of an auth error", () => {
-    const body = json_dumps({ error: { message: "Unauthorized" } });
+    const body = python_dumps({ error: { message: "Unauthorized" } });
     expect(() => parse_response(`${body}\n${SCRIPT_SEP}\n{"blocking": "enabled"}`)).toThrow("api_password");
   });
 });
