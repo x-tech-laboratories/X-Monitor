@@ -1,6 +1,8 @@
 // Text as the Python app wrote it, where a spec carries a Python format template such as "{:.1f} GB" or
 // "Reboot {plugin.target} into {row[entry]}?", and str() of a value is what a cell shows.
 
+import { format_fixed } from "./numbers.ts";
+
 // ── str() ────────────────────────────────────────────────────────────────────
 
 // A value as Python's str() writes it: None, True and False by name, lists and dicts as JSON.
@@ -46,11 +48,11 @@ export function apply_format_spec(value: unknown, spec: string): string {
   const [, fill = " ", align, zero, width, comma, precision, kind] = match;
   let text: string;
   if (typeof value === "number" && kind !== "s") {
-    if (kind === "f" || kind === "F") text = value.toFixed(Number(precision ?? 6));
-    else if (kind === "%") text = `${(value * 100).toFixed(Number(precision ?? 6))}%`;
+    if (kind === "f" || kind === "F") text = format_fixed(value, Number(precision ?? 6));
+    else if (kind === "%") text = `${format_fixed(value * 100, Number(precision ?? 6))}%`;
     else if (kind === "d") text = String(Math.trunc(value));
     else if (kind === "e") text = value.toExponential(Number(precision ?? 6)).replace(/e([+-])(\d)$/, "e$10$2");
-    else if (precision !== undefined) text = value.toFixed(Number(precision));
+    else if (precision !== undefined) text = format_fixed(value, Number(precision));
     else text = String(value);
     if (comma) text = group_thousands(text);
   } else {

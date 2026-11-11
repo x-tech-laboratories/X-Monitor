@@ -1,6 +1,7 @@
 // The named formatters, color rules and predicates a UI_SPEC may refer to, with the shared ones every monitor can use.
 // A monitor registers a name of its own only to publish a rule other monitors may reuse.
 
+import { format_fixed, format_grouped } from "./numbers.ts";
 import type { Status } from "./status.ts";
 import type { ColorRule, EnabledPredicate, Formatter, ItemColorRule, ItemFormatter, RuleRef } from "./ui_spec.ts";
 
@@ -50,8 +51,7 @@ export function resolve<Rule>(registry: Record<string, Rule>, ref: RuleRef<Rule>
 
 // Fixed decimals as Python's format spec writes them, with "," grouping when asked.
 export function fixed(value: number, decimals: number, grouped = false): string {
-  if (!grouped) return value.toFixed(decimals);
-  return value.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals, useGrouping: true });
+  return grouped ? format_grouped(value, decimals) : format_fixed(value, decimals);
 }
 
 // A size read in `unit` as MB, GB or TB, as format_bytes in the monitors' helpers writes it.
@@ -59,9 +59,9 @@ export function format_bytes(value: number, unit: "B" | "KB" | "MB" | "GB" | "TB
   const in_gb: Record<string, number> = { B: 1024 ** -3, KB: 1024 ** -2, MB: 1024 ** -1, GB: 1, TB: 1024 };
   if (!Object.hasOwn(in_gb, unit)) throw new Error(`unknown size unit '${unit}', expected one of B, GB, KB, MB, TB`);
   const gb = value * in_gb[unit];
-  if (gb >= 1024) return `${(gb / 1024).toFixed(1)} TB`;
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  return `${(gb * 1024).toFixed(0)} MB`;
+  if (gb >= 1024) return `${format_fixed(gb / 1024, 1)} TB`;
+  if (gb >= 1) return `${format_fixed(gb, 1)} GB`;
+  return `${format_fixed(gb * 1024, 0)} MB`;
 }
 
 // ── Shared formatters ────────────────────────────────────────────────────────

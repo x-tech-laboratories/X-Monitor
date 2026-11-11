@@ -2,6 +2,7 @@
 // that could not be read or parsed is unavailable.
 
 import { command, CollectResult, type CmdResult, type Command } from "../core/connectors/types.ts";
+import { format_fixed } from "../shared/numbers.ts";
 import { log_level_of } from "../shared/status.ts";
 import type { CardSpec, ChartSpec, LayoutRow } from "../shared/ui_spec.ts";
 import { level_for, limit_from, limits_text, type PluginConfig } from "./base/plugin_helpers.ts";
@@ -116,7 +117,7 @@ export class Cpu extends SignalPlugin {
     if (cores.size > 0) {
       const [busiest_core, core_max] = [...cores].reduce((best, entry) => (entry[1] > best[1] ? entry : best));
       metrics.cpu_core_max_pct = core_max;
-      busiest = `, busiest core ${busiest_core} at ${core_max.toFixed(0)}%`;
+      busiest = `, busiest core ${busiest_core} at ${format_fixed(core_max, 0)}%`;
       if (this.core_rule_enabled()) levels.push(level_for(core_max, this.core_warning, this.core_threshold));
       if (this.per_core_metrics) for (const [index, pct] of cores) metrics[`cpu${index}_pct`] = pct;
     }
@@ -124,7 +125,7 @@ export class Cpu extends SignalPlugin {
     const status = worst_status(levels);
     return new CollectResult({
       metrics,
-      logs: [[`CPU ${total.toFixed(1)}% (${limits_text(this.warning, this.threshold, "%")})${busiest}`, log_level_of(status)]],
+      logs: [[`CPU ${format_fixed(total, 1)}% (${limits_text(this.warning, this.threshold, "%")})${busiest}`, log_level_of(status)]],
       status,
       snapshot: [...cores].map(([index, pct]) => ({ label: String(index), value: pct })),
     });
