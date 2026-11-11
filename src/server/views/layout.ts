@@ -2,18 +2,15 @@
 // cell is made up front, in declared order, so the page follows the layout rather than the order the builder fills it.
 
 import type { CellConfig, CellView, RowView, WidgetView } from "../../shared/page_view.ts";
-import type { LayoutCell, LayoutRow } from "../../shared/ui_spec.ts";
+import { make_inline_layout, split_item } from "../../monitors/base/child_cards.ts";
+import { parse_ref } from "../../monitors/group.ts";
+import type { LayoutRow } from "../../shared/ui_spec.ts";
+
+export { make_inline_layout, split_item };
 
 export type ResolvedRow = [name: string, config: CellConfig][];
 
 // ── Rows ─────────────────────────────────────────────────────────────────────
-
-// One layout entry as its widget name and its property overrides.
-export function split_item(item: LayoutCell): [name: string, overrides: Record<string, unknown>] {
-  if (typeof item === "string") return [item, {}];
-  const { widget, ...rest } = item;
-  return [widget, rest];
-}
 
 function first_set(...values: unknown[]): unknown {
   return values.find((value) => Boolean(value)) ?? null;
@@ -32,15 +29,6 @@ export function resolve_rows(raw_rows: readonly LayoutRow[], widget_overrides: R
         min_width: String(first_set(base.min_width, override.min_width) ?? "280px"),
         title: (first_set(base.title, override.title) as string | null),
       }];
-    }));
-}
-
-// A compact layout for embedding a monitor inside another's page, with the host card and logs hidden.
-export function make_inline_layout(default_layout: readonly LayoutRow[], hidden: readonly string[] = ["host_card", "logs"]): LayoutRow[] {
-  return default_layout.map((row) =>
-    row.map((item) => {
-      const [name, base] = split_item(item);
-      return hidden.includes(name) ? { widget: name, ...base, visible: false } : item;
     }));
 }
 
@@ -111,8 +99,7 @@ export class CompositeLayout {
 
   // Splits a "child_id.widget" ref; a ref with no dot names a whole child.
   static parse(ref: string): [child_id: string, widget: string | null] {
-    const dot = ref.lastIndexOf(".");
-    return dot === -1 ? [ref, null] : [ref.slice(0, dot), ref.slice(dot + 1)];
+    return parse_ref(ref);
   }
 
   // The widget names this grid places for one child, mapped to their cell config.

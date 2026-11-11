@@ -5,7 +5,7 @@ import { DesktopChannel, Message, digest, type AgentDirectory, type DesktopAgent
 import { NotificationEngine, build_channels, monitor_url, type Sender } from "../../src/server/notifications/index.ts";
 import { window } from "../../src/server/notifications/maintenance.ts";
 import { FLAPPING, PROBLEM, RECOVERED, REMINDER, SETTLED, Tracker, make_rule, resolve_rules, type Alert } from "../../src/server/notifications/rules.ts";
-import type { TreeMonitor } from "../../src/server/monitor_tree.ts";
+import type { NotifyingMonitor as TreeMonitor } from "../../src/server/notifications/index.ts";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

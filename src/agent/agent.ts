@@ -11,6 +11,7 @@ import type { AgentSession } from "@x-tech-laboratories/x-libs/agent/session";
 import { shell_runner, type TaskRunner } from "@x-tech-laboratories/x-libs/agent/tasks";
 import { start_agent, type RunningAgent } from "@x-tech-laboratories/x-libs/agent/client";
 
+import { code_version } from "../core/code_version.ts";
 import { create_logger_for } from "../core/logging.ts";
 import { agent_app, ENGINE_CAPABILITY, stream_from_wire, type CapabilitiesMessage } from "../shared/agent_protocol.ts";
 import type { AgentConfig } from "./config.ts";
@@ -75,7 +76,7 @@ export class XMonitorAgent {
   }
 
   // The capabilities message sent once the hello has gone.
-  capabilities(code = ""): CapabilitiesMessage {
+  capabilities(code: string = code_version()): CapabilitiesMessage {
     let caps = this.config.notify_only ? [DISMISS, NOTIFY] : [...CAPABILITIES];
     if (this.runner !== null) caps = [...caps, ENGINE_CAPABILITY].sort();
     return { type: "capabilities", hostname: this.hostname, version: AGENT_VERSION, caps, code };

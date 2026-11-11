@@ -159,7 +159,7 @@ export function SpecTable({ widget }: { widget: TableView }) {
     set_busy((before) => new Set(before).add(busy_key));
     const wanted = !row[`_toggle_${column.name}`];
     try {
-      notify(await calls.cell_toggle(widget.monitor_id, { column_label: column.label || column.name, row_key: row[widget.row_key], action_id: wanted ? toggle.on_action_id : toggle.off_action_id, args: row_params(toggle.params, row), wanted }));
+      notify(await calls.toggle(widget.monitor_id, { label: column.label || column.name, row_key: row[widget.row_key], action_id: wanted ? toggle.on_action_id : toggle.off_action_id, args: row_params(toggle.params, row), wanted }));
     } catch (error) {
       notify_error(error);
     }

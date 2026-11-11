@@ -11,7 +11,7 @@ import {
 } from "../../src/server/views/overview.ts";
 import { schedule_rows, type ScheduledMonitor } from "../../src/server/views/schedules.ts";
 import { branch_ids, build_tree_nodes, failed_branch_ids, monitor_for_key, selected_key, sidebar_settings } from "../../src/server/views/sidebar.ts";
-import type { GraphNode } from "../../src/server/views/engine.ts";
+import type { GraphView as GraphNode } from "../../src/core/coordination/monitor_graph.ts";
 import { STRIP_CELLS } from "../../src/shared/charts.ts";
 import { filter_rows } from "../../src/shared/table_rows.ts";
 

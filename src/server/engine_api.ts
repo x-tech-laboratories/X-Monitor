@@ -6,12 +6,12 @@
 import type { CollectResult, DispatchResult } from "../core/connectors/types.ts";
 import type { DatabaseManager } from "../core/database/database.ts";
 import type { AgentDirectory } from "./notifications/channels.ts";
-import type { TreeMonitor } from "./monitor_tree.ts";
+import type { GraphView } from "../core/coordination/monitor_graph.ts";
 
 // ── Monitors ─────────────────────────────────────────────────────────────────
 
 // A monitor as the server reads it: the Plugin base plus the extras some monitor types add.
-export interface ServerPlugin extends TreeMonitor {
+export interface ServerPlugin extends GraphView {
   id: string;
   name: string;
   target: string;

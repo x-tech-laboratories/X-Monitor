@@ -2,6 +2,7 @@
 // into shares, and how several histories line up on one axis. The server uses it to build a page's view and the page
 // uses it to draw one, so it holds no DOM and no colours beyond Halon token names.
 
+import { format_fixed } from "./numbers.ts";
 import type { Status } from "./status.ts";
 
 // ── Shared geometry ──────────────────────────────────────────────────────────
@@ -84,7 +85,7 @@ export function up_share(states: readonly string[]): number | null {
 // The text beside a strip: its up share, or "--" before any reading.
 export function up_share_text(states: readonly string[]): string {
   const share = up_share(states);
-  return share === null ? "--" : `${share.toFixed(1)}% up`;
+  return share === null ? "--" : `${format_fixed(share, 1)}% up`;
 }
 
 // The colour of one strip cell: its status colour, or the track colour where there is no data.

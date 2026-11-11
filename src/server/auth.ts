@@ -138,6 +138,10 @@ export interface Auth {
 // What an app route needs: reads anyone signed in, state backups and their schedule an admin, any other write an operator.
 export function needed(method: string, path: string): Need {
   if (path.startsWith("/api/ui-settings")) return "any";
+  // Viewing a page's open cards, following a job's log and searching the journals change nothing on a monitor.
+  if (/^\/api\/monitors\/[^/]+\/children\/[^/]+\/open$/.test(path)) return "any";
+  if (/^\/api\/monitors\/[^/]+\/jobs\/\d+\/watch$/.test(path) || path.startsWith("/api/job-watches/")) return "any";
+  if (path === "/api/logs/search") return "any";
   // The MCP route checks each tool against the caller's role itself.
   if (path === "/api/mcp") return "any";
   if (path.startsWith("/api/call/") && is_read_only(path.slice("/api/call/".length))) return "any";

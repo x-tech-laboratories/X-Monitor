@@ -26,7 +26,7 @@ async function run_header_action(view: MonitorPageView, action: HeaderActionView
   }
   if (action.confirm && !(await confirmed(action.confirm))) return;
   try {
-    const reply = await calls.run_header_action(view.id, action.action_id);
+    const reply = await calls.run_action(view.id, action.action_id, {}, action.name);
     notify(reply);
     if (reply.success && reply.job_id !== null) await open_job_log(view.id, reply.job_id);
   } catch (error) {
@@ -53,7 +53,7 @@ function ToggleButton({ view, action, reload }: { view: MonitorPageView; action:
     if (busy || toggle.pressed === null) return;
     set_busy(true);
     try {
-      notify(await calls.toggle(view.id, { name: action.name, on_action_id: toggle.on_action_id, off_action_id: toggle.off_action_id, wanted: !toggle.pressed }));
+      notify(await calls.toggle(view.id, { action_id: toggle.pressed ? toggle.off_action_id : toggle.on_action_id, wanted: !toggle.pressed, label: action.name }));
     } catch (error) {
       notify_error(error);
     } finally {
@@ -87,7 +87,8 @@ function PollButton({ view, reload }: { view: MonitorPageView; reload: () => voi
     if (polling) return;
     set_polling(true);
     try {
-      notify(await calls.poll(view.id));
+      await calls.poll(view.id);
+      notify({ notice: `${view.name} polled`, tone: "positive" });
     } catch (error) {
       notify_error(error);
     } finally {

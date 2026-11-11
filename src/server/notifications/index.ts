@@ -9,7 +9,7 @@ import type { DatabaseManager } from "../../core/database/database.ts";
 import * as changes from "../../core/state/changes.ts";
 import { CHANGES, type ChangeKind } from "../../core/state/changes.ts";
 import { format_duration, parse_duration } from "../../monitors/base/plugin_helpers.ts";
-import { iter_monitors, parent_ids, type TreeMonitor } from "../monitor_tree.ts";
+import { iter_monitors, parent_ids, type GraphView } from "../../core/coordination/monitor_graph.ts";
 import { Channel, DesktopChannel, Message, digest, type AgentDirectory, type ChannelConfig } from "./channels.ts";
 import { NtfyChannel, WebhookChannel } from "./http.ts";
 import { AppriseChannel, SmtpChannel } from "./mail.ts";
@@ -37,7 +37,11 @@ export const CHANNEL_TYPES: Record<string, ChannelClass> = Object.fromEntries(
 );
 
 // The parts of a monitor the engine reads.
-export type NotifyingMonitor = TreeMonitor;
+export interface NotifyingMonitor extends GraphView {
+  readonly children: readonly NotifyingMonitor[];
+  readonly config?: Record<string, unknown>;
+  readonly target?: string;
+}
 
 // What delivers a notification: a configured channel, or a test's stand-in.
 export interface Sender {

@@ -5,34 +5,17 @@
 import { create_logger_for } from "../../core/logging.ts";
 import type { Plugin } from "../../monitors/base/plugin_base.ts";
 import type { BodyView, ChildCardView } from "../../shared/page_view.ts";
+import { expanded, set_expanded } from "../../monitors/base/child_cards.ts";
+import { spec_with_titles, STATUS_WIDGET } from "../../monitors/group.ts";
 import { status_of } from "../../shared/status.ts";
-import type { LayoutRow, UISpec } from "../../shared/ui_spec.ts";
+import type { LayoutRow } from "../../shared/ui_spec.ts";
 import { dialog_views, info_card } from "./components.ts";
-import { child_label, iter_monitors } from "./engine.ts";
+import { child_label, iter_monitors } from "../../core/coordination/monitor_graph.ts";
 import { CompositeLayout } from "./layout.ts";
 import { build_body, type BuildContext } from "./monitor.ts";
 import { build_spec } from "./spec.ts";
 
 const log = create_logger_for("x_monitor.plugins.group");
-
-// The group's own pseudo-widget: a status card for a child that has none of its own.
-export const STATUS_WIDGET = "status";
-
-// ── Titles ───────────────────────────────────────────────────────────────────
-
-// Pure: a copy of a child's UI_SPEC with the group's per-widget title overrides applied.
-export function spec_with_titles(spec: UISpec | null, titles: Record<string, string>): UISpec | null {
-  if (spec === null || Object.keys(titles).length === 0) return spec;
-  const patched: UISpec = { ...spec };
-  for (const key of ["cards", "charts"] as const) {
-    const section = patched[key] as Record<string, { title?: string }> | undefined;
-    if (section && Object.keys(section).length > 0) {
-      (patched as Record<string, unknown>)[key] = Object.fromEntries(Object.entries(section).map(([name, widget]) => [name, name in titles ? { ...widget, title: titles[name] } : widget]));
-    }
-  }
-  if (patched.chart && "chart" in titles) patched.chart = { ...patched.chart, title: titles.chart };
-  return patched;
-}
 
 // ── Composite grid ───────────────────────────────────────────────────────────
 
@@ -74,35 +57,9 @@ export function composite_body(group: Plugin, layout_rows: readonly LayoutRow[],
 
 // ── Child cards ──────────────────────────────────────────────────────────────
 
-// Pure: the flex-cell style of one child card, from its grid_* config keys.
-export function child_cell_style(child_config: Record<string, unknown>, default_min_width: string): string {
-  const col_span = Math.trunc(Number(child_config.grid_col_span ?? 1));
-  const height = child_config.grid_height ?? null;
-  const min_width = String(child_config.grid_min_width ?? default_min_width);
-  let style = `flex: ${col_span} 1 calc(${col_span} * ${min_width}); min-width: ${min_width};`;
-  if (height) style += ` height: ${String(height)}; overflow-y: auto;`;
-  return style;
-}
-
-export function expanded_setting_key(parent: Plugin): string {
-  return `group_expanded_${parent.id}`;
-}
-
-// Which of the parent's child cards are open.
-export function expanded(parent: Plugin): Record<string, boolean> {
-  const raw = parent.data.get_setting(expanded_setting_key(parent));
-  if (!raw) return {};
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, boolean>) : {};
-  } catch {
-    return {};
-  }
-}
-
 // Opens or shuts one child card and keeps the choice.
-export function set_child_open(engine: { set_setting(key: string, value: string): void }, parent: Plugin, child_id: string, open: boolean): void {
-  engine.set_setting(expanded_setting_key(parent), JSON.stringify({ ...expanded(parent), [child_id]: open }));
+export function set_child_open(settings: { set_setting(key: string, value: string): void }, parent: Plugin, child_id: string, open: boolean): void {
+  set_expanded(parent, child_id, open, settings);
 }
 
 // One collapsible card per child, each drawing the child's own page while it is open.

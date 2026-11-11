@@ -17,10 +17,15 @@ import { load_accounts } from "@x-tech-laboratories/x-libs/server/passwords";
 import { sqlite_backups, take_staged_restore } from "@x-tech-laboratories/x-libs/server/sqlite_backups";
 import { parse as parse_yaml } from "yaml";
 
+import { register_plugin_files } from "@x-tech-laboratories/x-libs/server/plugin_files";
+
+import { XMonitorEngine } from "../core/coordination/engine.ts";
 import { create_logger_for } from "../core/logging.ts";
+import { register_agent_endpoint } from "./agent_endpoint.ts";
 import { build_app } from "./app.ts";
 import type { ServerEngine } from "./engine_api.ts";
-import { ServerServices } from "./services.ts";
+import { ExporterEngine } from "./exporters/index.ts";
+import { NotificationEngine } from "./notifications/index.ts";
 import { SCOPES, config_snippet, hash_token, new_token } from "./tokens.ts";
 
 const log = create_logger_for("x_monitor.__main__");
@@ -82,17 +87,6 @@ export function database_path(config_path: string, override: string | undefined)
 
 // ── Server ───────────────────────────────────────────────────────────────────
 
-// The engine is the core's; its module path is held in a variable so this file builds before the core lands it.
-const engine_module = "../core/coordination/engine.ts";
-
-interface EngineClass {
-  new (config_path: string, options: { db_path_override?: string | null; handle_signals?: boolean }): ServerEngine & {
-    setup_modules(): unknown;
-    run(): Promise<void>;
-    shutdown(): void;
-  };
-}
-
 export async function serve(argv: string[]): Promise<void> {
   const config = read_server_config<"config" | "db">({
     program: "x-monitor", summary: "X-Monitor: watches hosts and services and serves its dashboard.", env_prefix: "X_MONITOR", default_port: 8080,
@@ -108,9 +102,17 @@ export async function serve(argv: string[]): Promise<void> {
 
   // A restore picked in Settings waits beside the database and is taken in here, before the engine opens it.
   const restored = take_staged_restore(db_path);
-  const { XMonitorEngine } = (await import(engine_module)) as { XMonitorEngine: EngineClass };
-  const engine = new XMonitorEngine(config_path, { db_path_override: config.values.db ?? null, handle_signals: true });
-  engine.setup_modules();
+  // The engine builds the notifications and exporters through these, and builds them afresh when a reload changes them.
+  const engine = new XMonitorEngine(config_path, {
+    db_path_override: config.values.db ?? null,
+    handle_signals: true,
+    notifications: (db, settings, agents) => new NotificationEngine(db, settings as Record<string, unknown>, agents as never) as never,
+    exporters: (db, settings) => {
+      const exporters = new ExporterEngine(db, settings as Record<string, unknown>);
+      return { start: (monitors) => exporters.start(monitors as never), stop: () => exporters.stop() };
+    },
+  });
+  await engine.setup_modules();
   if (restored) log.info("Restored the state database from the backup picked in Settings");
 
   // The accounts, sessions and page-made tokens live in the state database beside the engine's own tables.
@@ -129,26 +131,29 @@ export async function serve(argv: string[]): Promise<void> {
   const schedule = json_backup_schedule(join(state_folder, "backup-schedule.json"));
   const automatic_backups = keep_backing_up(backups, schedule.get);
 
-  const services = new ServerServices(engine);
   const oidc_settings = oidc_from_environment("X_MONITOR");
   const accounts_file = process.env.X_MONITOR_PASSWORD_HASH_FILE && existsSync(process.env.X_MONITOR_PASSWORD_HASH_FILE) ? load_accounts("X_MONITOR_PASSWORD_HASH_FILE") : new Map<string, string>();
   const version = (JSON.parse(readFileSync(join(import.meta.dirname, "../../package.json"), "utf8")) as { version: string }).version;
+  const server_engine = engine as unknown as ServerEngine;
   const { app } = await build_app({
-    engine, database, auth_settings: engine.config_loader?.auth_settings ?? {}, accounts_file,
-    oidc: oidc_settings === null ? null : new OidcClient(oidc_settings), notifications: () => services.notifications,
+    engine: server_engine, database, auth_settings: engine.config_loader?.auth_settings ?? {}, accounts_file,
+    oidc: oidc_settings === null ? null : new OidcClient(oidc_settings), notifications: () => (engine.notifications instanceof NotificationEngine ? engine.notifications : null),
     backups: { backups, schedule, on_schedule_change: () => void automatic_backups.check() },
     web_folder: config.web_folder, version,
+    extra_routes: async (scope) => {
+      await register_agent_endpoint(scope, engine.connectors.agents);
+      // The page's own plugins, which Settings lists, from the plugins folder beside the config.
+      register_plugin_files(scope, { folder: join(dirname(config_path), "plugins"), prefix: "/plugins", side: "web" });
+    },
   });
 
   app.addHook("onClose", async () => {
     automatic_backups.stop();
-    services.stop();
-    engine.shutdown();
+    await engine.shutdown();
     database.close();
   });
   await app.listen({ host: config.host, port: config.port });
   log.info(`X-Monitor listening on ${config.host}:${config.port}`);
-  services.start();
   await engine.run();
 }
 

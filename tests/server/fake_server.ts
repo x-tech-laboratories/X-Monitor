@@ -21,7 +21,7 @@ export interface FakeMonitor extends ServerPlugin {
 export function fake_monitor(plugin_id: string, fields: Partial<ServerPlugin> & { fail?: boolean } = {}): FakeMonitor {
   const { fail = false, ...rest } = fields;
   const monitor: FakeMonitor = {
-    id: plugin_id, name: plugin_id, target: "host.lan", config: { type: "systemd_service" }, children: [], polls: 0, actions: [],
+    id: plugin_id, name: plugin_id, target: "host.lan", config: { type: "systemd_service" }, children: [], links: new Map(), polls: 0, actions: [],
     get_actions: () => [{ action_id: "restart", name: "Restart" }],
     all_actions: () => [{ action_id: "restart", name: "Restart" }],
     run_cycle: async () => {

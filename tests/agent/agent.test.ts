@@ -249,7 +249,7 @@ function fake_engine() {
     dispatch_action: async (_plugin, action_id) => { log.push(["action", action_id]); return [true, { content: "hello", count: 2 }]; },
     run_cycle_now: async (plugin) => void log.push(["poll", (plugin as { id: string }).id]),
     db: {
-      pending: ({ after }) => outbox.filter(([seq]) => seq > after),
+      pending: (after) => outbox.filter(([seq]) => seq > after),
       acknowledge: (through) => void log.push(["ack", through]),
       trim: () => void log.push("trim"),
       latest_status: () => "online",

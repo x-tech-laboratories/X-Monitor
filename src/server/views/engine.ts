@@ -1,4 +1,4 @@
-// The slice of XMonitorEngine the page-view builders read, with the Python engine's names, plus the monitor-graph walks
+// The slice of XMonitorEngine the page-view builders read, with the Python engine's names, plus the plugin-attribute read
 // they share. A builder takes this rather than the engine class so a test can hand it a stand-in.
 
 import type { DispatchResult } from "../../core/connectors/types.ts";
@@ -12,9 +12,15 @@ export interface MaintenanceWindowLike {
   describe(): string;
 }
 
+// A channel as the notifications dialog names it: its type, under either spelling.
+export interface ChannelLike {
+  type?: string;
+  TYPE?: string;
+}
+
 // The notification manager the mute toggle and the notifications dialog use.
 export interface NotificationsLike {
-  readonly channels: Record<string, { TYPE: string }> | Map<string, { TYPE: string }>;
+  readonly channels: Record<string, ChannelLike> | Map<string, ChannelLike>;
   readonly windows: readonly MaintenanceWindowLike[];
   maintenance_for(plugin_id: string): string | null;
   muted_by(plugin_id: string): string | null;
@@ -46,50 +52,6 @@ export interface ViewEngine {
   known_loggers?(): string[];
   set_log_level?(logger: string, level: string | null, source?: string): void;
   reload_config?(source: string): Promise<ReloadResultLike>;
-}
-
-// ── The monitor graph ────────────────────────────────────────────────────────
-
-// The parts of a monitor the graph walks read.
-export interface GraphNode {
-  id: string;
-  name: string;
-  children: readonly GraphNode[];
-  links?: Map<string, string | null> | Record<string, string | null>;
-  restates_children?: boolean;
-}
-
-// Every monitor reachable from these roots once each, parents before children, in config order.
-export function iter_monitors<Node extends GraphNode>(roots: Iterable<Node>): Node[] {
-  const seen = new Set<Node>();
-  const found: Node[] = [];
-  const walk = (nodes: Iterable<Node>): void => {
-    for (const node of nodes) {
-      if (seen.has(node)) continue;
-      seen.add(node);
-      found.push(node);
-      walk(node.children as Iterable<Node>);
-    }
-  };
-  walk(roots);
-  return found;
-}
-
-// The monitor with this id anywhere in the tree, or null.
-export function find_monitor<Node extends GraphNode>(engine: { plugins: readonly Node[] }, monitor_id: string | null | undefined): Node | null {
-  return iter_monitors(engine.plugins).find((node) => node.id === monitor_id) ?? null;
-}
-
-// The name a child shows under this parent: the link's own label, or the monitor's name.
-export function child_label(parent: GraphNode | null, child: GraphNode): string {
-  const links = parent?.links;
-  const label = links instanceof Map ? links.get(child.id) : links?.[child.id];
-  return label || child.name;
-}
-
-// True when a monitor's status only repeats its children's, as a plain group's does, so it is no monitor of its own.
-export function restates_children(monitor: GraphNode): boolean {
-  return monitor.restates_children === true;
 }
 
 // ── Plugin attributes ────────────────────────────────────────────────────────

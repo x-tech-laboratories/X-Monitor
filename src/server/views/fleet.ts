@@ -5,7 +5,7 @@
 import { format_age } from "../../monitors/base/plugin_helpers.ts";
 import { fill_percent, strip_states, STRIP_CELLS, up_share_text, type StripState } from "../../shared/charts.ts";
 import type { DatabaseManager } from "../../core/database/database.ts";
-import { iter_monitors, restates_children, type GraphNode } from "./engine.ts";
+import { iter_monitors, restates_children, type GraphView as GraphNode } from "../../core/coordination/monitor_graph.ts";
 
 // ── Which monitors feed which section ────────────────────────────────────────
 
@@ -236,7 +236,7 @@ export interface FleetView {
 export function fleet_view(engine: { plugins: readonly FleetMonitor[]; db: Pick<DatabaseManager, "latest_statuses" | "latest_metric" | "metric_history"> }, now: number = Date.now() / 1000): FleetView | null {
   const roots = primary_roots(engine);
   if (roots.length === 0) return null;
-  const types = new Set(iter_monitors(roots).map(monitor_type));
+  const types = new Set([...iter_monitors(roots)].map(monitor_type));
   const sections = new Set<SectionName>(["hosts"]);
   if (types.has("borg")) sections.add("backups");
   if (types.has("nixos_upgrade")) sections.add("deploys");

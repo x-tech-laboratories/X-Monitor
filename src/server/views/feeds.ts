@@ -38,7 +38,7 @@ export function notifications_view(notifications: NotificationsLike | null | und
   const entries = notifications.channels instanceof Map ? [...notifications.channels] : Object.entries(notifications.channels);
   const active = notifications.active_windows();
   return {
-    channels: entries.map(([id, channel]) => ({ id, type: channel.TYPE })),
+    channels: entries.map(([id, channel]) => ({ id, type: channel.type ?? channel.TYPE ?? "" })),
     windows: notifications.windows.map((window) => ({ name: window.name, describe: window.describe(), active: active.includes(window) })),
     muted: [...notifications.muted_monitors()].sort((left, right) => left.name.toLowerCase().localeCompare(right.name.toLowerCase())).map((plugin) => ({ id: plugin.id, name: plugin.name })),
   };

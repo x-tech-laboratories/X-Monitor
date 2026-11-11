@@ -4,7 +4,10 @@
 // pure parts both sides share: cell sizing, the open-card state, the inline layout and the cards' data.
 
 import type { LayoutCell, LayoutRow } from "../../shared/ui_spec.ts";
+import { child_label } from "../../core/coordination/monitor_graph.ts";
 import type { Plugin } from "./plugin_base.ts";
+
+export { child_label, iter_monitors } from "../../core/coordination/monitor_graph.ts";
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -16,25 +19,6 @@ export function child_cell_style(child_config: Record<string, unknown>, default_
   let style = `flex: ${col_span} 1 calc(${col_span} * ${child_min_width}); min-width: ${child_min_width};`;
   if (child_height) style += ` height: ${String(child_height)}; overflow-y: auto;`;
   return style;
-}
-
-// The name a child shows under this parent: the link's own label, or the monitor's name.
-export function child_label(parent: Plugin, child: Plugin): string {
-  return parent.links.get(child.id) || child.name;
-}
-
-// Every monitor reachable from these roots once each, parents before children, in config order.
-export function* iter_monitors(roots: Iterable<Plugin>): Generator<Plugin> {
-  const seen = new Set<Plugin>();
-  function* walk(plugins: Iterable<Plugin>): Generator<Plugin> {
-    for (const plugin of plugins) {
-      if (seen.has(plugin)) continue;
-      seen.add(plugin);
-      yield plugin;
-      yield* walk(plugin.children);
-    }
-  }
-  yield* walk(roots);
 }
 
 // The widget name and property overrides of one layout entry.
@@ -76,6 +60,13 @@ export function expanded(parent: Plugin): Record<string, boolean> {
     expanded_cache.set(parent, cached);
   }
   return cached;
+}
+
+// Sets one child card open or shut and keeps the new state through `settings`, the engine or a store.
+export function set_expanded(parent: Plugin, child_id: string, open: boolean, settings: { set_setting(key: string, value: string): void } = parent.engine!): void {
+  const state = expanded(parent);
+  state[child_id] = open;
+  settings.set_setting(expanded_setting_key(parent), JSON.stringify(state));
 }
 
 // Flips one child card open or shut and keeps the new state as the parent's setting; returns whether it is now open.

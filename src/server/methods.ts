@@ -6,14 +6,16 @@
 import { CollectResult } from "../core/connectors/types.ts";
 import { create_logger_for } from "../core/logging.ts";
 import { is_pushable } from "../core/contracts.ts";
-import { action_id_of } from "../core/coordination/jobs.ts";
 import type { JobsGateway } from "../core/coordination/jobs.ts";
 import type { ServerEngine, ServerPlugin } from "./engine_api.ts";
-import type { JsonValue } from "./json.ts";
-import { find_monitor, iter_monitors, restates_children } from "./monitor_tree.ts";
+import { find_monitor, iter_monitors, restates_children } from "../core/coordination/monitor_graph.ts";
 import type { NotificationEngine } from "./notifications/index.ts";
-import { attribute_names, history_requests, metric_names, read_attribute, resolve_spec, run_rules, to_json, with_item_rules } from "./spec.ts";
-import { action_names, build_overview, build_tree_nodes, read_fleet, schedule_rows, when_text } from "./views.ts";
+import type { Plugin } from "../monitors/base/plugin_base.ts";
+import type { ActionReply } from "../shared/page_view.ts";
+import {
+  browse_folder, cancel_job, job_log_view, JobWatches, logs_view, monitor_page_view, notifications_view, overview_view, run_cell_toggle, run_header_toggle,
+  run_page_action, schedule_rows, search_kwargs, search_logs, set_child_open, sidebar_view, start_job, type NotificationsLike,
+} from "./views/index.ts";
 
 const log = create_logger_for("x_monitor.core.ui.api");
 
@@ -67,7 +69,7 @@ function jobs_of(plugin: ServerPlugin): JobsGateway | null {
 }
 
 function find(context: MethodContext, monitor_id: string): ServerPlugin {
-  const plugin = find_monitor(context.engine.plugins, monitor_id);
+  const plugin = find_monitor(context.engine, monitor_id);
   if (plugin === null) throw new ApiError(404, { error: "not found" });
   return plugin;
 }
@@ -86,6 +88,7 @@ function notifications_or_none(context: MethodContext): NotificationEngine | nul
 export function create_methods(context: MethodContext) {
   const { engine } = context;
   const db = engine.db;
+  const watches = new JobWatches();
 
   const monitor_summary = (plugin: ServerPlugin, statuses: Record<string, string>) => ({
     id: plugin.id, name: plugin.name, type: plugin.config?.type ?? null, target: plugin.target ?? null,
@@ -129,7 +132,7 @@ export function create_methods(context: MethodContext) {
 
     async list_monitors() {
       const statuses = db.latest_statuses();
-      return iter_monitors(engine.plugins).map((plugin) => monitor_summary(plugin, statuses));
+      return [...iter_monitors(engine.plugins)].map((plugin) => monitor_summary(plugin, statuses));
     },
 
     async get_monitor(monitor_id: string) {
@@ -173,45 +176,66 @@ export function create_methods(context: MethodContext) {
       }
     },
 
-    // Any action the monitor's page offers, with the arguments a dialog or row passes; a started job is named.
-    async run_action(monitor_id: string, action_id: string, args: Record<string, unknown> = {}, caller: Caller = { client: null, from_page: false }) {
+    // Any action the monitor's page offers, with the arguments a dialog or row passes, said under `label` in the
+    // notice; a detached job it started is named, so the page opens its log.
+    async run_action(monitor_id: string, action_id: string, args: Record<string, unknown> = {}, label: string | null = null, caller: Caller = { client: null, from_page: false }): Promise<ActionReply> {
       const plugin = find(context, monitor_id);
       if (!caller.from_page) audit(context, plugin, `Action ${JSON.stringify(action_id)} requested through the API${by(caller)}`);
       try {
-        const [success, content] = await plugin.run_action(action_id, args);
-        const job = success ? jobs_of(plugin)?.action_job(action_id) ?? null : null;
-        return { success: Boolean(success), content, job_id: job?.id ?? null };
+        return await run_page_action(as_plugin(plugin), action_id, args ?? {}, label || action_id);
       } catch (error) {
         throw new ApiError(500, { success: false, error: (error as Error).message });
       }
     },
 
-    async cancel_job(monitor_id: string) {
-      const jobs = jobs_of(find(context, monitor_id));
-      if (jobs === null) throw new ApiError(404, { error: "this monitor runs no jobs" });
-      return { cancelled: Boolean(await (jobs as unknown as { cancel(): Promise<boolean> }).cancel()) };
+    // Flips a toggle, a header button's or a table cell's (`row_key` set), then polls so it shows what the target did.
+    async run_toggle(monitor_id: string, action_id: string, args: Record<string, unknown> = {}, wanted = true, label = "", row_key: unknown = null): Promise<ActionReply> {
+      const plugin = as_plugin(find(context, monitor_id));
+      if (row_key === null || row_key === undefined) return run_header_toggle(plugin, label || action_id, action_id, action_id, Boolean(wanted));
+      return run_cell_toggle(plugin, label || action_id, row_key, action_id, args ?? {}, Boolean(wanted));
     },
 
-    async get_job(monitor_id: string, job_id: number) {
+    // Cancels the monitor's running job, or its newest detached action.
+    async cancel_job(monitor_id: string): Promise<ActionReply> {
+      const plugin = find(context, monitor_id);
+      if (jobs_of(plugin) === null) throw new ApiError(404, { error: "this monitor runs no jobs" });
+      return cancel_job(as_plugin(plugin));
+    },
+
+    // Starts the job panel's run action without waiting for it.
+    async start_job(monitor_id: string, action_id: string, label: string | null = null): Promise<ActionReply> {
+      return start_job(as_plugin(find(context, monitor_id)), action_id, label);
+    },
+
+    // A job's log as its dialog shows it, its lines after `after`.
+    async get_job_log(monitor_id: string, job_id: number, after = -1) {
       const plugin = find(context, monitor_id);
       const job = db.get_job(Number(job_id));
       if (job === null || job.plugin_id !== plugin.id) throw new ApiError(404, { error: "no such job" });
-      const action = action_id_of(job.kind ?? "");
-      const names = action_names((plugin.all_actions?.() ?? []) as never);
-      return { ...job, title: (action !== null ? names[action] : null) ?? job.kind };
+      return job_log_view(as_plugin(plugin), Number(job_id), Number(after));
     },
 
-    async get_job_log(monitor_id: string, job_id: number) {
+    // Polls a running job every few seconds while its log is open; the page renews the lease it gets back.
+    async watch_job(monitor_id: string, job_id: number) {
       const plugin = find(context, monitor_id);
-      const jobs = jobs_of(plugin);
-      if (jobs === null) throw new ApiError(404, { error: "this monitor runs no jobs" });
-      return jobs.log(Number(job_id));
+      const job = db.get_job(Number(job_id));
+      if (job === null || job.plugin_id !== plugin.id) throw new ApiError(404, { error: "no such job" });
+      return { lease: watches.open(as_plugin(plugin), job) };
+    },
+
+    async renew_job_watch(lease: string) {
+      return { ok: watches.renew(lease) };
+    },
+
+    async end_job_watch(lease: string) {
+      watches.close(lease);
+      return { ok: true };
     },
 
     // ── Push ───────────────────────────────────────────────────────────────
 
     push(monitor_id: string, status: string, message: string | null, value: number | null, source: string | null) {
-      const plugin = find_monitor(engine.plugins, monitor_id);
+      const plugin = find_monitor(engine, monitor_id);
       if (plugin === null || !is_pushable(plugin)) throw new ApiError(404, { error: "not found" });
       if (status !== "up" && status !== "down") throw new ApiError(400, { error: "status must be 'up' or 'down'" });
       return { success: plugin.record_push(status, message, value, source) };
@@ -220,15 +244,7 @@ export function create_methods(context: MethodContext) {
     // ── Notifications ──────────────────────────────────────────────────────
 
     async get_notifications() {
-      const notifications = context.notifications();
-      if (notifications === null) return { channels: [], windows: [], muted: [] };
-      const now = new Date();
-      const active = new Set(notifications.active_windows(now));
-      return {
-        channels: [...notifications.channels].map(([id, channel]) => ({ id, type: channel.type ?? "" })),
-        windows: notifications.windows.map((window) => ({ name: window.name, schedule: window.describe(), active: active.has(window) })),
-        muted: notifications.muted_monitors().map((monitor) => ({ id: monitor.id, name: monitor.name })).sort((first, second) => (first.name < second.name ? -1 : first.name > second.name ? 1 : 0)),
-      };
+      return notifications_view(notifications_like(context.notifications()));
     },
 
     async send_test_notification(channel_id: string, caller: Caller = { client: null, from_page: false }) {
@@ -249,7 +265,7 @@ export function create_methods(context: MethodContext) {
       const notifications = notifications_or_none(context);
       if (notifications === null) throw new ApiError(404, { error: "no notification channels are configured" });
       notifications.set_muted(plugin.id, Boolean(muted));
-      return { muted: Boolean(muted), muted_by: notifications.muted_by(plugin.id) };
+      return { muted: Boolean(muted), muted_by: notifications.muted_by(plugin.id), message: `${plugin.name} ${muted ? "muted" : "unmuted"}` };
     },
 
     // ── System ─────────────────────────────────────────────────────────────
@@ -282,127 +298,44 @@ export function create_methods(context: MethodContext) {
 
     // ── The page's views ───────────────────────────────────────────────────
 
-    // The shell: the sidebar's tree, its kept settings, and whether notifications are on.
-    async get_dashboard() {
-      const statuses = db.latest_statuses();
-      let expanded: unknown = [];
-      try {
-        expanded = JSON.parse(db.get_setting("tree_expanded") ?? "[]");
-      } catch {
-        expanded = [];
-      }
-      return {
-        monitors_version: engine.monitors_version,
-        notifications_enabled: notifications_or_none(context) !== null,
-        tree: build_tree_nodes(engine.plugins, statuses),
-        drawer_width: Number(db.get_setting("drawer_width") ?? 248) || 248,
-        tree_expanded: Array.isArray(expanded) ? expanded : [],
-        tree_accordion: db.get_setting("tree_accordion") === "1",
-      };
+    // The sidebar's monitor tree with each status, and its kept width, open branches and accordion mode.
+    async get_sidebar() {
+      return sidebar_view({ plugins: engine.plugins, db });
+    },
+
+    // Opens or shuts one child card on a monitor's page, keeping the choice.
+    async set_child_open(monitor_id: string, child_id: string, open: boolean) {
+      set_child_open(db, as_plugin(find(context, monitor_id)), child_id, Boolean(open));
+      return { open: Boolean(open) };
     },
 
     async get_overview() {
-      const statuses = db.latest_statuses();
-      return {
-        ...build_overview(engine.plugins, statuses),
-        fleet: read_fleet(engine.plugins, db),
-        recent_metrics: db.recent_metrics_raw(20).map((row) => to_json(row)),
-        recent_events: db.recent_events_raw(20).map((row) => to_json(row)),
-      };
+      return overview_view({ plugins: engine.plugins as never, db });
     },
 
     async list_schedules() {
-      return schedule_rows(engine.plugins, (key) => db.get_setting(key), new Date());
+      return schedule_rows(engine.plugins as never, (key) => db.get_setting(key), new Date());
     },
 
-    // The monitors whose journals the logs view searches.
+    // The journal monitors the logs view searches, and its default per-host limit.
     async list_journal_monitors() {
-      return iter_monitors(engine.plugins).filter((plugin) => plugin.config?.type === "journal").map((plugin) => ({
-        id: plugin.id, name: plugin.name, target: plugin.target, max_entries: Number(plugin.max_entries ?? 500),
-      }));
+      return logs_view({ plugins: engine.plugins as never });
     },
 
-    // Searches the chosen monitors' journals at once; a monitor that fails says why in its own row.
+    // Searches the chosen monitors' journals at once, as rows with a line saying which hosts could not be searched.
     async search_logs(monitor_ids: string[], since = "1h", priority = 6, unit = "", text = "", limit = 500) {
       if (!LOG_SINCE.includes(since)) throw new ApiError(400, { error: `since must be one of ${LOG_SINCE.filter((choice) => choice).join(", ")} or empty` });
-      const chosen = monitor_ids.map((monitor_id) => find(context, monitor_id));
-      const outcomes = await Promise.all(chosen.map(async (plugin) => {
-        try {
-          const [success, metadata] = await engine.dispatch_action(plugin, "query_logs", { since, priority, unit, text, limit });
-          if (!success) return { monitor_id: plugin.id, host: plugin.target, error: String(metadata?.content ?? "the search failed"), entries: [] };
-          return { monitor_id: plugin.id, host: plugin.target, error: null, entries: JSON.parse(String(metadata?.entries ?? "[]")) as unknown[] };
-        } catch (error) {
-          return { monitor_id: plugin.id, host: plugin.target, error: (error as Error).message, entries: [] };
-        }
-      }));
-      return outcomes;
+      return search_logs({ plugins: engine.plugins as never, dispatch_action: (plugin, action_id, args) => engine.dispatch_action(plugin, action_id, args) }, monitor_ids, search_kwargs(since, priority, unit, text, limit));
     },
 
-    // Everything a monitor's page draws: header, actions with their states, notification state, the resolved spec and
-    // every reading its widgets show.
-    async get_monitor_page(monitor_id: string) {
-      const plugin = find(context, monitor_id);
-      const statuses = db.latest_statuses();
-      const now = new Date();
-      const actions = (plugin.all_actions?.() ?? []) as { action_id: string; kind?: string; metric?: string; job?: unknown; detached?: boolean }[];
-      const names = action_names(actions as never);
-      const latest = (name: string) => db.latest_metric(plugin.id, name)?.value ?? null;
-      const jobs = jobs_of(plugin);
-      const notifications = notifications_or_none(context);
-      const muted_by = notifications?.muted_by(plugin.id) ?? null;
+    // One folder of a borg archive, listing it through the monitor when it has not been listed yet.
+    async get_archive_folder(monitor_id: string, archive: string, path = "") {
+      return browse_folder(engine, as_plugin(find(context, monitor_id)), archive, path);
+    },
 
-      const raw_spec = (plugin.UI_SPEC as Record<string, unknown> | null | undefined) ?? null;
-      const { spec, rules } = resolve_spec(raw_spec);
-      const custom = typeof plugin.custom_view === "function" ? to_json((plugin.custom_view as () => unknown).call(plugin)) : null;
-      const data: Record<string, JsonValue> = {};
-      if (raw_spec !== null) {
-        data.metrics = Object.fromEntries(metric_names(raw_spec).map((name) => [name, latest(name)]));
-        data.histories = Object.fromEntries(history_requests(raw_spec).map(([name, limit]) => [name, db.metric_history(plugin.id, name, limit).map((record) => ({ timestamp: record.timestamp.toISOString(), value: record.value }))]));
-        data.snapshot = to_json(with_item_rules(db.latest_snapshot(plugin.id, null), rules));
-        data.collector_metrics = db.latest_collector_metrics(plugin.id).map((record) => ({ metric_name: record.metric_name, value: record.value }));
-        data.attributes = Object.fromEntries(attribute_names(raw_spec).map((name) => [name, to_json(with_item_rules(read_attribute(plugin, name), rules))]));
-        data.settings = Object.fromEntries(setting_keys(raw_spec, plugin.id).map((key) => [key, db.get_setting(key)]));
-        data.events = raw_spec.events ? db.plugin_events(plugin.id, `[${plugin.name}] `, plugin.target, 100).map((row) => to_json(row)) : [];
-        data.log_lines = db.log_lines(plugin.target, plugin.id, 100).map((row) => to_json(row));
-        data.rules = run_rules(rules, plugin, latest);
-        if (raw_spec.job_panel && jobs !== null) {
-          const panel = raw_spec.job_panel as { history_limit?: number; exclude_kinds?: string[] };
-          const current = jobs.current_id();
-          data.job_panel = to_json({
-            running: jobs.is_running(), current_id: current, progress: current !== null ? db.get_job(current)?.progress ?? null : null,
-            recent: jobs.recent(panel.history_limit ?? 10, panel.exclude_kinds ?? []),
-          });
-        }
-      }
-      return {
-        id: plugin.id, name: plugin.name, type: plugin.config?.type ?? null, target: plugin.target, status: statuses[plugin.id] ?? "unavailable",
-        monitors_version: engine.monitors_version,
-        layout_override: to_json(plugin.config?.layout ?? null),
-        schedule: [
-          ...((plugin.scheduled_actions as { action: string; cron: { expression: string; next_after(moment: Date): Date | null } }[] | undefined) ?? []).map((entry) => {
-            const upcoming = entry.cron.next_after(now);
-            return { action: names[entry.action] ?? entry.action, when: entry.cron.expression, next: upcoming ? when_text(upcoming) : "never" };
-          }),
-          ...((plugin.triggered_actions as { action: string; describe(): string }[] | undefined) ?? []).map((entry) => ({ action: names[entry.action] ?? entry.action, when: entry.describe(), next: null })),
-        ],
-        actions: actions.map((action) => ({
-          ...(to_json(action) as Record<string, JsonValue>),
-          state: typeof plugin.action_state === "function" ? plugin.action_state(action as never) : "normal",
-          pressed: action.kind === "toggle" && action.metric ? (latest(action.metric) === null ? null : latest(action.metric)! > 0.5) : null,
-        })),
-        jobs: jobs === null ? null : { any_running: jobs.any_running(), cancellable: actions.some((action) => action.job || action.detached) },
-        notifications: notifications === null ? null : {
-          maintenance: notifications.maintenance_for(plugin.id),
-          muted_by,
-          muted_by_name: muted_by !== null ? notifications.monitor_name(muted_by) : null,
-          muted: muted_by === plugin.id,
-        },
-        children: plugin.children.map((child) => ({ id: child.id, name: child.name, status: statuses[child.id] ?? "unavailable" })),
-        group_expanded: plugin.children.length > 0 ? to_json(parse_object(db.get_setting(`group_expanded_${plugin.id}`))) : null,
-        spec,
-        custom_view: custom,
-        data,
-      };
+    // Everything a monitor's page draws: its header, actions and their states, notification state and body.
+    async get_monitor_page(monitor_id: string) {
+      return monitor_page_view({ notifications: notifications_like(notifications_or_none(context)) }, as_plugin(find(context, monitor_id)));
     },
   };
 }
@@ -411,28 +344,11 @@ export type Methods = ReturnType<typeof create_methods>;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function parse_object(text: string | null): Record<string, unknown> {
-  try {
-    const parsed = text ? JSON.parse(text) : {};
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
+// The engine's monitors are full Plugins; the server's own type only names what its REST routes read.
+function as_plugin(plugin: ServerPlugin): Plugin {
+  return plugin as unknown as Plugin;
 }
 
-// The settings a spec's repeats read, with `{plugin_id}` filled.
-function setting_keys(spec: unknown, plugin_id: string): string[] {
-  const keys = new Set<string>();
-  const walk = (value: unknown) => {
-    if (Array.isArray(value)) value.forEach(walk);
-    else if (typeof value === "object" && value !== null) {
-      for (const [key, entry] of Object.entries(value)) {
-        if (key === "setting_key" && typeof entry === "string") keys.add(entry.replaceAll("{plugin_id}", plugin_id));
-        else walk(entry);
-      }
-    }
-  };
-  walk(spec);
-  return [...keys];
+function notifications_like(notifications: NotificationEngine | null): NotificationsLike | null {
+  return notifications as unknown as NotificationsLike | null;
 }
-

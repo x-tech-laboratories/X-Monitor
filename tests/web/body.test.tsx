@@ -80,11 +80,11 @@ describe("a spec table", () => {
   });
 
   it("flips a toggle for its row", async () => {
-    mocked.cell_toggle.mockResolvedValue(reply({ notice: "Enabled on: nginx.service succeeded" }));
+    mocked.toggle.mockResolvedValue(reply({ notice: "Enabled on: nginx.service succeeded" }));
     draw([TABLE]);
     fireEvent.click(screen.getByRole("button", { name: "disabled" }));
     expect(await screen.findByText("Enabled on: nginx.service succeeded")).toBeTruthy();
-    expect(mocked.cell_toggle).toHaveBeenCalledWith("host", { column_label: "Enabled", row_key: "nginx.service", action_id: "enable_service", args: { service_name: "nginx.service" }, wanted: true });
+    expect(mocked.toggle).toHaveBeenCalledWith("host", { label: "Enabled", row_key: "nginx.service", action_id: "enable_service", args: { service_name: "nginx.service" }, wanted: true });
   });
 
   it("asks before a row action and runs it for that row", async () => {

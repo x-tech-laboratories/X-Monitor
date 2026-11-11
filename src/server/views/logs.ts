@@ -2,13 +2,12 @@
 // sorts, filters and groups.
 
 import type { DispatchResult } from "../../core/connectors/types.ts";
-import { iso_local } from "../../shared/time.ts";
-import { iter_monitors, type GraphNode } from "./engine.ts";
+import { entry_time, Journal, PRIORITY_NAMES } from "../../monitors/journal.ts";
+
+export { entry_time, PRIORITY_NAMES };
+import { iter_monitors, type GraphView as GraphNode } from "../../core/coordination/monitor_graph.ts";
 
 // ── Choices ──────────────────────────────────────────────────────────────────
-
-// The syslog priority names, most severe first, as journalctl numbers them.
-export const PRIORITY_NAMES = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"] as const;
 
 export const SINCE_OPTIONS: [string, string][] = [
   ["15m", "Last 15 minutes"], ["1h", "Last hour"], ["6h", "Last 6 hours"], ["24h", "Last day"], ["7d", "Last week"], ["boot", "This boot"], ["", "Everything kept"],
@@ -35,22 +34,17 @@ export interface JournalLike extends GraphNode {
   max_entries?: number;
 }
 
-// Whether a monitor is a journal monitor.
-export function is_journal(plugin: { config?: Record<string, unknown>; constructor?: { name?: string } }): boolean {
-  return plugin.config?.type === "journal" || plugin.constructor?.name === "Journal";
+// Whether a monitor is a journal monitor, or a stand-in configured as one.
+export function is_journal(plugin: unknown): boolean {
+  return plugin instanceof Journal || (plugin as { config?: Record<string, unknown> }).config?.type === "journal";
 }
 
 // Every journal monitor under the roots, once each, in config order.
 export function journal_monitors<Monitor extends JournalLike>(roots: readonly Monitor[]): Monitor[] {
-  return iter_monitors(roots).filter(is_journal);
+  return [...iter_monitors(roots)].filter(is_journal);
 }
 
 // ── Rows ─────────────────────────────────────────────────────────────────────
-
-// An entry's time as the dashboard shows it, in the server's local time.
-export function entry_time(epoch: number): string {
-  return epoch ? iso_local(new Date(epoch * 1000)) : "";
-}
 
 export interface EntryRow {
   key: string;
@@ -105,7 +99,7 @@ export function grouped_rows(rows: EntryRow[], group_by: string): EntryRow[] {
     groups.set(value, [...(groups.get(value) ?? []), row]);
   }
   let order = [...groups.keys()];
-  if (group_by === "priority") order = order.sort((left, right) => PRIORITY_NAMES.indexOf(left as never) - PRIORITY_NAMES.indexOf(right as never));
+  if (group_by === "priority") order = order.sort((left, right) => PRIORITY_NAMES.indexOf(left) - PRIORITY_NAMES.indexOf(right));
   const flat: EntryRow[] = [];
   for (const value of order) {
     const members = groups.get(value)!;

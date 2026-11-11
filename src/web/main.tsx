@@ -16,7 +16,7 @@ import { theme_choice } from "@x-tech-laboratories/x-libs/web/theme";
 import { Fragment, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { accounts, calls, changes, CHANGES_PATH, live } from "./api.ts";
+import { accounts, calls, changes, CHANGES_PATH, live, use_feed_client_id, type SidebarSettings } from "./api.ts";
 import { plugin_host, start_plugins } from "./plugins.ts";
 import { LogsView } from "./views/logs.tsx";
 import { MonitorView } from "./views/monitor.tsx";
@@ -55,6 +55,14 @@ export function view_for({ parts }: Route, me: Me): View {
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 
+// Keeps the sidebar settings the page changed, each under its own UI setting.
+function save_sidebar_settings(changes_made: Partial<SidebarSettings>): void {
+  const keep = (key: string, value: string) => void calls.save_ui_setting(key, value).catch(() => undefined);
+  if (changes_made.drawer_width !== undefined) keep("drawer_width", String(Math.trunc(changes_made.drawer_width)));
+  if (changes_made.expanded !== undefined) keep("tree_expanded", JSON.stringify(changes_made.expanded));
+  if (changes_made.accordion !== undefined) keep("tree_accordion", changes_made.accordion ? "1" : "");
+}
+
 function Sidebar({ active, monitor_id, me }: { active: string; monitor_id: string | null; me: Me }) {
   const sidebar = use_resource(() => calls.sidebar(), [], live);
   const views = me.role === "admin" ? [...SIDEBAR_VIEWS, ["users", "Users"] as [string, string]] : SIDEBAR_VIEWS;
@@ -70,7 +78,7 @@ function Sidebar({ active, monitor_id, me }: { active: string; monitor_id: strin
           nodes={sidebar.data.nodes}
           settings={sidebar.data.settings}
           monitor_id={monitor_id}
-          on_settings={(changes_made) => void calls.save_sidebar(changes_made).catch(() => undefined)}
+          on_settings={save_sidebar_settings}
         />
       )}
     </>
@@ -89,6 +97,7 @@ function App() {
   useEffect(() => {
     if (!logged_in) return;
     const feed = follow_changes(CHANGES_PATH, { watch: changes });
+    use_feed_client_id(() => feed.client_id());
     void start_plugins();
     return () => feed.close();
   }, [logged_in]);
@@ -112,7 +121,7 @@ function App() {
       on_logout={() => void sign_out()}
       view_key={view_key}
       sidebar={me && shown ? <Sidebar active={shown.section} monitor_id={shown.monitor_id} me={me} /> : undefined}
-      sidebar_width={{ default_width: sidebar_width.data?.settings.drawer_width ?? 248, min: 200, max: 600, on_change: (width, done) => { if (done) void calls.save_sidebar({ drawer_width: width }).catch(() => undefined); } }}
+      sidebar_width={{ default_width: sidebar_width.data?.settings.drawer_width ?? 248, min: 200, max: 600, on_change: (width, done) => { if (done) save_sidebar_settings({ drawer_width: width }); } }}
       tools={<><button type="button" onClick={open_notifications}>Notifications</button><SystemMenu /></>}
     >
       {account.state === "signed_out" && <SignInForm client={accounts} title="X-Monitor" icon="/icon.svg" on_signed_in={refresh} />}

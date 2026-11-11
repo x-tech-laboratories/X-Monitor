@@ -18,6 +18,25 @@ export interface GraphNode {
   readonly restates_children?: boolean;
 }
 
+// What walking and labelling read of a monitor: a GraphNode, or any stand-in with the same few fields, its links as a
+// Map or a plain object.
+export interface GraphView {
+  readonly id: string;
+  readonly name: string;
+  readonly children: readonly GraphView[];
+  readonly links?: ReadonlyMap<string, string | null> | Readonly<Record<string, string | null>>;
+  readonly restates_children?: boolean;
+}
+
+// The label a link gives this child under the parent: undefined when the child is not linked there.
+function link_label(parent: GraphView, child_id: string): string | null | undefined {
+  const links = parent.links;
+  if (links === undefined) return undefined;
+  if (links instanceof Map) return links.has(child_id) ? (links.get(child_id) ?? null) : undefined;
+  const record = links as Readonly<Record<string, string | null>>;
+  return Object.hasOwn(record, child_id) ? (record[child_id] ?? null) : undefined;
+}
+
 // A placeholder for a `ref:` entry, replaced by the monitor it names once every view has loaded.
 export class Link {
   readonly ref: string;
@@ -31,24 +50,24 @@ export class Link {
 }
 
 // The name a child shows under this parent: the link's own label, or the monitor's name.
-export function child_label(parent: GraphNode, child: GraphNode): string {
-  return parent.links?.get(child.id) || child.name;
+export function child_label(parent: GraphView | null, child: GraphView): string {
+  return (parent === null ? undefined : link_label(parent, child.id)) || child.name;
 }
 
 // Whether a monitor's status only repeats its children's, as a plain group's does.
-export function restates_children(monitor: GraphNode): boolean {
+export function restates_children(monitor: { readonly restates_children?: boolean }): boolean {
   return monitor.restates_children === true;
 }
 
 // Whether the child sits under this parent through a link rather than its own definition.
-export function is_link(parent: GraphNode, child: GraphNode): boolean {
-  return parent.links?.has(child.id) ?? false;
+export function is_link(parent: GraphView, child: GraphView): boolean {
+  return link_label(parent, child.id) !== undefined;
 }
 
 // ── Walking ──────────────────────────────────────────────────────────────────
 
 // Every monitor reachable from these roots once each, parents before children, in config order.
-export function* iter_monitors<Node extends GraphNode>(roots: Iterable<Node>): Generator<Node> {
+export function* iter_monitors<Node extends GraphView>(roots: Iterable<Node>): Generator<Node> {
   const seen = new Set<Node>();
   function* walk(plugins: Iterable<Node>): Generator<Node> {
     for (const plugin of plugins) {
@@ -61,18 +80,18 @@ export function* iter_monitors<Node extends GraphNode>(roots: Iterable<Node>): G
   yield* walk(roots);
 }
 
-export function all_monitors<Node extends GraphNode>(engine: { plugins: readonly Node[] }): Node[] {
+export function all_monitors<Node extends GraphView>(engine: { plugins: readonly Node[] }): Node[] {
   return [...iter_monitors(engine.plugins)];
 }
 
 // The monitor with this id anywhere in the tree, or null.
-export function find_monitor<Node extends GraphNode>(engine: { plugins: readonly Node[] }, monitor_id: string): Node | null {
+export function find_monitor<Node extends GraphView>(engine: { plugins: readonly Node[] }, monitor_id: string | null | undefined): Node | null {
   for (const plugin of iter_monitors(engine.plugins)) if (plugin.id === monitor_id) return plugin;
   return null;
 }
 
 // Each monitor's id mapped to the ids of every group it sits directly under, through a definition or a link.
-export function parent_ids(roots: Iterable<GraphNode>): Map<string, Set<string>> {
+export function parent_ids(roots: Iterable<GraphView>): Map<string, Set<string>> {
   const parents = new Map<string, Set<string>>();
   for (const plugin of iter_monitors(roots)) {
     for (const child of plugin.children) {

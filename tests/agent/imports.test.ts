@@ -5,8 +5,9 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
-// The packages only the server or the page install: the dashboard, its web stack and the server's extras.
-const SERVER_ONLY = [/^react(-dom)?(\/|$)/, /^fastify(\/|$)/, /^@fastify\//, /^@x-tech-laboratories\/x-libs\/(server|web)\//, /^@x-tech-laboratories\/halon/];
+// The packages only the server or the page install: the dashboard, its web stack and the server's extras. The X-Libs
+// agent hub is plain Node, and the engine the agent runs its monitors with holds one.
+const SERVER_ONLY = [/^react(-dom)?(\/|$)/, /^fastify(\/|$)/, /^@fastify\//, /^@x-tech-laboratories\/x-libs\/(server\/(?!agents\/(hub|connection|agent)$)|web\/)/, /^@x-tech-laboratories\/halon/];
 
 function sources(folder: string): string[] {
   return readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {

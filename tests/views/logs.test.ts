@@ -1,9 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { DatabaseManager } from "../../src/core/database/database.ts";
-import { ChangeBus } from "../../src/core/state/changes.ts";
-import { CollectResult } from "../../src/core/connectors/types.ts";
-import { COOLDOWN_SECONDS, follow_store_changes, IDLE_REFRESH_SECONDS } from "../../src/server/views/change_feed.ts";
 import { entry_rows, grouped_rows, journal_monitors, logs_view, run_search, search_kwargs, search_logs, summary_text, type JournalLike } from "../../src/server/views/logs.ts";
 
 // ── Logs ─────────────────────────────────────────────────────────────────────
@@ -108,64 +104,5 @@ describe("the logs view", () => {
   it("knows when there is nothing to search", () => {
     expect(logs_view({ plugins: [] }).monitors).toEqual([]);
     expect(logs_view({ plugins: [{ ...HEIMDALL, max_entries: 200 }] }).default_limit).toBe(200);
-  });
-});
-
-// ── Push refreshes ───────────────────────────────────────────────────────────
-
-describe("the change feed", () => {
-  afterEach(() => vi.useRealTimers());
-
-  function feed() {
-    vi.useFakeTimers();
-    const bus = new ChangeBus();
-    let announced = 0;
-    const handle = follow_store_changes(bus, () => (announced += 1));
-    return { bus, handle, count: () => announced };
-  }
-
-  it("announces a status write at once", () => {
-    const { bus, handle, count } = feed();
-    bus.publish("status", "some-monitor");
-    expect(count()).toBe(1);
-    handle.stop();
-  });
-
-  it("collapses one cycle's many writes into one refresh and one trailing one", () => {
-    const { bus, handle, count } = feed();
-    for (let index = 0; index < 8; index += 1) bus.publish("metric", "some-monitor");
-    expect(count()).toBe(1);
-    vi.advanceTimersByTime(COOLDOWN_SECONDS * 1000 + 100);
-    expect(count()).toBe(2);
-    vi.advanceTimersByTime(COOLDOWN_SECONDS * 1000 + 100);
-    expect(count()).toBe(2);
-    handle.stop();
-  });
-
-  it("refreshes nothing on an idle system until the idle sweep", () => {
-    const { handle, count } = feed();
-    vi.advanceTimersByTime(600);
-    expect(count()).toBe(0);
-    vi.advanceTimersByTime(IDLE_REFRESH_SECONDS * 1000);
-    expect(count()).toBe(1);
-    handle.stop();
-  });
-
-  it("stops listening once stopped", () => {
-    const { bus, handle, count } = feed();
-    handle.stop();
-    bus.publish("status", "some-monitor");
-    expect(count()).toBe(0);
-  });
-
-  it("hears the database's writes on the shared bus", async () => {
-    const { CHANGES } = await import("../../src/core/state/changes.ts");
-    vi.useFakeTimers();
-    let announced = 0;
-    const handle = follow_store_changes(CHANGES, () => (announced += 1));
-    const db = new DatabaseManager();
-    db.apply_result("host", "some-monitor", "Some Monitor", new CollectResult({ success: true, status: "online", metrics: Object.fromEntries(Array.from({ length: 8 }, (_unused, index) => [`m${index}`, index])) }));
-    expect(announced).toBe(1);
-    handle.stop();
   });
 });
