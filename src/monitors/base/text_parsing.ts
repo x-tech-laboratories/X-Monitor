@@ -92,3 +92,11 @@ export function format_fixed(value: number, digits: number): string {
   if (last_digit % 2 === 0) return (value < 0 ? "-" : "") + kept;
   return value.toFixed(digits);
 }
+
+// A number as Python's "{:,.Nf}" writes it: fixed decimals with commas between thousands.
+export function format_grouped(value: number, digits: number): string {
+  const text = format_fixed(value, digits);
+  const [whole, fraction] = text.split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return fraction === undefined ? grouped : `${grouped}.${fraction}`;
+}
