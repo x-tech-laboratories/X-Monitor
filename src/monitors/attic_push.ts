@@ -126,6 +126,7 @@ export type TargetFacts = Record<string, string | string[]> & { missing: string[
 
 // Python's str.splitlines over the line breaks a report can hold.
 function splitlines(text: string): string[] {
+  // oxlint-disable-next-line no-control-regex
   const lines = text.split(/\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/);
   if (lines.length > 0 && lines.at(-1) === "") lines.pop();
   return lines;
