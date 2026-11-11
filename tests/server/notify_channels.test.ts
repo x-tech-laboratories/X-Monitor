@@ -16,7 +16,7 @@ import { set_log_sink } from "../../src/core/logging.ts";
 
 const FAILED = new Message({
   title: "Nas is failed", body: "Pool tank is DEGRADED\nHost: nas.lan", status: "failed", kind: "problem",
-  monitor_id: "nas-zfs", url: "https://x-monitor.lan/monitor/nas-zfs", monitor_name: "Nas", host: "nas.lan", timestamp: 1790000000,
+  monitor_id: "nas-zfs", url: "https://x-monitor.lan/#/monitor/nas-zfs", monitor_name: "Nas", host: "nas.lan", timestamp: 1790000000,
 });
 const RECOVERED = new Message({ title: "Nas recovered", body: "Was down for 5 Minutes", status: "online", kind: "recovered", monitor_id: "nas-zfs", monitor_name: "Nas", host: "nas.lan", timestamp: 1790000300 });
 
@@ -52,7 +52,7 @@ describe("webhook channel", () => {
     await channel.send(FAILED);
     expect([requests[0]!.method, requests[0]!.url]).toEqual(["POST", "https://hooks.lan/x-monitor"]);
     const body = JSON.parse(requests[0]!.body);
-    expect(body).toMatchObject({ title: "Nas is failed", status: "failed", kind: "problem", monitor: { id: "nas-zfs", name: "Nas", host: "nas.lan" }, url: "https://x-monitor.lan/monitor/nas-zfs" });
+    expect(body).toMatchObject({ title: "Nas is failed", status: "failed", kind: "problem", monitor: { id: "nas-zfs", name: "Nas", host: "nas.lan" }, url: "https://x-monitor.lan/#/monitor/nas-zfs" });
     expect(body.timestamp).toMatch(/^2026-/);
   });
 
@@ -102,7 +102,7 @@ describe("ntfy channel", () => {
     await channel.send(FAILED);
     expect(requests[0]!.url).toBe("https://ntfy.sh");
     expect(JSON.parse(requests[0]!.body)).toEqual({
-      topic: "x-monitor-alerts", title: "Nas is failed", message: "Pool tank is DEGRADED\nHost: nas.lan", priority: 4, tags: ["rotating_light"], click: "https://x-monitor.lan/monitor/nas-zfs",
+      topic: "x-monitor-alerts", title: "Nas is failed", message: "Pool tank is DEGRADED\nHost: nas.lan", priority: 4, tags: ["rotating_light"], click: "https://x-monitor.lan/#/monitor/nas-zfs",
     });
   });
 
@@ -159,7 +159,7 @@ describe("smtp channel", () => {
     expect(sessions[0]!.options).toMatchObject({ host: "mail.lan", port: 587, requireTLS: true, auth: { user: "x-monitor@lan", pass: "s3cret" } });
     expect(sessions[0]!.mail).toEqual({
       from: "x-monitor@lan", to: "me@lan, you@lan", subject: "[X-Monitor] Nas is failed",
-      text: "Pool tank is DEGRADED\n\nhttps://x-monitor.lan/monitor/nas-zfs",
+      text: "Pool tank is DEGRADED\n\nhttps://x-monitor.lan/#/monitor/nas-zfs",
     });
   });
 
@@ -198,7 +198,7 @@ describe("apprise channel", () => {
     const calls = recording(channel);
     await channel.send(new Message({ ...FAILED, body: "Pool tank is DEGRADED" }));
     await channel.send(RECOVERED);
-    expect(calls[0]).toEqual(["apprise", "--title", "Nas is failed", "--body", "Pool tank is DEGRADED\n\nhttps://x-monitor.lan/monitor/nas-zfs", "--notification-type", "failure"]);
+    expect(calls[0]).toEqual(["apprise", "--title", "Nas is failed", "--body", "Pool tank is DEGRADED\n\nhttps://x-monitor.lan/#/monitor/nas-zfs", "--notification-type", "failure"]);
     expect(calls[1]!.at(-1)).toBe("success");
   });
 
@@ -218,7 +218,7 @@ describe("apprise channel", () => {
 
 // ── On-call ──────────────────────────────────────────────────────────────────
 
-const PROBLEM_SLASH = new Message({ title: "Nas is failed", body: "Pool tank is DEGRADED", status: "failed", kind: "problem", monitor_id: "nas/zfs", url: "https://x-monitor.lan/monitor/nas%2Fzfs", monitor_name: "Nas", host: "nas.lan", timestamp: 1790000000 });
+const PROBLEM_SLASH = new Message({ title: "Nas is failed", body: "Pool tank is DEGRADED", status: "failed", kind: "problem", monitor_id: "nas/zfs", url: "https://x-monitor.lan/#/monitor/nas%2Fzfs", monitor_name: "Nas", host: "nas.lan", timestamp: 1790000000 });
 const RECOVERED_SLASH = new Message({ title: "Nas recovered", body: "Was down for 5 Minutes", status: "online", kind: "recovered", monitor_id: "nas/zfs" });
 const FLAPPING = new Message({ title: "Nas is flapping", body: "b", status: "online", kind: "flapping", monitor_id: "nas/zfs" });
 const TEST = new Message({ title: "X-Monitor test notification", body: "b", status: "online", kind: "test" });
@@ -236,7 +236,7 @@ describe("pagerduty channel", () => {
       {
         routing_key: "R0UT1NG", event_action: "trigger", dedup_key: "nas/zfs",
         payload: { summary: "Nas is failed", source: "nas.lan", severity: "critical", component: "Nas", custom_details: { details: "Pool tank is DEGRADED", status: "failed" } },
-        links: [{ href: "https://x-monitor.lan/monitor/nas%2Fzfs", text: "Open in X-Monitor" }],
+        links: [{ href: "https://x-monitor.lan/#/monitor/nas%2Fzfs", text: "Open in X-Monitor" }],
       },
       { routing_key: "R0UT1NG", event_action: "resolve", dedup_key: "nas/zfs" },
     ]);
@@ -278,7 +278,7 @@ describe("opsgenie channel", () => {
     expect(requests[0]!.headers.authorization).toBe("GenieKey G3N13");
     expect(JSON.parse(requests[0]!.body)).toEqual({
       message: "Nas is failed", alias: "nas/zfs", description: "Pool tank is DEGRADED", priority: "P1", source: "X-Monitor", entity: "nas.lan",
-      details: { status: "failed", url: "https://x-monitor.lan/monitor/nas%2Fzfs" },
+      details: { status: "failed", url: "https://x-monitor.lan/#/monitor/nas%2Fzfs" },
     });
     expect(requests[1]!.url).toBe("https://api.opsgenie.com/v2/alerts/nas%2Fzfs/close?identifierType=alias");
     expect(JSON.parse(requests[1]!.body)).toEqual({ source: "X-Monitor", note: "Nas recovered" });

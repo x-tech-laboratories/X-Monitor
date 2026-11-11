@@ -146,7 +146,7 @@ ones in effect marked.
 ## Monitor links
 
 Every monitor has its own dashboard address, `#/monitor/<id>`, and the events feed is at
-`#/events`. A notification links to its monitor, as `<base_url>/monitor/<id>`, when `base_url` is set.
+`#/events`. A notification links to its monitor, as `<base_url>/#/monitor/<id>`, when `base_url` is set; the old `/monitor/<id>` addresses lead to the same page.
 
 ## Desktop notifications
 
@@ -252,7 +252,7 @@ With no `payload`, the request body is this JSON:
   "status": "failed",
   "kind": "problem",
   "monitor": {"id": "nas-zfs", "name": "NAS", "host": "nas.lan"},
-  "url": "https://x-monitor.lan/monitor/nas-zfs",
+  "url": "https://x-monitor.lan/#/monitor/nas-zfs",
   "timestamp": "2026-09-24T22:10:00-05:00"
 }
 ```

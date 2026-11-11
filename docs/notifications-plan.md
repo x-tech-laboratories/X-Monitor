@@ -34,7 +34,7 @@ Kuma has no desktop notifications. X-Monitor has them, through its agent.
   so this cannot loop.
 - **Message:** the title is `<monitor> is failed`, `is still failed` or `recovered`. The body
   gives the monitor's latest event as the reason, or how long it was down, and its host. A link
-  to `/monitor/<id>` is added when `notifications.base_url` is set.
+  to `/#/monitor/<id>` is added when `notifications.base_url` is set.
 
 ## Rules, mapped from Kuma
 

@@ -82,7 +82,7 @@ export function build_channels(entries: unknown, agents: AgentDirectory | null):
 // The dashboard link to one monitor's page, when the dashboard's address is configured.
 export function monitor_url(base_url: string | null | undefined, monitor_id: string): string | null {
   if (!base_url) return null;
-  return `${base_url.replace(/\/+$/, "")}/monitor/${encodeURIComponent(monitor_id)}`;
+  return `${base_url.replace(/\/+$/, "")}/#/monitor/${encodeURIComponent(monitor_id)}`;
 }
 
 const sleep = (seconds: number) => new Promise<void>((wake) => setTimeout(wake, seconds * 1000));

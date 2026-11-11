@@ -292,6 +292,10 @@ export async function build_app(options: AppOptions): Promise<XMonitorApp> {
 
   app.get("/metrics", async (_request, reply) => reply.type(metrics_content_type).send(render(engine.db)));
 
+  // The page routes by its hash, so the Python dashboard's addresses, as in older notifications and bookmarks, lead to the same pages.
+  app.get("/monitor/:id", async (request, reply) => reply.redirect(`/#/monitor/${encodeURIComponent((request.params as { id: string }).id)}`));
+  for (const section of ["events", "schedules", "logs"]) app.get(`/${section}`, async (_request, reply) => reply.redirect(`/#/${section}`));
+
   await options.extra_routes?.(app);
   if (options.web_folder) {
     const api_not_found = (_request: FastifyRequest, reply: FastifyReply) => reply.code(404).send({ error: "not found" });

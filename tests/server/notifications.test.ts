@@ -254,7 +254,7 @@ describe("NotificationEngine", () => {
     const message = desk.sent[0]!;
     expect(message.title).toBe("Nas is failed");
     expect(message.body).toBe("Pool tank is DEGRADED\nHost: host.lan");
-    expect(message.url).toBe("https://x-monitor.lan/monitor/nas");
+    expect(message.url).toBe("https://x-monitor.lan/#/monitor/nas");
     expect([message.monitor_name, message.host]).toEqual(["Nas", "host.lan"]);
     expect(message.timestamp).toBeGreaterThan(0);
     expect(message.key).toBe("failed");
@@ -439,7 +439,7 @@ describe("NotificationEngine", () => {
   });
 
   it("escapes the id in a monitor's link", () => {
-    expect(monitor_url("http://v:8080", "a b/c")).toBe("http://v:8080/monitor/a%20b%2Fc");
+    expect(monitor_url("http://v:8080", "a b/c")).toBe("http://v:8080/#/monitor/a%20b%2Fc");
     expect(monitor_url(null, "a")).toBeNull();
   });
 });

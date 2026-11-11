@@ -26,6 +26,24 @@ afterEach(async () => {
 
 const open = (engine: FakeEngine, options: Parameters<typeof serve>[1] = {}) => serve(engine, { auth_settings: {}, ...options });
 
+// ── Old addresses ────────────────────────────────────────────────────────────
+
+describe("the Python dashboard's addresses", () => {
+  it("lead a monitor's old address to its page", async () => {
+    server = await open(fake_engine([fake_monitor("nas/zfs")], new DatabaseManager()));
+    const reply = await server.app.inject({ url: "/monitor/nas%2Fzfs" });
+    expect(reply.statusCode).toBe(302);
+    expect(reply.headers.location).toBe("/#/monitor/nas%2Fzfs");
+  });
+
+  it("lead the events, schedules and logs pages to theirs", async () => {
+    server = await open(fake_engine([], new DatabaseManager()));
+    for (const section of ["events", "schedules", "logs"]) {
+      expect((await server.app.inject({ url: `/${section}` })).headers.location).toBe(`/#/${section}`);
+    }
+  });
+});
+
 // ── The shell and the overview ───────────────────────────────────────────────
 
 describe("the sidebar", () => {
