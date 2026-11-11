@@ -64,7 +64,7 @@ describe("dns connector", () => {
     expect(made[0].asked).toEqual([["example.com", "A"]]);
   });
 
-  it("brackets an IPv6 nameserver", async () => {
+  it("names an IPv6 nameserver bare on the default port", async () => {
     const [connector, made] = dns_with();
     await connector.resolve(dns_query("example.com", { resolver: "::1" }));
     expect(made[0].servers).toEqual(["::1"]);
