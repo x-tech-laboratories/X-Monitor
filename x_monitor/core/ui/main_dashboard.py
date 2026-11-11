@@ -11,7 +11,7 @@ from . import theme
 from .auth import LOGOUT_PATH, AuthConfig
 from .components import icon_button, on_data_event
 from .sidebar import render_sidebar
-from .views import render_overview, render_events, render_plugin_detail, render_schedules
+from .views import render_overview, render_events, render_logs, render_plugin_detail, render_schedules
 from .views.notifications import open_notifications_dialog
 from .views.system import render_system_menu
 
@@ -37,6 +37,8 @@ def view_path(view_type: str, plugin: Optional[Any] = None) -> str:
         return '/events'
     if view_type == 'schedules':
         return '/schedules'
+    if view_type == 'logs':
+        return '/logs'
     if view_type == 'plugin' and plugin is not None:
         return f"/monitor/{quote(plugin.id, safe='')}"
     return '/'
@@ -166,6 +168,8 @@ def _render_index(engine: EngineLike, auth_config: Optional[AuthConfig] = None,
                 render_events(engine, switch_view)
             elif state.current_view == 'schedules':
                 render_schedules(engine, switch_view)
+            elif state.current_view == 'logs':
+                render_logs(engine, switch_view)
             else:
                 render_plugin_detail(engine, switch_view, state.selected_plugin)
 
@@ -210,6 +214,10 @@ def init_gui(engine: EngineLike, port: int = 8080):
     @ui.page('/schedules')
     def schedules_page():
         _render_index(engine, auth_config, view='schedules')
+
+    @ui.page('/logs')
+    def logs_page():
+        _render_index(engine, auth_config, view='logs')
 
     @ui.page('/monitor/{monitor_id}')
     def monitor_page(monitor_id: str):

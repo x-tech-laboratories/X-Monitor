@@ -257,6 +257,41 @@ def host_control(plugin, tick, seed) -> CollectResult:
     return parsed(plugin, power, 'freeze mem disk')
 
 
+# What a journal holds in the demo: (seconds ago, priority, unit, message), the same on every host.
+JOURNAL_ENTRIES = [
+    (40, 6, 'sshd.service', 'Accepted publickey for alice from 192.0.2.5 port 51234 ssh2'),
+    (95, 4, 'nginx.service', 'upstream response is buffered to a temporary file'),
+    (180, 3, 'backup.service', 'borg: Failed to create/acquire the lock (timeout)'),
+    (240, 6, 'systemd-logind.service', 'New session 4 of user alice.'),
+    (420, 5, 'kernel', 'usb 1-2: new high-speed USB device number 7 using xhci_hcd'),
+    (600, 6, 'nginx.service', 'Reloading nginx configuration'),
+    (900, 2, 'kernel', 'nvme0: I/O 412 QID 3 timeout, aborting'),
+    (1500, 6, 'cron.service', '(root) CMD (run-parts /etc/cron.hourly)'),
+    (2400, 4, 'NetworkManager.service', 'dhcp4 (eth0): request timed out'),
+    (3000, 7, 'systemd-resolved.service', 'Using degraded feature set UDP instead of EDNS0 for DNS server 192.0.2.1.'),
+]
+
+
+def journal_output(plugin, max_priority: int = 7) -> str:
+    """The demo journal as journalctl -o json prints it, oldest first, keeping entries at or above max_priority."""
+    seed = sum(map(ord, plugin.id))
+    now = time.time()
+    lines = []
+    for index, (ago, priority, unit, message) in enumerate(reversed(JOURNAL_ENTRIES)):
+        if priority > max_priority:
+            continue
+        lines.append(json.dumps({'__REALTIME_TIMESTAMP': str(int((now - ago - seed % 60) * 1e6)),
+                                 '__CURSOR': f'{plugin.id}-{index}', 'PRIORITY': str(priority),
+                                 '_SYSTEMD_UNIT' if unit != 'kernel' else 'SYSLOG_IDENTIFIER': unit,
+                                 'MESSAGE': message}))
+    return '\n'.join(lines)
+
+
+def journal(plugin, tick, seed) -> CollectResult:
+    """Every warning and error of the demo journal, counted as if they were all new."""
+    return parsed(plugin, journal_output(plugin, max_priority=4))
+
+
 def syncthing(plugin, tick, seed) -> Reading:
     """Three folders, one of which pulls a batch of changes now and then, which reads as info."""
     percent = (tick + seed) % 30 * 10
@@ -307,7 +342,7 @@ SAMPLES: Dict[str, Callable[[Any, int, int], Any]] = {
 # Types whose sample runs the monitor's own parser on canned output, so each needs a real plugin.
 PARSED_SAMPLES: Dict[str, Callable[[Any, int, int], CollectResult]] = {
     'package_updates': package_updates, 'reboot_required': reboot_required, 'interfaces': interfaces,
-    'sessions': sessions, 'host_control': host_control,
+    'sessions': sessions, 'host_control': host_control, 'journal': journal,
 }
 SAMPLES.update(PARSED_SAMPLES)
 
@@ -342,6 +377,14 @@ class SampleEngine(XMonitorEngine):
         self._apply(plugin, CollectResult(metrics=metrics, status=status,
                                           snapshot=snapshot[0] if snapshot else None))
         return True
+
+    async def dispatch_action(self, plugin, action_id: str, **kwargs):
+        """A journal search reads the demo journal; every other action runs as usual."""
+        if action_id != 'query_logs' or plugin.config.get('type') != 'journal':
+            return await super().dispatch_action(plugin, action_id, **kwargs)
+        output = journal_output(plugin, max_priority=int(kwargs.get('priority', 7)))
+        newest_first = '\n'.join(reversed(output.splitlines()))
+        return self.finish_action(plugin, plugin.interpret_action(action_id, CmdResult(0, newest_first, ''), **kwargs))
 
 
 def main():

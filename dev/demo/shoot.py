@@ -10,6 +10,8 @@ PAGES = {
     'overview': '/',
     'events': '/events',
     'schedules': '/schedules',
+    'logs': '/logs',
+    'journal': '/monitor/heimdall-journal',
     'group': '/monitor/Local%20Services',
     'http': '/monitor/self-http',
     'systemd': '/monitor/ws-nginx',

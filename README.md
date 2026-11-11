@@ -10,6 +10,7 @@ X-Monitor is a web-based network and systems monitor for Linux hosts, homelabs a
 
 - **Agent or agentless**: run the small X-Monitor agent on hosts you control for live events, or reach any host over SSH, HTTP, DNS and ICMP. Every monitor works either way.
 - **Live dashboard**: status, latency history, charts and logs, in a light and a dark theme.
+- **Log search**: search the systemd journal of every host at once by time, priority, unit and text, and group the results by host, unit or priority.
 - **Notifications**: to the desktop, ntfy, email, webhooks or about a hundred services through Apprise, when a monitor fails, keeps failing or recovers.
 - **Actions**: restart services, run your own commands, and reboot, suspend or wake hosts, each confirmed and logged.
 - **Groups and links**: nest monitors by host, service or location, and show one monitor in several groups at once.
