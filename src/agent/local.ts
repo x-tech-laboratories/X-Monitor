@@ -29,7 +29,8 @@ export interface LocalEngineLike {
   dispatch_action(plugin: unknown, action_id: string, args?: Record<string, unknown>): Promise<[boolean, Record<string, unknown> | null]>;
   run_cycle_now(plugin: unknown): Promise<unknown>;
   db: {
-    pending(options: { after: number; limit: number }): [number, string, Record<string, unknown>][] | Promise<[number, string, Record<string, unknown>][]>;
+    pending(after: number, limit: number): [number, string, Record<string, unknown>][];
+    flush?(): Promise<void>;
     acknowledge(through: number): void;
     trim(): void;
     latest_status(plugin_id: string): string;
@@ -40,9 +41,8 @@ export type EngineFactory = (agent_id: string, plan_path: string, database_path:
 
 // Loads the engine only when the agent is first handed monitors, so a notify-only agent never loads it.
 const default_factory: EngineFactory = async (agent_id, plan, database) => {
-  const module_path = "../core/coordination/local_engine.ts";
-  const { LocalEngine } = (await import(module_path)) as { LocalEngine: new (agent_id: string, plan: string, database: string) => LocalEngineLike };
-  return new LocalEngine(agent_id, plan, database);
+  const { LocalEngine } = await import("../core/coordination/local_engine.ts");
+  return new LocalEngine(agent_id, plan, database) as unknown as LocalEngineLike;
 };
 
 // Where the agent keeps the plan the server last sent it.
@@ -125,7 +125,9 @@ export class LocalRunner {
   // The outbox records past `after`, or none while no engine runs.
   async pending(after: number, limit = 500): Promise<OutboxRecord[]> {
     if (this.engine === null) return [];
-    return (await this.engine.db.pending({ after, limit })).map(([seq, kind, payload]): OutboxRecord => [seq, kind, payload]);
+    // Records still queued for the disk join the outbox first, as the Python runner flushed before reading.
+    await this.engine.db.flush?.();
+    return this.engine.db.pending(after, limit).map(([seq, kind, payload]): OutboxRecord => [seq, kind, payload]);
   }
 
   // Forgets the records the server has stored, and drops the oldest results if the outbox grew past its limit.
