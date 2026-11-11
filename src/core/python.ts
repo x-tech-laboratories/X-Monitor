@@ -114,3 +114,48 @@ export function close_matches(word: string, candidates: Iterable<string>, count 
   scored.sort((a, b) => b[0] - a[0] || (a[1] < b[1] ? 1 : a[1] > b[1] ? -1 : 0));
   return scored.slice(0, count).map(([, candidate]) => candidate);
 }
+
+// ── JSON ─────────────────────────────────────────────────────────────────────
+
+function ascii_string(text: string): string {
+  return JSON.stringify(text).replace(/[\u007f-￿]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
+// JSON as Python's json.dumps writes it: ", " and ": " separators, non-ASCII escaped, keys in insertion order unless
+// `sort_keys`, so settings the Python app stored compare equal.
+export function python_dumps(value: unknown, sort_keys = false): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "string") return ascii_string(value);
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return "NaN";
+    if (!Number.isFinite(value)) return value > 0 ? "Infinity" : "-Infinity";
+    return JSON.stringify(value);
+  }
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (value instanceof Date) return ascii_string(value.toISOString());
+  if (Array.isArray(value)) return `[${value.map((item) => python_dumps(item, sort_keys)).join(", ")}]`;
+  if (typeof value === "object") {
+    const keys = Object.keys(value).filter((key) => (value as Record<string, unknown>)[key] !== undefined);
+    if (sort_keys) keys.sort();
+    return `{${keys.map((key) => `${ascii_string(key)}: ${python_dumps((value as Record<string, unknown>)[key], sort_keys)}`).join(", ")}}`;
+  }
+  return ascii_string(String(value));
+}
+
+// Whether two JSON-like values are equal as Python's == compares dicts and lists.
+export function deep_equal(first: unknown, second: unknown): boolean {
+  if (first === second) return true;
+  if (first instanceof Date && second instanceof Date) return first.getTime() === second.getTime();
+  if (typeof first !== "object" || typeof second !== "object" || first === null || second === null) {
+    return typeof first === "number" && typeof second === "number" && Number.isNaN(first) && Number.isNaN(second);
+  }
+  if (Array.isArray(first) !== Array.isArray(second)) return false;
+  if (Array.isArray(first)) {
+    const other = second as unknown[];
+    return first.length === other.length && first.every((item, index) => deep_equal(item, other[index]));
+  }
+  const first_keys = Object.keys(first).filter((key) => (first as Record<string, unknown>)[key] !== undefined);
+  const second_keys = Object.keys(second).filter((key) => (second as Record<string, unknown>)[key] !== undefined);
+  if (first_keys.length !== second_keys.length) return false;
+  return first_keys.every((key) => Object.hasOwn(second, key) && deep_equal((first as Record<string, unknown>)[key], (second as Record<string, unknown>)[key]));
+}
