@@ -3,7 +3,7 @@
 
 import type { DispatchResult } from "../../core/connectors/types.ts";
 import { iso_local } from "../../shared/time.ts";
-import { iter_monitors, type GraphNode } from "./engine.ts";
+import { iter_monitors, type GraphView as GraphNode } from "../../core/coordination/monitor_graph.ts";
 
 // ── Choices ──────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ export function is_journal(plugin: { config?: Record<string, unknown>; construct
 
 // Every journal monitor under the roots, once each, in config order.
 export function journal_monitors<Monitor extends JournalLike>(roots: readonly Monitor[]): Monitor[] {
-  return iter_monitors(roots).filter(is_journal);
+  return [...iter_monitors(roots)].filter(is_journal);
 }
 
 // ── Rows ─────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 // its path of ids from the root, and `monitor` names the monitor it shows.
 
 import { status_of, type Status } from "../../shared/status.ts";
-import { child_label, type GraphNode } from "./engine.ts";
+import { child_label, type GraphView as GraphNode } from "../../core/coordination/monitor_graph.ts";
 
 export interface TreeNode {
   id: string;

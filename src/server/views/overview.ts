@@ -4,7 +4,7 @@
 import type { DatabaseManager, EventModelDict, MetricModelDict } from "../../core/database/database.ts";
 import { STATUS_BADGES, type BadgeTone } from "../../shared/page_view.ts";
 import { iso_local } from "../../shared/time.ts";
-import { iter_monitors, restates_children } from "./engine.ts";
+import { iter_monitors, restates_children } from "../../core/coordination/monitor_graph.ts";
 import { fleet_view, type FleetMonitor, type FleetView } from "./fleet.ts";
 
 export const OVERVIEW_STATUS_ORDER = ["online", "info", "failed", "warning", "unavailable"] as const;
@@ -21,7 +21,7 @@ export interface OverviewMonitor extends FleetMonitor {
 
 // The monitor hierarchy as its monitors, each once however many groups hold it, leaving out plain groups.
 export function collect_leaf_monitors<Monitor extends FleetMonitor>(plugins: readonly Monitor[]): Monitor[] {
-  return iter_monitors(plugins).filter((plugin) => !restates_children(plugin));
+  return [...iter_monitors(plugins)].filter((plugin) => !restates_children(plugin));
 }
 
 // Monitors by status, and per type by status, for the two charts.

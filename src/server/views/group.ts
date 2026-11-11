@@ -8,7 +8,7 @@ import type { BodyView, ChildCardView } from "../../shared/page_view.ts";
 import { status_of } from "../../shared/status.ts";
 import type { LayoutRow, UISpec } from "../../shared/ui_spec.ts";
 import { dialog_views, info_card } from "./components.ts";
-import { child_label, iter_monitors } from "./engine.ts";
+import { child_label, iter_monitors } from "../../core/coordination/monitor_graph.ts";
 import { CompositeLayout } from "./layout.ts";
 import { build_body, type BuildContext } from "./monitor.ts";
 import { build_spec } from "./spec.ts";

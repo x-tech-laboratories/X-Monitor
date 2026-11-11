@@ -25,7 +25,7 @@ import { api, is_read_only, takes_caller, type PublicMethods } from "./api_spec.
 import { acting_client, register_auth, type Auth } from "./auth.ts";
 import type { ServerEngine } from "./engine_api.ts";
 import { render } from "./exporters/prometheus.ts";
-import { find_monitor } from "./monitor_tree.ts";
+import { find_monitor } from "../core/coordination/monitor_graph.ts";
 import { ApiError, create_methods, type Caller, type Methods } from "./methods.ts";
 import type { NotificationEngine } from "./notifications/index.ts";
 import { covers_monitor, match_token } from "./tokens.ts";
@@ -276,7 +276,7 @@ export async function build_app(options: AppOptions): Promise<XMonitorApp> {
 // ── Push helpers ─────────────────────────────────────────────────────────────
 
 function find_pushable(engine: ServerEngine, monitor_id: string): PushablePlugin | null {
-  const plugin = find_monitor(engine.plugins, monitor_id);
+  const plugin = find_monitor(engine, monitor_id);
   return plugin !== null && is_pushable(plugin) ? plugin : null;
 }
 

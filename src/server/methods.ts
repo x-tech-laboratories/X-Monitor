@@ -10,7 +10,7 @@ import { action_id_of } from "../core/coordination/jobs.ts";
 import type { JobsGateway } from "../core/coordination/jobs.ts";
 import type { ServerEngine, ServerPlugin } from "./engine_api.ts";
 import type { JsonValue } from "./json.ts";
-import { find_monitor, iter_monitors, restates_children } from "./monitor_tree.ts";
+import { find_monitor, iter_monitors, restates_children } from "../core/coordination/monitor_graph.ts";
 import type { NotificationEngine } from "./notifications/index.ts";
 import { attribute_names, history_requests, metric_names, read_attribute, resolve_spec, run_rules, to_json, with_item_rules } from "./spec.ts";
 import { action_names, build_overview, build_tree_nodes, read_fleet, schedule_rows, when_text } from "./views.ts";
@@ -67,7 +67,7 @@ function jobs_of(plugin: ServerPlugin): JobsGateway | null {
 }
 
 function find(context: MethodContext, monitor_id: string): ServerPlugin {
-  const plugin = find_monitor(context.engine.plugins, monitor_id);
+  const plugin = find_monitor(context.engine, monitor_id);
   if (plugin === null) throw new ApiError(404, { error: "not found" });
   return plugin;
 }
@@ -129,7 +129,7 @@ export function create_methods(context: MethodContext) {
 
     async list_monitors() {
       const statuses = db.latest_statuses();
-      return iter_monitors(engine.plugins).map((plugin) => monitor_summary(plugin, statuses));
+      return [...iter_monitors(engine.plugins)].map((plugin) => monitor_summary(plugin, statuses));
     },
 
     async get_monitor(monitor_id: string) {
@@ -211,7 +211,7 @@ export function create_methods(context: MethodContext) {
     // ── Push ───────────────────────────────────────────────────────────────
 
     push(monitor_id: string, status: string, message: string | null, value: number | null, source: string | null) {
-      const plugin = find_monitor(engine.plugins, monitor_id);
+      const plugin = find_monitor(engine, monitor_id);
       if (plugin === null || !is_pushable(plugin)) throw new ApiError(404, { error: "not found" });
       if (status !== "up" && status !== "down") throw new ApiError(400, { error: "status must be 'up' or 'down'" });
       return { success: plugin.record_push(status, message, value, source) };
@@ -317,7 +317,7 @@ export function create_methods(context: MethodContext) {
 
     // The monitors whose journals the logs view searches.
     async list_journal_monitors() {
-      return iter_monitors(engine.plugins).filter((plugin) => plugin.config?.type === "journal").map((plugin) => ({
+      return [...iter_monitors(engine.plugins)].filter((plugin) => plugin.config?.type === "journal").map((plugin) => ({
         id: plugin.id, name: plugin.name, target: plugin.target, max_entries: Number(plugin.max_entries ?? 500),
       }));
     },

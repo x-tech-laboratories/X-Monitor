@@ -7,7 +7,8 @@
 import { create_logger_for } from "../../core/logging.ts";
 import { parse_duration } from "../../monitors/base/plugin_helpers.ts";
 import { is_status, severity, type Status } from "../../shared/status.ts";
-import { is_link, restates_children, type TreeMonitor } from "../monitor_tree.ts";
+import { is_link, restates_children } from "../../core/coordination/monitor_graph.ts";
+import type { NotifyingMonitor as TreeMonitor } from "./index.ts";
 
 const log = create_logger_for("x_monitor.core.notifications.rules");
 

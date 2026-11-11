@@ -4,7 +4,7 @@ import { DatabaseManager } from "../../src/core/database/database.ts";
 import { child_cell_style, set_child_open, spec_with_titles } from "../../src/server/views/group.ts";
 import { CompositeLayout, resolve_rows } from "../../src/server/views/layout.ts";
 import { build_body, new_context } from "../../src/server/views/monitor.ts";
-import { iter_monitors } from "../../src/server/views/engine.ts";
+import { iter_monitors } from "../../src/core/coordination/monitor_graph.ts";
 import type { BodyView, WidgetView } from "../../src/shared/page_view.ts";
 import type { UISpec } from "../../src/shared/ui_spec.ts";
 import { make_plugin } from "../harness.ts";
@@ -128,7 +128,7 @@ describe("descendants", () => {
     const outer = make_plugin(SpecPlugin, { name: "Outer", id: "outer", type: "group" }, db);
     inner.children = [leaf_b];
     outer.children = [inner, leaf_a];
-    expect(iter_monitors(outer.children).map((plugin) => plugin.id)).toEqual(["inner", "b", "a"]);
+    expect([...iter_monitors(outer.children)].map((plugin) => plugin.id)).toEqual(["inner", "b", "a"]);
   });
 });
 
