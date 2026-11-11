@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { float_or_null, fnmatch, format_fixed, int_or_null, parse_float, parse_int, partition, split_lines, split_words } from "../../../src/monitors/base/text_parsing.ts";
+import { float_or_null, fnmatch, format_fixed, python_float_repr, python_regex, int_or_null, parse_float, parse_int, partition, split_lines, split_words } from "../../../src/monitors/base/text_parsing.ts";
 
 describe("splitting", () => {
   it("drops the empty line after a final newline", () => expect(split_lines("a\nb\n")).toEqual(["a", "b"]));
@@ -47,5 +47,23 @@ describe("fnmatch", () => {
     expect(fnmatch("a.b", "a.b")).toBe(true);
     expect(fnmatch("axb", "a.b")).toBe(false);
     expect(fnmatch("ETH0", "eth*")).toBe(false);
+  });
+});
+
+describe("python float repr", () => {
+  it("writes floats as Python's str does", () => {
+    expect(python_float_repr(42)).toBe("42.0");
+    expect(python_float_repr(2.5)).toBe("2.5");
+    expect(python_float_repr(0.1)).toBe("0.1");
+    expect(python_float_repr(1e-5)).toBe("1e-05");
+    expect(python_float_repr(1e16)).toBe("1e+16");
+    expect(python_float_repr(123456789012345.6)).toBe("123456789012345.6");
+    expect(python_float_repr(-0.001)).toBe("-0.001");
+  });
+});
+
+describe("python regex", () => {
+  it("rewrites named groups", () => {
+    expect(python_regex("(?P<value>\\d+)").exec("a 12")!.groups!.value).toBe("12");
   });
 });

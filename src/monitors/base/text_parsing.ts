@@ -135,3 +135,29 @@ export function fnmatch(name: string, pattern: string): boolean {
 export function round_half_even(value: number, digits = 0): number {
   return Number(format_fixed(value, digits));
 }
+
+// A float as Python's str() and repr() write it: the shortest round-trip digits, "42.0" for a whole number, and an
+// exponent such as "1e-05" below 1e-4 or from 1e16.
+export function python_float_repr(value: number): string {
+  if (Number.isNaN(value)) return "nan";
+  if (!Number.isFinite(value)) return value > 0 ? "inf" : "-inf";
+  if (value === 0) return Object.is(value, -0) ? "-0.0" : "0.0";
+  const [mantissa, exponent_text] = value.toExponential().split("e");
+  const exponent = Number(exponent_text);
+  const negative = mantissa.startsWith("-");
+  const digits = mantissa.replace("-", "").replace(".", "");
+  const sign = negative ? "-" : "";
+  if (exponent < -4 || exponent >= 16) {
+    const body = digits.length > 1 ? `${digits[0]}.${digits.slice(1)}` : digits;
+    return `${sign}${body}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  }
+  if (exponent < 0) return `${sign}0.${"0".repeat(-exponent - 1)}${digits}`;
+  const whole = digits.slice(0, exponent + 1).padEnd(exponent + 1, "0");
+  const fraction = digits.slice(exponent + 1);
+  return `${sign}${whole}.${fraction || "0"}`;
+}
+
+// A Python regular expression as a JavaScript one: named groups (?P<name>...) and backreferences (?P=name) rewritten.
+export function python_regex(pattern: string, flags = ""): RegExp {
+  return new RegExp(pattern.replace(/\(\?P<([A-Za-z_]\w*)>/g, "(?<$1>").replace(/\(\?P=([A-Za-z_]\w*)\)/g, "\\k<$1>"), flags);
+}
