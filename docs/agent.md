@@ -3,10 +3,9 @@
 The X-Monitor agent is a small daemon that runs on a monitored host, dials **outward** to
 X-Monitor over a WebSocket, and holds that connection open. It needs no inbound port, no
 certificate of its own, and no firewall rule — it reuses the dashboard's port, so a host
-behind NAT works with no extra setup.
-
-Agents that keep monitoring their host while cut off from X-Monitor are planned in
-[offline-agents-plan.md](offline-agents-plan.md).
+behind NAT works with no extra setup. The agent is written in TypeScript on X-Libs' agent client and speaks
+X-Monitor's protocol version 3; an agent from the Python X-Monitor speaks version 2 and is turned away, so upgrade the
+agents together with the server.
 
 Two things travel on that one connection:
 
@@ -51,9 +50,9 @@ plugins:
 | `public_key` | The agent's OpenSSH ed25519 public key, one line. It is not secret, so it can sit in a generated or world-readable `config.yaml` |
 | `host`  | Display label for the target. Optional — defaults to the id                  |
 
-On each connection X-Monitor sends the agent a fresh random nonce, and the agent signs it with its
-private key. X-Monitor holds no agent secrets. An agent without a valid `public_key` can never
-connect.
+On each connection the agent names its id, X-Monitor sends it a fresh random nonce, and the agent
+signs `x-monitor-agent-v1|<id>|<nonce>` with its private key. X-Monitor holds no agent secrets. An
+agent without a valid `public_key` can never connect.
 
 `agent:` on a group is inherited by every monitor beneath it, so moving a whole host
 between transports is one line. A monitor with both `agent:` and `ssh_config:` uses the
@@ -87,41 +86,44 @@ its monitors on the server. Turning `run_monitors` off gives the monitors back t
 
 ## Installing the agent
 
-```bash
-pip install x-monitor            # ships the `x-monitor-agent` command
-```
+The agent is the `x-monitor-agent` command: `packages.agent` in the flake, or `node src/agent/main.ts` from a
+checkout after `npm ci`. It needs Node 24.
 
 ```yaml
 # /etc/x-monitor-agent.yaml
-url: "ws://x-monitor.example.com:8080/api/agent/ws"   # wss:// behind TLS
+url: "wss://x-monitor.example.com/api/agent/ws"
 id: "web-01"
 key_file: "/run/secrets/x_monitor_agent_key"
 ```
 
 | Field        | Description                                                          |
 |--------------|----------------------------------------------------------------------|
-| `url`        | The server's agent endpoint. `wss://` when the dashboard is behind TLS |
+| `url`        | The server's agent endpoint, `/api/agent/ws` on the dashboard's address. It must be `wss://`; `ws://` is refused except to this machine (`localhost`, `127.x.x.x` or `::1`), so commands and their output always travel encrypted |
 | `id`         | Must match an `id` in the server's `agents:` list                     |
 | `key_file`   | Path to the agent's unencrypted OpenSSH ed25519 private key (`ssh-keygen -t ed25519 -N ""`). Keep it with your secret manager, readable only by the agent's user |
 | `hostname`   | Hostname reported to the server. Defaults to the machine's own         |
+| `state_dir`  | Where an agent with `run_monitors` keeps its monitors' database and outbox |
+| `notify_only` | Refuse commands and event streams, and only show desktop notifications (see below) |
+| `local_socket` | The socket a system agent serves its own notifications on while X-Monitor is out of reach |
 
 ```bash
 x-monitor-agent --config /etc/x-monitor-agent.yaml
 ```
 
 Every setting can come from the environment instead (`XMONITOR_AGENT_URL`, `XMONITOR_AGENT_ID`,
-`XMONITOR_AGENT_KEY_FILE`, `XMONITOR_AGENT_HOSTNAME`), so a systemd unit or container can run the
-agent without a config file.
+`XMONITOR_AGENT_KEY_FILE`, `XMONITOR_AGENT_HOSTNAME`, `XMONITOR_AGENT_STATE_DIR`,
+`XMONITOR_AGENT_NOTIFY_ONLY`, `XMONITOR_AGENT_LOCAL_SOCKET`), so a systemd unit or container can run the agent without a config file.
+`--verbose` logs every frame handled.
 
 On NixOS the flake exports `nixosModules.agent` for the monitored host, alongside the
 existing `nixosModules.default` for the server. The agent module defaults to
-`packages.agent`, a standalone build carrying only what the agent imports — a monitored
-host never builds nicegui, peewee, dnspython or asyncssh to run one:
+`packages.agent`, a standalone build carrying only what the agent runs (its own code, the engine and
+the monitors), so a monitored host never carries the server or the page:
 
 ```nix
 services.x-monitor-agent = {
   enable = true;
-  url = "ws://x-monitor.example.com:8080/api/agent/ws";
+  url = "wss://x-monitor.example.com/api/agent/ws";
   id = "web-01";
   keyFile = config.sops.secrets.x_monitor_agent_key.path;
   extraGroups = [ "systemd-journal" ];      # for journal streams and unit logs
@@ -135,7 +137,7 @@ the agent as root.
 
 The agent reconnects on its own with exponential backoff and jitter, so a server restart
 needs no action on the host. A monitor whose agent is not currently connected reports
-failed with an explicit message — the same way a refused SSH dial behaves — and recovers
+unavailable with an explicit message, the same way a refused SSH dial behaves, and recovers
 by itself.
 
 ## Desktop notifications
