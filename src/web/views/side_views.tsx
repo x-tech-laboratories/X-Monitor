@@ -14,7 +14,8 @@ import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useState, type MouseEvent } from "react";
 
-import { filter_rows } from "../../shared/table_rows.ts";
+import { filter_rows } from "@x-tech-laboratories/x-libs/web/tables";
+
 import { backups, calls, live, type ScheduleRow } from "../api.ts";
 import { notify_error } from "../ui.tsx";
 import { LevelBadge } from "./body.tsx";

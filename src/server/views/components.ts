@@ -4,6 +4,8 @@
 
 import { python_format, python_str } from "@x-tech-laboratories/x-libs/python_text";
 
+import { keyed_rows, type TableRow } from "@x-tech-laboratories/x-libs/web/tables";
+
 import { metric_family_items } from "../../monitors/base/metric_family.ts";
 import type { Plugin } from "../../monitors/base/plugin_base.ts";
 import { format_duration } from "../../monitors/base/plugin_helpers.ts";
@@ -13,7 +15,6 @@ import type {
 } from "../../shared/page_view.ts";
 import { toggle_position } from "../../shared/page_view.ts";
 import { status_of, type Status } from "../../shared/status.ts";
-import { keyed_rows, type TableRow } from "../../shared/table_rows.ts";
 import { iso_local } from "../../shared/time.ts";
 import type { ButtonSpec, ChartSpec, DialogFieldSpec, DialogSpec, FilterSpec, JobPanelSpec, RepeatSpec, TableSpec } from "../../shared/ui_spec.ts";
 import { ENABLED_PREDICATES, FORMATTERS, ITEM_COLOR_RULES, ITEM_FORMATTERS, resolve } from "../../shared/ui_registry.ts";

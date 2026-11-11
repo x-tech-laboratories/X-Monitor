@@ -4,7 +4,8 @@
 
 import { python_format, python_str } from "@x-tech-laboratories/x-libs/python_text";
 
-import type { SortColumn, TableRow } from "./table_rows.ts";
+import type { SortColumn, TableRow } from "@x-tech-laboratories/x-libs/web/tables";
+
 import type { StripState } from "./charts.ts";
 import type { Status } from "./status.ts";
 

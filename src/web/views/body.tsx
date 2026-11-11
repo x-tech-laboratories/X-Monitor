@@ -8,12 +8,13 @@ import { Section, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layo
 import { DataTable, type TableColumn } from "@x-tech-laboratories/x-libs/web/react/table";
 import { createContext, useContext, useState, type CSSProperties } from "react";
 
+import { filter_rows, tree_rows, type TableRow } from "@x-tech-laboratories/x-libs/web/tables";
+
 import { color_for } from "../../shared/charts.ts";
 import type {
   BodyView, ButtonsView, ButtonView, ChartView, ChildCardView, CellView, DialogView, FeedView, JobPanelView, RepeatView, RowActionView, ShareView, StripView, TableView, WidgetView,
 } from "../../shared/page_view.ts";
 import { row_params, substitute, title_words } from "../../shared/page_view.ts";
-import { filter_rows, tree_rows, type TableRow } from "../../shared/table_rows.ts";
 import { calls } from "../api.ts";
 import { confirmed, notify, notify_error, StateValue, status_color, StatusDot, tone_of } from "../ui.tsx";
 import { ArchiveBrowser } from "./browser.tsx";

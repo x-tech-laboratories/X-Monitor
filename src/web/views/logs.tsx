@@ -8,7 +8,8 @@ import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/stat
 import { DataTable, type TableColumn } from "@x-tech-laboratories/x-libs/web/react/table";
 import { useState } from "react";
 
-import { filter_rows, tree_rows } from "../../shared/table_rows.ts";
+import { filter_rows, tree_rows } from "@x-tech-laboratories/x-libs/web/tables";
+
 import { calls, type EntryRow } from "../api.ts";
 import { notify_error } from "../ui.tsx";
 

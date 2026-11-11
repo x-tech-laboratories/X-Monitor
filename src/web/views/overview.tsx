@@ -9,8 +9,9 @@ import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useState } from "react";
 
+import { filter_rows } from "@x-tech-laboratories/x-libs/web/tables";
+
 import { color_for, TRACK_COLOR } from "../../shared/charts.ts";
-import { filter_rows } from "../../shared/table_rows.ts";
 import { calls, live, type FleetView, type MonitorRow, type OverviewView } from "../api.ts";
 import { status_color, StatusBadge, StatusDot, tone_of } from "../ui.tsx";
 import { LevelBadge } from "./body.tsx";

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { filter_rows } from "@x-tech-laboratories/x-libs/web/tables";
+
 import { DatabaseManager } from "../../src/core/database/database.ts";
 import { parse_schedule } from "../../src/core/coordination/schedule.ts";
 import { parse_triggers } from "../../src/core/coordination/triggers.ts";
@@ -13,7 +15,6 @@ import { schedule_rows, type ScheduledMonitor } from "../../src/server/views/sch
 import { branch_ids, build_tree_nodes, failed_branch_ids, monitor_for_key, selected_key, sidebar_settings } from "../../src/server/views/sidebar.ts";
 import type { GraphView as GraphNode } from "../../src/core/coordination/monitor_graph.ts";
 import { STRIP_CELLS } from "../../src/shared/charts.ts";
-import { filter_rows } from "../../src/shared/table_rows.ts";
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 

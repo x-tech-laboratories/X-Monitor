@@ -7,9 +7,10 @@ import { use_watch } from "@x-tech-laboratories/x-libs/web/react/watch";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import type { TableRow } from "@x-tech-laboratories/x-libs/web/tables";
+
 import type { DialogFieldView, DialogView } from "../../shared/page_view.ts";
 import { form_values, row_params, substitute } from "../../shared/page_view.ts";
-import type { TableRow } from "../../shared/table_rows.ts";
 import { calls, changes, type JobLog } from "../api.ts";
 import { confirmed, notify_error } from "../ui.tsx";
 
