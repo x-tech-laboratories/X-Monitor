@@ -16,17 +16,17 @@ into five groups:
 | Regional SMS and messengers | twilio, plivo, 46elks, clicksendsms, aliyun-sms, dingding, feishu, wecom, line, serverchan, pushplus, kook, vk | Through Apprise, or a webhook with a message template |
 | Out of scope | google-sheets, webpush, HaloPSA, jira-service-management, clickup, lunasea | Skip: ticketing or logging tools, or they need a browser subscription |
 
-**Apprise** is the shortcut. It is a Python library that covers most of the Kuma list, and Kuma
-itself uses it through its command line tool. Apprise plus about ten built-in providers covers
+**Apprise** is the shortcut. It covers most of the Kuma list, and X-Monitor, like Kuma, runs it
+through its command line tool. Apprise plus about ten built-in providers covers
 roughly what Kuma does, without porting 109 files.
 
 Kuma has no desktop notifications. X-Monitor has them, through its agent.
 
 ## How it fits X-Monitor
 
-- **Detecting changes:** the Notification Engine (`x_monitor/core/notifications/`) subscribes to the
-  change bus. Every collection cycle writes a status, so it sees each cycle. It hands each write
-  to the event loop and never sends anything on the writer's thread.
+- **Detecting changes:** the Notification Engine (`src/server/notifications/`) subscribes to the
+  change bus. Every collection cycle writes a status, so it sees each cycle, and each delivery runs
+  apart from the write that caused it.
 - **Restarts:** it starts from the status history X-Monitor loads at startup, so a restart does not
   announce a problem again.
 - **Sending:** each delivery runs as its own task and is retried twice, after 5s and 30s. A
@@ -74,7 +74,7 @@ of one per monitor.
    `POST /api/notifications/<channel>/test`.
 2. **Generic channels:** webhook and ntfy are done: a JSON body or a payload template for the
    webhook, and a tap link, priority and tags for ntfy. Every secret can be given as `*_file`.
-   smtp and Apprise (the optional extra `x-monitor[apprise]`) are done too.
+   smtp and Apprise (through the `apprise` program) are done too.
 3. **More providers and UI:** the dashboard part is done: a mute switch on each monitor's page,
    and a header dialog that tests channels and lists mutes. Still to do: telegram, discord,
    slack, gotify, pushover, matrix, home-assistant and signal built in.
