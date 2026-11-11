@@ -4,7 +4,7 @@ import { is_watched } from "../../src/core/coordination/jobs.ts";
 import { DatabaseManager } from "../../src/core/database/database.ts";
 import type { JobDict } from "../../src/core/state/records.ts";
 import { job_panel } from "../../src/server/views/components.ts";
-import { browse_folder, oneshot_cards, restore_question } from "../../src/server/views/custom.ts";
+import { browse_folder, browser_view, oneshot_cards, restore_question } from "../../src/server/views/custom.ts";
 import { job_log_view, job_summary, job_title, JobWatches, LEASE_SECONDS } from "../../src/server/views/job_log.ts";
 import {
   action_names, build_body, cancel_job, lede, monitor_page_view, new_context, poll_now, run_header_action, run_header_toggle, schedule_lines, start_job,
@@ -369,23 +369,37 @@ describe("the borg archive browser", () => {
       return this.listings.get(`${archive}:${path}`) ?? null;
     }
 
-    override async run_action(action_id: string, args: Record<string, unknown> = {}): Promise<[boolean, string]> {
+    browse(action_id: string, args: Record<string, unknown>): [boolean, Record<string, string>] {
       this.browsed.push([action_id, args]);
       this.listings.set(`${String(args.archive)}:${String(args.path)}`, [
         { name: "etc", path: "etc", dir: true, size: null, mtime: "2026-10-01" },
         { name: "a.txt", path: "a.txt", dir: false, size: 2048, mtime: "2026-10-02" },
         { name: "b.txt", path: "b.txt", dir: false, size: 10, mtime: "2026-10-03" },
       ]);
-      return [true, ""];
+      return [true, { content: "" }];
     }
   }
 
   it("lists a folder it has not listed yet, cut at the browse limit", async () => {
     const plugin = make_plugin(Borg, { name: "borg", id: "borg" });
-    const folder = await browse_folder(plugin, "host-2026-10-03", "");
+    (plugin.engine as unknown as { dispatch_handler: unknown }).dispatch_handler = (_plugin: unknown, action_id: string, args: Record<string, unknown>) => plugin.browse(action_id, args);
+    const folder = await browse_folder(plugin.engine!, plugin, "host-2026-10-03", "");
     expect(plugin.browsed).toEqual([["browse_archive", { archive: "host-2026-10-03", path: "" }]]);
     expect(folder.status).toBe("Showing the first 2 entries — raise browse_limit to see more.");
     expect(folder.rows.map((row) => [row.name, row.dir, row.size])).toEqual([["etc", true, ""], ["a.txt", false, "2.0 KB"]]);
+  });
+
+  it("reads the listing the browse action returns in its metadata", async () => {
+    const plugin = make_plugin(SpecPlugin, { name: "borg", id: "borg" }) as SpecPlugin & { browse_limit: number };
+    plugin.browse_limit = 10;
+    (plugin.engine as unknown as { dispatch_handler: unknown }).dispatch_handler = () => [true, { content: "", listing: JSON.stringify({ archive: "a", member: "", entries: [{ name: "etc", path: "etc", dir: true, type: "d", size: null, mtime: "" }] }) }];
+    const folder = await browse_folder(plugin.engine!, plugin, "a", "");
+    expect([folder.status, folder.rows.map((row) => row.name)]).toEqual(["1 entries", ["etc"]]);
+  });
+
+  it("takes the archives and restore folder from the monitor's custom view", () => {
+    const plugin = make_plugin(SpecPlugin, { name: "borg", id: "borg" });
+    expect(browser_view(plugin, { cell: "browser", archives: [{ name: "b" }, "a"], browse_limit: 50, restore_dir: "/r" })).toEqual({ type: "browser", monitor_id: "borg", archives: ["b", "a"], restore_dir: "/r", browse_limit: 50 });
   });
 
   it("asks before restoring, listing ten paths at most", () => {

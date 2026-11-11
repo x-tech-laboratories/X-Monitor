@@ -168,7 +168,7 @@ export function build_spec(plugin: Plugin, options: SpecBuild = {}): LayoutTarge
   }
 
   const events = spec.events ?? false;
-  if (events && layout.renders("events")) layout.cell("events").push(event_feed(plugin, typeof events === "object" ? (events as { title?: string; limit?: number; full_height?: boolean }) : {}));
+  if (events && layout.renders("events")) layout.cell("events").push(event_feed(plugin, typeof events === "object" ? events : {}));
 
   const filters = spec.filters ?? {};
   for (const [widget_name, table] of Object.entries(spec.tables ?? {})) {

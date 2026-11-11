@@ -79,16 +79,21 @@ export function systemd_service_rows(plugin: Plugin, context: "page" | "inline",
 
 // ── borg ─────────────────────────────────────────────────────────────────────
 
-// The archive browser's starting point: the archive names the monitor last listed, and where restores go.
-export function browser_view(plugin: Plugin): BrowserView {
-  const cached = plugin_attr(plugin, "cached_archives") as [Record<string, unknown>[], unknown] | Record<string, unknown>[] | undefined;
-  const archives = Array.isArray(cached) && Array.isArray(cached[0]) ? (cached[0] as Record<string, unknown>[]) : Array.isArray(cached) ? (cached as Record<string, unknown>[]) : [];
+// The archive browser's starting point: the archive names (from the monitor's custom_view() data, else its last
+// listing), the browse limit and where restores go.
+export function browser_view(plugin: Plugin, data: Record<string, unknown> | null = null): BrowserView {
+  const names = (list: unknown): string[] => (Array.isArray(list) ? list.map((archive) => (typeof archive === "object" && archive !== null ? (archive as Record<string, unknown>).name : archive)).filter(Boolean).map(String) : []);
+  let archives = names(data?.archives);
+  if (data?.archives === undefined) {
+    const cached = plugin_attr(plugin, "cached_archives");
+    archives = names(Array.isArray(cached) && Array.isArray(cached[0]) ? cached[0] : cached);
+  }
   return {
     type: "browser",
     monitor_id: plugin.id,
-    archives: archives.map((archive) => archive.name).filter((name): name is string => Boolean(name)).map(String),
-    restore_dir: String(plugin_attr(plugin, "restore_dir") ?? ""),
-    browse_limit: Number(plugin_attr(plugin, "browse_limit") ?? 2000),
+    archives,
+    restore_dir: String(data?.restore_dir ?? plugin_attr(plugin, "restore_dir") ?? ""),
+    browse_limit: Number(data?.browse_limit ?? plugin_attr(plugin, "browse_limit") ?? 2000),
   };
 }
 
@@ -116,15 +121,26 @@ function format_size(size: number): string {
   return `${size} B`;
 }
 
-// The children of `path` in `archive`, listing it through the monitor's browse action when it has not been listed yet;
-// borg reads the whole archive to list a folder, so a large one takes a while.
-export async function browse_folder(plugin: Plugin, archive: string, path: string): Promise<BrowseFolder> {
-  const listing = (plugin as unknown as { listing(archive: string, path: string): Record<string, unknown>[] | null }).listing.bind(plugin);
-  let entries = listing(archive, path);
+// The entries of a listing the browse action returned in its metadata, or null when it carried none.
+function listing_entries(metadata: Record<string, string> | null): Record<string, unknown>[] | null {
+  if (!metadata?.listing) return null;
+  try {
+    const listing = JSON.parse(metadata.listing) as { entries?: unknown };
+    return Array.isArray(listing.entries) ? (listing.entries as Record<string, unknown>[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The children of `path` in `archive`: the monitor's cached listing when it has one, else what its browse action
+// lists; borg reads the whole archive to list a folder, so a large one takes a while.
+export async function browse_folder(engine: { dispatch_action(plugin: unknown, action_id: string, args?: Record<string, unknown>): Promise<[boolean, Record<string, string> | null]> }, plugin: Plugin, archive: string, path: string): Promise<BrowseFolder> {
+  const cached = (plugin as unknown as { listing?: (archive: string, path: string) => Record<string, unknown>[] | null }).listing;
+  let entries = typeof cached === "function" ? cached.call(plugin, archive, path) : null;
   if (entries === null) {
-    const [ok, content] = await plugin.run_action("browse_archive", { archive, path });
-    entries = listing(archive, path);
-    if (!ok || entries === null) return { status: content || "Listing failed", rows: [] };
+    const [ok, metadata] = await engine.dispatch_action(plugin, "browse_archive", { archive, path });
+    entries = listing_entries(metadata) ?? (typeof cached === "function" ? cached.call(plugin, archive, path) : null);
+    if (!ok || entries === null) return { status: String(metadata?.content || "") || "Listing failed", rows: [] };
   }
   const limit = Number(plugin_attr(plugin, "browse_limit") ?? 2000);
   let status: string;

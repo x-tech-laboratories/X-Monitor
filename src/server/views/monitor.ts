@@ -54,7 +54,10 @@ export function build_body(plugin: Plugin, context: "page" | "inline", build: Bu
   if (spec) {
     const layout = spec_layout(plugin, spec.layout ?? [], context);
     build_spec(plugin, { context, layout });
-    if (kind === "borg_browser" || kind === "borg") layout.cell("browser").push(browser_view(plugin));
+    if (kind === "borg_browser" || kind === "borg") {
+      const data = custom?.kind === "borg_browser" && typeof custom.data === "object" && custom.data !== null ? (custom.data as Record<string, unknown>) : null;
+      layout.cell(String(data?.cell ?? "browser")).push(browser_view(plugin, data));
+    }
     if ((kind === "journal") && context === "page") layout.cell("log_search").push(own_log_search(plugin));
     rows = layout.rows;
   }

@@ -178,21 +178,21 @@ export function log_feed(plugin: Plugin, options: { title?: string; limit?: numb
 
 // ── Charts ───────────────────────────────────────────────────────────────────
 
-function clock(moment: Date): string {
-  return iso_local(moment).slice(11);
+function epoch(moment: Date): number {
+  return moment.getTime() / 1000;
 }
 
 // One metric's recent history.
 export function history_chart(plugin: Plugin, title: string, metric_name: string, limit = HISTORY_LIMIT): ChartView {
   const history = plugin.data.metric_history(plugin.id, metric_name, limit);
-  return { type: "chart", title, style: "lines", times: history.map((record) => clock(record.timestamp)), series: [{ label: title, values: history.map((record) => record.value) }] };
+  return { type: "chart", title, style: "lines", times: history.map((record) => epoch(record.timestamp)), series: [{ label: title, values: history.map((record) => record.value) }] };
 }
 
 // Several metrics' recent history on one chart, lined up on the first one's timestamps; a mirror chart negates its
 // second series so it hangs below the axis.
 export function series_chart(plugin: Plugin, title: string, series: NonNullable<ChartSpec["series"]>, style: string = "lines", limit = HISTORY_LIMIT): ChartView {
   if (!(SERIES_STYLES as readonly string[]).includes(style)) throw new Error(`chart style '${style}' is not one of ${JSON.stringify(SERIES_STYLES)}`);
-  const histories = series.map((each) => plugin.data.metric_history(plugin.id, String(each.metric), limit).map((record): [string, number | null] => [clock(record.timestamp), record.value]));
+  const histories = series.map((each) => plugin.data.metric_history(plugin.id, String(each.metric), limit).map((record): [number, number | null] => [epoch(record.timestamp), record.value]));
   const [times, columns] = align_series(histories);
   if (style === "mirror" && columns.length > 1) columns[1] = columns[1].map((value) => (value === null ? null : -value));
   return {
@@ -215,7 +215,7 @@ function shown_for(plugin: Plugin, visible_if: unknown): boolean {
 
 // A spec table with its rows read now: cells coloured by their column's rule, toggle cells placed, row actions the
 // plugin allows, and the filter box's placeholder and fields.
-export function table_view(plugin: Plugin, table_spec: TableSpec & { title?: string }, filter_spec: FilterSpec | null = null): TableView {
+export function table_view(plugin: Plugin, table_spec: TableSpec, filter_spec: FilterSpec | null = null): TableView {
   const row_key = table_spec.row_key ?? "id";
   const spec_columns = table_spec.columns ?? [];
   const row_actions = (table_spec.row_actions ?? []).filter((action) => shown_for(plugin, action.visible_if)).map((action): RowActionView => ({
