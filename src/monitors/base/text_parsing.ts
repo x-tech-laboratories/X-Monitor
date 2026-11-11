@@ -130,3 +130,8 @@ export function fnmatch(name: string, pattern: string): boolean {
   }
   return new RegExp(`^(?:${source})$`).test(name);
 }
+
+// A number rounded as Python's round(value, digits) does, an exact tie going to even.
+export function round_half_even(value: number, digits = 0): number {
+  return Number(format_fixed(value, digits));
+}
