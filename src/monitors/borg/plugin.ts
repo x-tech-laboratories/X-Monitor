@@ -956,7 +956,7 @@ export class Borg extends Plugin {
   }
 
   // Caches a folder listing the monitor's agent made, so the archive browser on the server can show it.
-  override absorb_remote_action(action_id: string, metadata: Record<string, string>): void {
+  override absorb_remote_action(action_id: string, metadata: Record<string, string>, _args: Record<string, unknown> = {}): void {
     if (action_id !== "browse_archive" || !metadata.listing) return;
     const listing = JSON.parse(metadata.listing) as { archive: unknown; member: unknown; entries: ListingEntry[] };
     this.remember_listing(String(listing.archive), String(listing.member), [...listing.entries]);
