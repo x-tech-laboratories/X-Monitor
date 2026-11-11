@@ -149,6 +149,8 @@ export interface TreeSpec {
 }
 
 export interface TableSpec {
+  // The heading above the table.
+  title?: string;
   row_key?: string;
   columns?: ColumnSpec[];
   row_actions?: RowActionSpec[];
@@ -230,7 +232,7 @@ export interface UISpec {
   cards?: Record<string, CardSpec>;
   chart?: ChartSpec;
   charts?: Record<string, ChartSpec>;
-  events?: boolean | Record<string, unknown>;
+  events?: boolean | { title?: string; limit?: number; full_height?: boolean };
   tables?: Record<string, TableSpec>;
   filters?: Record<string, FilterSpec>;
   buttons?: Record<string, ButtonSpec[]>;
