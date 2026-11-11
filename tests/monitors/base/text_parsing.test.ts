@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { float_or_null, format_fixed, int_or_null, parse_float, parse_int, partition, split_lines, split_words } from "../../../src/monitors/base/text_parsing.ts";
+import { float_or_null, fnmatch, format_fixed, int_or_null, parse_float, parse_int, partition, split_lines, split_words } from "../../../src/monitors/base/text_parsing.ts";
 
 describe("splitting", () => {
   it("drops the empty line after a final newline", () => expect(split_lines("a\nb\n")).toEqual(["a", "b"]));
@@ -34,5 +34,18 @@ describe("format fixed", () => {
   it("rounds anything else as toFixed does", () => {
     expect(format_fixed(42.6, 0)).toBe("43");
     expect(format_fixed(1.005, 2)).toBe("1.00");
+  });
+});
+
+describe("fnmatch", () => {
+  it("matches stars, marks and sets as Python does", () => {
+    expect(fnmatch("veth12ab", "veth*")).toBe(true);
+    expect(fnmatch("eth0", "eth?")).toBe(true);
+    expect(fnmatch("eth10", "eth?")).toBe(false);
+    expect(fnmatch("eth1", "eth[0-2]")).toBe(true);
+    expect(fnmatch("eth3", "eth[!0-2]")).toBe(true);
+    expect(fnmatch("a.b", "a.b")).toBe(true);
+    expect(fnmatch("axb", "a.b")).toBe(false);
+    expect(fnmatch("ETH0", "eth*")).toBe(false);
   });
 });

@@ -100,3 +100,33 @@ export function format_grouped(value: number, digits: number): string {
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return fraction === undefined ? grouped : `${grouped}.${fraction}`;
 }
+
+// ── Globs ────────────────────────────────────────────────────────────────────
+
+// Whether a name matches a shell-style pattern as Python's fnmatch.fnmatch does on POSIX: *, ?, [seq] and [!seq],
+// case-sensitive, the whole name.
+export function fnmatch(name: string, pattern: string): boolean {
+  let source = "";
+  let index = 0;
+  while (index < pattern.length) {
+    const character = pattern[index++];
+    if (character === "*") source += "[\\s\\S]*";
+    else if (character === "?") source += "[\\s\\S]";
+    else if (character === "[") {
+      let end = index;
+      if (end < pattern.length && pattern[end] === "!") end++;
+      if (end < pattern.length && pattern[end] === "]") end++;
+      while (end < pattern.length && pattern[end] !== "]") end++;
+      if (end >= pattern.length) {
+        source += "\\[";
+      } else {
+        let set = pattern.slice(index, end).replaceAll("\\", "\\\\");
+        index = end + 1;
+        if (set.startsWith("!")) set = `^${set.slice(1)}`;
+        else if (set.startsWith("^")) set = `\\${set}`;
+        source += `[${set}]`;
+      }
+    } else source += character.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  }
+  return new RegExp(`^(?:${source})$`).test(name);
+}
