@@ -354,3 +354,39 @@ X-Backups. X-Monitor keeps only the job of watching X-Nix itself.
 - [ ] Add an X-Nix health check, as there is for X-Backups.
 - [x] Every NixOS action, job, schedule, build, push, update and switch is gone from `nixos_upgrade`,
       `nix_gc` and `attic_push`, and the boot entries from `host_control`; the checks stay read-only.
+
+# TODO — Hold a status until consecutive cycles confirm it
+
+Raised 2026-10-22 from TechNet: too many transient warnings and failures. A monitor should turn
+`warning` or `failed` only after N problem cycles in a row, not on the first one.
+
+### Findings
+
+- **The dashboard status has no debounce.** `insert_status` writes each cycle's verdict straight to
+  the state store and `statushistory`, so one bad cycle turns the monitor, and every group above it,
+  `warning` or `failed`. Nothing in core waits; only `gpu`'s `timeout_trip` counts in-plugin.
+- **Notifications already debounce, but only notifications.** `notify` takes `after` (problem
+  cycles in a row before the first alert) and `for` (how long the problem must last), inherited down
+  the tree ([rules.py](x_monitor/core/notifications/rules.py)). The status shown still flips at once.
+- **TechNet barely uses them.** It sets `notify.for = "1h"` on each host's System Stats group,
+  `for = 0` on the OOM monitors, and `defaults.flapping` (4 changes within 1h); everything else
+  alerts on the first problem cycle, `after` being 1 by default.
+- **No per-monitor transient data yet.** A one-pass week-long scan of `statushistory` on Heimdall
+  (7 GB database) was killed with exit 137; it needs to run one day at a time.
+
+### Recommendations
+
+- [ ] **Measure first.** For each monitor over the last week, count problem spells by length in
+      cycles, run per day so it fits in memory, read-only as the `x-monitor` user. Spells of 1–2
+      cycles are the transients; their share per monitor picks each N.
+- [ ] **Quick win (TechNet only).** Set `notifications.defaults.after = 3` and raise it on the
+      monitors the scan shows as noisy. Stops blip alerts at once; the dashboard still flickers.
+- [ ] **Core: confirm a status over N cycles.** A `confirm` setting (name to be decided) on any
+      monitor or group, inherited like `notify`: a monitor keeps its last confirmed status until N
+      cycles in a row agree on a new one. Decide whether recoveries confirm too (probably 1, so a
+      fix shows at once), whether `unavailable` counts, what a fresh start reports before N cycles,
+      and whether `statushistory` keeps the raw verdict, the confirmed one or both. Pending cycles
+      should be visible in the monitor's detail view. Tests first, per `AGENTS.md`.
+- [ ] **TechNet: adopt it.** After the flake update, set `confirm` per group from the scan's data
+      (fast 30s–1m monitors want more cycles than hourly ones), and drop `notify.after` where
+      `confirm` already covers it.
