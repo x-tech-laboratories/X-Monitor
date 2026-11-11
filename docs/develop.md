@@ -909,6 +909,18 @@ which is what its tests exercise, and redraws a section only when its rows chang
 shows is read from the latest metrics and the in-memory metric history; nothing queries the
 status history on disk, so the strips cover the last 60 readings rather than a fixed time span.
 
+## The logs view: searched live, not stored
+
+The Logs page and each `journal` monitor's page search the hosts' journals when asked, rather than
+reading copies X-Monitor kept. A journal holds every line every service writes, which would grow
+the database by far more than everything else together, and journald already keeps, rotates and
+indexes it. The search is the plugin's `query_logs` action, so it stays pure: `plan_action` builds
+the `journalctl -o json` command, `interpret_action` parses the reply into the action's metadata,
+and the engine runs it over SSH or the agent like any other action. `views/logs.py` dispatches it
+on every chosen monitor at once and merges the entries; nothing is written, so a search logs no
+event. The poll only counts warnings and errors after the cursor it last saw, so a busy host costs
+one small read per cycle.
+
 ## Overview charts: a donut for status, a treemap for type
 
 The overview's two cards look alike but carry different data, and only one of

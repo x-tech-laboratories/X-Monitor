@@ -160,6 +160,7 @@ def _render_nav_items(switch_view: Callable) -> Dict[str, Any]:
             'overview': ui.item('All Monitors', on_click=lambda: switch_view('overview')).props('clickable dense'),
             'events': ui.item('Events', on_click=lambda: switch_view('events')).props('clickable dense'),
             'schedules': ui.item('Schedules', on_click=lambda: switch_view('schedules')).props('clickable dense'),
+            'logs': ui.item('Logs', on_click=lambda: switch_view('logs')).props('clickable dense'),
         }
 
 
