@@ -2,9 +2,9 @@
 // names, in local time. Parsing and the next-run calculation are pure; the engine's schedule loop runs them and keeps
 // each entry's last handled time in the settings store.
 
-import { CronSchedule } from "./cron.ts";
+import { CronSchedule } from "@x-tech-laboratories/x-libs/cron";
 
-export { CronSchedule } from "./cron.ts";
+export { CronSchedule } from "@x-tech-laboratories/x-libs/cron";
 
 // One `schedule` entry: the action to run, when, and the arguments to pass it.
 export class ScheduledAction {
