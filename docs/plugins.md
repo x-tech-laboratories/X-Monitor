@@ -44,7 +44,6 @@ config examples. For what X-Monitor is and how to run it, see the
   [`package_updates`](#package_updates) ·
   [`interfaces`](#interfaces) ·
   [`sessions`](#sessions) ·
-  [`borg`](#borg) ·
   [`containers`](#containers) ·
   [`command`](#command) ·
   [`filesystems`](#filesystems) ·
@@ -101,7 +100,6 @@ config examples. For what X-Monitor is and how to run it, see the
 | [`sessions`](#sessions)                 | Logged-in users and recent logins      | SSH (`loginctl` or `who`, `last`)               | `sessions_total`, `sessions_remote`, `sessions_unexpected` | — |
 | [`journal`](#journal)                   | The whole systemd journal: error counts and search | SSH (`journalctl -o json`)          | `errors_new`, `warnings_new`                    | Query Logs |
 | [`ports`](#ports)                       | TCP port / URL reachability           | SSH (`/dev/tcp`, `curl`)                         | `<check>_up`, `<check>_latency_ms`              | — |
-| [`borg`](#borg)                         | Borg backups: freshness, browse, restore | SSH (`borg list`)                                | `archive_count`, `last_backup_epoch`            | — |
 | [`containers`](#containers)             | Docker / Podman containers, image updates | SSH (`docker`/`podman ps`, `inspect`) + registry API | `containers_total`, `containers_running`, `containers_stopped`, `images_update_available` | Restart (per expected container), Prune |
 | [`command`](#command)                   | Arbitrary command (generic check)     | SSH (any command)                                | `exit_code` (+ `value` in pattern mode)         | — |
 | [`filesystems`](#filesystems)           | All mounted filesystems (auto-discovered) | SSH (`df`)                                    | `worst_used_pct`, `fs_<mount>_used_pct`         | — |
@@ -118,7 +116,7 @@ All plugin types share these common fields:
 |----------|----------------------------------------------------------------------|
 | `name`   | Display name shown in the sidebar and dashboard                      |
 | `id`     | Unique identifier used internally (defaults to `name` if omitted)    |
-| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `attic_push`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `borg`, `containers`, `command`, `filesystems`, `folders`, `vms`, `host_control`, `cloud`, `x_monitor_self`, `group` |
+| `type`   | Plugin type — one of `uptime`, `push`, `http`, `dns_record`, `ddns_updater`, `systemd_service`, `service_list`, `nixos_upgrade`, `nix_gc`, `attic_push`, `vuln_scan`, `cpu`, `memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `power`, `reboot_required`, `package_updates`, `interfaces`, `sessions`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `disk_space`, `ports`, `processes`, `containers`, `command`, `filesystems`, `folders`, `vms`, `host_control`, `cloud`, `x_monitor_self`, `group` |
 | `interval` | Polling frequency in seconds (default: 60)                         |
 | `schedule` | Actions to run on a cron schedule — see [Scheduled actions](#scheduled-actions) (default: none) |
 | `actions` | Your own command buttons on the monitor's page — see [Custom actions](#custom-actions) (default: none) |
@@ -140,13 +138,6 @@ Every pair of limits — `warning` / `threshold`, `cpu_warning` / `cpu_threshold
 Any action a monitor offers can run on its own at set times, the way cron runs a job. Each `schedule` entry names the action and a cron expression; `args` passes the same parameters a dialog would.
 
 ```yaml
-- name: Borg Home
-  type: borg
-  schedule:
-    - action: run_backup      # the action_id behind the Run Backup button
-      cron: "0 3 * * *"       # 03:00 every day
-    - action: verify_restore
-      cron: "30 4 * * sun"    # 04:30 on Sundays
 - name: Frigate
   type: frigate
   schedule:
@@ -156,7 +147,7 @@ Any action a monitor offers can run on its own at set times, the way cron runs a
 
 The expression has the usual five fields (minute, hour, day of month, month, day of week) in the X-Monitor host's local time, with `*`, ranges, lists, `/` steps, month and day names, and the aliases `@hourly`, `@daily`, `@weekly`, `@monthly` and `@yearly`. As in cron, an expression restricting both the day of month and the day of week runs on either.
 
-A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a backup that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. The Schedules page in the sidebar lists every schedule in the fleet, soonest first, with its monitor, action, cron expression, next run, and when its last run started and whether it did. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
+A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a job that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. The Schedules page in the sidebar lists every schedule in the fleet, soonest first, with its monitor, action, cron expression, next run, and when its last run started and whether it did. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
 
 ### Triggered actions
 
@@ -1444,102 +1435,6 @@ By default the status stays online whatever the journal says, since most hosts l
 
 ---
 
-### `borg`
-Whether a Borg repository is being backed up, can be restored from, and is being checked, plus a file browser and the maintenance jobs that go with it. Everything runs as `borg` on the target over SSH, so the repository can be a local path there or a remote `ssh://` one.
-
-Each cycle lists the newest archives (`borg list --json`) and, with `collect_stats`, reads their sizes (`borg info --json`). Both run in one command so they do not fight over the chunks cache lock.
-
-**Browsing.** The **Browse archive** panel lists one folder at a time: pick an archive, click into folders, tick files or folders, then restore them. borg has to read the whole archive to list any folder, so the first visit to a big archive takes a while. Archives never change, so every folder listed is kept and reopening it is instant. A top-level folder that borg never stored, such as `Storage` for a backup of `/Storage/System`, is still shown.
-
-**Restoring** always extracts into a new folder under `restore_dir`, named after the archive and the time, and never over live files. It runs as a detached job, listed under Jobs with its progress. The archive table's restore button does the same for a path you type.
-
-**Maintenance.** Check, Compact and Prune run as detached jobs, one job at a time per monitor (see [Job control](develop.md#job-control)). Prune applies the `keep_*` policy for real, so use Prune Preview first to see what it would drop. Compact is what actually frees the space afterwards (borg 1.2 or later). An archive row can show what changed since the previous archive (`borg diff`), or delete the archive. Changes and Verify Restore run as detached actions beside any job, so a restart never cuts them short: each opens its live log, and its result is logged as an event when it ends. **Prune, delete and Break Lock are off unless `allow_delete: true`**, and each one asks for confirmation.
-
-**Running backups on a schedule.** With a `schedule` (see [Scheduled actions](#scheduled-actions)) this monitor can take over from borgmatic or Vorta. `prune_after_backup` and `compact_after_backup` make each real backup prune by the `keep_*` policy and then compact, the way borgmatic runs `create prune compact`; each step runs only while the ones before it succeeded or ended with a borg warning, and the job exits with the worst status. A dry run never prunes.
-
-Before any job starts, X-Monitor checks whether it should run at all. For an `ssh://` repository it reads the server's SSH banner, and while one of the `skip_while_active` units is running it waits too. A job that would not get through is skipped, not failed: it logs why, records no job, and the next scheduled run tries again. The `max_age` check still fails the monitor if the backups stay away too long.
-
-Jobs can be made to stay out of the way. `job_nice` and `job_io_idle` run them at a lower CPU priority and in the idle I/O class, which needs no extra rights. `inhibit_sleep` holds off suspend and shutdown until the job ends; the account running it needs polkit's `org.freedesktop.login1.inhibit-block-sleep` and `inhibit-block-shutdown` rights. `job_lock` names a lock file, and monitors that share it run their jobs one after another instead of at once, such as one host backing up to several repositories.
-
-**Checks of each kind.** The Check action takes a `kind`: `all` (the default), `repository`, `archives`, `data` (every chunk re-read), or `extract`, which dry-runs an extract of the newest archive. Schedule each kind on its own cadence with `args`. `check_kinds` sets how old the last success of each may be, judged from X-Monitor's own Check jobs: a `data` check renews `repository` and `archives` too, and `all` renews both. A failed or overdue kind fails the monitor, alongside any `check_units`. A kind that has never run gets one of its ages, counted from when the monitor first expected it, before it counts as overdue, so a new schedule has time to reach it.
-
-```yaml
-schedule:
-  - action: run_backup
-    cron: "0 */3 * * *"
-  - action: check_repo
-    cron: "0 4 * * sun"
-    args: {kind: archives}
-  - action: check_repo
-    cron: "0 5 1 * *"
-    args: {kind: data}
-check_kinds: {repository: 8d, archives: 8d, data: 32d}
-```
-
-**Purging excluded files.** New exclude patterns only keep files out of new archives. Purge Excluded rewrites the existing archives with `borg recreate` so they drop whatever the backup set's `exclude*` options now leave out, then compacts to free the space. It first deletes any `<archive>.recreate` left by an interrupted run, since borg refuses to start while one exists. Purge Preview is a dry run that lists the top-most path of each dropped tree, archive by archive. Both run as detached jobs and hold the repository lock for their whole run, and on a large remote repository that can take hours. Running the purge again with the same patterns rewrites every archive again, so it is a button, not a schedule. **Both are off unless `allow_purge: true`.**
-
-| Option | Description |
-|--------|-------------|
-| `repo` | Repository path or URL (required) |
-| `max_age` | Age of the newest archive before it counts as stale (default: `1d`) |
-| `passphrase` / `passphrase_file` / `passphrase_command` | How borg gets the key passphrase; the file is read by X-Monitor, the command runs on the target |
-| `ssh_key` / `rsh` | Key borg uses to reach a remote repo, or a full `BORG_RSH` command |
-| `require_sudo` | Run borg as root through `sudo -n` (default: `false`) |
-| `borg_bin` | borg binary (default: `borg`) |
-| `list_archives` | How many of the newest archives to list (default: `10`) |
-| `collect_stats` | Read sizes with `borg info` (default: `true`) |
-| `cache_dir` | borg's cache and config dir for jobs, and for polls when set (default: `/var/cache/x-monitor-borg`) |
-| `lock_wait` / `backup_lock_wait` | Seconds to wait for a lock in polls / in jobs (defaults: `30` / `600`) |
-| `source_paths`, `exclude`, `exclude_from`, `exclude_caches`, `exclude_if_present`, `one_file_system`, `compression`, `archive_prefix` | The backup set for the Run Backup action; an archive is named `<archive_prefix>-<local time>` |
-| `canary_path` / `canary_interval` | A file extracted from the newest archive and compared with the live copy, and how often (default: `1d`) |
-| `check_units` / `check_max_age` | systemd units that run `borg check`, read from the journal, and how old their last success may be (default: `8d`) |
-| `keep_within`, `keep_last`, `keep_hourly`, `keep_daily`, `keep_weekly`, `keep_monthly`, `keep_yearly`, … | Retention policy for Prune Preview and Prune |
-| `prune_match` | Archives the policy applies to (default: `<archive_prefix>-*`) |
-| `restore_dir` | Where restores land (default: `/var/tmp/x-monitor-restore`) |
-| `browse_limit` | Most entries shown per folder or diff (default: `2000`) |
-| `allow_delete` | Allow Prune, deleting archives and Break Lock (default: `false`) |
-| `check_verify_data` | Make the Check job read every chunk (`--verify-data`) when no `kind` is given, which is much slower (default: `false`) |
-| `check_kinds` | How old the last successful Check of each kind may be, as `{repository, archives, data, extract: age}` (default: none) |
-| `prune_after_backup` / `compact_after_backup` | Prune by the `keep_*` policy, then compact, after each real backup (defaults: `false`) |
-| `skip_when_unreachable` | Skip a job while an `ssh://` repository's server does not answer SSH (default: `true`) |
-| `skip_while_active` | systemd units that make a job skip while one of them is running (default: none) |
-| `job_nice` / `job_io_idle` | Run jobs at this niceness / in the idle I/O class (defaults: unchanged) |
-| `inhibit_sleep` | Hold off suspend and shutdown while a job runs (default: `false`) |
-| `job_lock` | Lock file that makes jobs of every monitor sharing it run one at a time (default: none) |
-| `allow_purge` | Allow Purge Preview and Purge Excluded (default: `false`) |
-| `purge_match` | Archives a purge rewrites (default: every archive in the repo) |
-| `ssh_config` | SSH connection details — see [SSH Config](#ssh-config) below |
-
-**Metrics**: `archive_count`, `last_backup_epoch`, `archive_list`, `original_size`, `compressed_size`, `deduplicated_size`, `dedup_ratio`, `total_chunks`, `unique_chunks`, `canary_ok`, `canary_checked_epoch`, `checks_ok`, `check_ok_epoch`
-
-**Actions**: Run Backup, Dry Run, Verify Restore, Prune Preview, Check, Compact, Prune, Purge Preview, Purge Excluded, Break Lock; per archive: Changes, Restore, Delete; the browser's Restore selected
-
-**Status**: `failed` when borg reports an error, the repo has no archives, the newest one is older than `max_age`, the restore canary does not match, a check unit failed or is older than `check_max_age`, or a kind in `check_kinds` failed or is older than its age; `unavailable` when the host, the borg binary or the repo cannot be reached, a lock was not released in time, or the output could not be read.
-
-> Prune, delete, Purge Excluded and Break Lock act on the repository itself. Break Lock is only safe when no borg process is using the repo, since breaking a live lock can corrupt it, so X-Monitor refuses it while one of its own jobs is running. Delete only accepts an archive the monitor has listed.
-
-```yaml
-- name: "Vault backups"
-  id: "vault-borg"
-  type: "borg"
-  interval: 1h
-  repo: "ssh://borg@backup.example.com/srv/borg/vault"
-  passphrase_file: "/run/secrets/borg-vault"
-  ssh_key: "/root/.ssh/borg"
-  require_sudo: true
-  max_age: 26h
-  canary_path: "/etc/hostname"
-  check_units: ["borgmatic-check.service"]
-  keep_daily: 7
-  keep_weekly: 4
-  keep_monthly: 6
-  allow_delete: true
-  ssh_config:
-    host: "vault.example.com"
-```
-
----
-
 ### `containers`
 Monitors Docker or Podman containers over SSH via `<runtime> ps -a`, counting running vs. stopped containers and listing each one with its state and image in a table. Paused/created containers are treated as benign. Named containers listed in `expect_running` are required — any that are missing or not running drive the status to **failed** and expose a per-container **Restart** action in the UI. Other unexpectedly-stopped containers drive **warning** (unless `stopped_warning: false`).
 
@@ -2078,7 +1973,7 @@ against it — a changed key is refused rather than silently accepted.
 **The number of monitors you can point at one host is bounded by how many
 concurrent SSH sessions that host's `sshd` allows** (`MaxSessions` in
 `sshd_config`, default `10`). X-Monitor caps its own concurrency per host below
-that default (8 regular monitors + 2 for long-running jobs like `borg`, at
+that default (8 regular monitors + 2 for long-running jobs like a flake evaluation, at
 most 10 total in flight at once), so a host running its `sshd` at the
 OpenSSH default is safe by construction — extra monitors queue rather than
 fail. Hosts with many monitors, or where jobs may overlap with a burst of

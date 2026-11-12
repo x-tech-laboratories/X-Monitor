@@ -59,19 +59,6 @@ plugins:
           - {name: "Containers", id: "heimdall-containers", type: "containers", interval: 5, <<: *ssh}
           - {name: "Syncthing", id: "heimdall-syncthing", type: "syncthing", api_url: "http://127.0.0.1:9", api_key: "demo", interval: 3}
           - {name: "Calibre Web", id: "heimdall-calibre", type: "http", url: "http://127.0.0.1:9/opds", interval: 3}
-      - name: "Backups"
-        id: "heimdall-backups"
-        type: "group"
-        children:
-          - name: "Borgmatic"
-            id: "heimdall-borgmatic"
-            type: "group"
-            children:
-              - {name: "On Disk", id: "heimdall-borg-disk", type: "borg", repo: "/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh,
-                 schedule: [{action: run_backup, cron: "0 */3 * * *"}, {action: check_repo, cron: "0 4 * * mon"},
-                            {action: check_repo, cron: "0 4 15 * *", args: {kind: data}}]}
-              - {name: "Ragnarok", id: "heimdall-borg-ragnarok", type: "borg", repo: "ssh://ragnarok.lan/backup/heimdall", max_age: "1d", interval: 10, <<: *ssh,
-                 schedule: [{action: run_backup, cron: "0 */3 * * *"}, {action: check_repo, cron: "0 4 * * tue"}]}
       - {name: "Vulnerability Scan", id: "heimdall-scan", type: "vuln_scan", scan_host: "heimdall.lan", interval: 10, <<: *ssh}
 
   - name: "Ragnarok"
@@ -101,17 +88,6 @@ plugins:
           - {name: "Memory", id: "odin-memory", type: "memory", warning: 80, threshold: 92, interval: 3, <<: *ssh}
           - {name: "/", id: "odin-root", type: "disk_space", path: "/", warning: 85, threshold: 95, interval: 5, <<: *ssh}
           - {name: "Journal", id: "odin-journal", type: "journal", interval: 10, ssh_config: {host: "odin.lan", port: 1}}
-      - name: "Backups"
-        id: "odin-backups"
-        type: "group"
-        children:
-          - name: "Vorta"
-            id: "odin-vorta"
-            type: "group"
-            children:
-              - {name: "On Disk", id: "odin-vorta-disk", type: "borg", repo: "/backup/odin", max_age: "1d", interval: 10, <<: *ssh}
-              - {name: "Heimdall", id: "odin-vorta-heimdall", type: "borg", repo: "ssh://heimdall.lan/backup/odin", max_age: "1d", interval: 10, <<: *ssh}
-              - {name: "Ragnarok", id: "odin-vorta-ragnarok", type: "borg", repo: "ssh://ragnarok.lan/backup/odin", max_age: "1d", interval: 10, <<: *ssh}
       - {name: "Vulnerability Scan", id: "odin-scan", type: "vuln_scan", scan_host: "odin.lan", interval: 10, <<: *ssh}
 
   - name: "Thor"

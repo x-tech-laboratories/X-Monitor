@@ -373,8 +373,8 @@ class TestSampleStreamContract:
     """The generic sample path: a plugin's poll command, run by the agent."""
 
     def test_a_plugin_is_poll_only_by_default(self, make_plugin):
-        from x_monitor.plugins.borg import Borg
-        plugin = make_plugin(Borg, {'repo': '/srv/repo'})
+        from x_monitor.plugins.package_updates import PackageUpdates
+        plugin = make_plugin(PackageUpdates, {})
         assert plugin.SAMPLED is False
         assert plugin.event_driven() is False
 
