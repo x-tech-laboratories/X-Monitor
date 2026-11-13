@@ -1,19 +1,19 @@
 # Instructions for AI agents
 
-X-Monitor is a network and system monitor for Linux written in Python, with a NiceGUI dashboard and
-an optional agent for monitored hosts. Read `README.md` first; the design is in `docs/develop.md`.
+X-Monitor is a network and system monitor for Linux written in TypeScript: a Fastify server, a React page on X-Libs
+and Halon, and an optional agent for monitored hosts. Read `README.md` first; the design is in `docs/develop.md`.
 
 ## Setup and checks
 
-- `nix develop` gives the pinned toolchain and puts the repository on `PYTHONPATH`.
-- `x-monitor-run` starts the app on <http://localhost:8080> with `config.yaml`.
+- `nix develop` (or `nix-shell`) gives Node 24 and the tools the tests need; then `npm ci`.
+- `npm run dev:server` starts the server against `config.example.json`; `npm run dev:web` serves the page with hot reload.
 - `dev/demo/run.sh` starts the dashboard on a self-contained demo fleet, on its own free port, and `dev/demo/shoot.sh` screenshots it; use them to check a UI change. See `dev/demo/README.md`.
-- Run only the tests for what you changed (`pytest tests/plugins/test_<name>.py`); CI runs the full suite and `ruff check`.
+- Run only the tests for what you changed (`npx vitest run tests/monitors/<name>.test.ts`), plus `npx tsc -p tsconfig.server.json --noEmit` or `tsconfig.web.json` and `npx oxlint <paths>`; CI runs `npm run build`, `npm test` and `npm run lint` in full.
 
 ## Rules
 
-- Plugins are pure: they declare requests and parse results, and the engine does all IO. See `docs/develop.md`.
-- The agent carries `x_monitor`'s plugins and engine but never the dashboard: nothing it imports may pull in `x_monitor.core.ui`, NiceGUI, FastAPI or the server's notification and export extras (`tests/unit/test_agent_imports.py`).
+- Plugins are pure: they declare requests and parse results, and the engine does all IO. A plugin's page is data (`UI_SPEC`, `custom_view()`), drawn by the page. See `docs/develop.md`.
+- The agent carries `src/core` and `src/monitors` but never the server or the page: nothing under `src/agent`, `src/core` or `src/monitors` may import `src/server`, `src/web`, React or Fastify (`tests/agent/imports.test.ts`).
 - Secrets reach X-Monitor as file paths or commands read at runtime, never as values in the Nix store.
 - Add a test for every behaviour you change, and a failing test first for every bug fix.
 - Commit messages follow Conventional Commits and end with an `Assisted-by:` trailer naming the tool.

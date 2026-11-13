@@ -5,11 +5,11 @@
 - [x] Core SSH utility for remote access
 - [x] Hierarchical plugin/group support
 - [x] Ping/ICMP uptime module
-- [x] Web dashboard (NiceGUI)
+- [x] Web dashboard (React, X-Libs widgets and the Halon theme)
 - [x] Disk space monitor (any path/mountpoint via `df`, threshold alerting)
 - [x] ZFS pool health monitor (DEGRADED/FAULTED detection)
 - [x] SMART disk health monitor
-- [x] System stats monitor (CPU, memory, load average, temperature, interrupts, NVIDIA GPU and OOM kills as one monitor, opt-in per-module configuration)
+- [x] System stats monitors (CPU, memory, load average, temperature, interrupts, GPU and OOM kills, one monitor per signal)
 - [x] Network usage monitor (RX/TX throughput via `/proc/net/dev`, auto-detect or explicit interface)
 - [x] Container monitor (Docker/Podman, with per-container restart)
 - [x] Software RAID (mdadm) health monitor
@@ -24,17 +24,17 @@
 - [x] Logged-in sessions monitor (loginctl/who with user and source allowlists, recent logins from `last`)
 - [x] Journal monitor and fleet-wide log search (error counts per poll; live `journalctl` search by time, priority, unit and text, grouped by host, unit or priority)
 - [x] Push monitor (dead man's switch — external heartbeat via REST API, per-monitor token)
-- [x] DNS record monitor (A/AAAA/CNAME/MX/TXT/NS/SOA via dnspython, custom resolver, expected-value pinning)
+- [x] DNS record monitor (A/AAAA/CNAME/MX/TXT/NS/SOA, custom resolver, expected-value pinning)
 - [x] Dynamic DNS updater (public IP lookup + FreeDNS-style update URL, drift-triggered with rate limiting, Force Update action)
 - [x] Unified, filterable events feed
-- [x] REST API for monitors, metrics, and events
+- [x] REST API for monitors, metrics, and events, with every call also served by name, over MCP and as OpenAPI
 - [x] Prometheus `/metrics` export endpoint (pull)
 - [x] InfluxDB export (push, 1.x and 2.x)
 - [x] Notification engine with per-monitor rules, and desktop notifications through the agent
 - [x] Webhook and ntfy notification channels
 - [x] Email (SMTP) and Apprise notification channels
 - [x] PagerDuty and Opsgenie notification channels, flapping detection, grouping and maintenance windows
-- [x] Authentication for the dashboard and REST API (HTTP Basic Auth)
+- [x] Sign-in for the dashboard and REST API (accounts with roles, second factor, single sign-on, API tokens)
 - [ ] HTTPS for the dashboard and REST API
 - [ ] Boot-uptime monitor (`uptime -p` — how long the host has been up, distinct from ping reachability)
 - [ ] Public IP / geolocation monitor
@@ -42,3 +42,5 @@
 - [ ] Additional export backends — MQTT with Home Assistant discovery is done; Graphite, Elasticsearch, … remain
 - [x] Per-core CPU breakdown in the CPU monitor
 - [x] AMD and Intel GPUs in the GPU monitor, auto-detected alongside NVIDIA
+- [x] Agents that keep running their host's monitors while cut off from the server
+- [x] TypeScript on the X-Tech stack (Node, Fastify, React, X-Libs)

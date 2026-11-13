@@ -1,0 +1,19 @@
+{
+  "database": { "path": "x-monitor.db" },
+  "logging": { "retention_days": 30, "metric_retention_days": 30 },
+  "theme": { "scheme": "auto" },
+  "plugins": [
+    {
+      "name": "This host",
+      "id": "this-host",
+      "type": "group",
+      "children": [
+        { "name": "Availability", "id": "this-host-up", "type": "uptime", "target_host": "127.0.0.1", "interval": 30 },
+        { "name": "Dashboard", "id": "this-host-dashboard", "type": "http", "url": "http://127.0.0.1:8080/api/health", "interval": 60 },
+        { "name": "Name lookup", "id": "this-host-dns", "type": "dns_record", "domain": "localhost", "interval": 300 },
+        { "name": "X-Monitor", "id": "x-monitor", "type": "x_monitor_self", "interval": 30 }
+      ]
+    },
+    { "name": "Nightly job", "id": "nightly-job", "type": "push", "max_age": 90000 }
+  ]
+}

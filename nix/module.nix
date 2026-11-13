@@ -124,10 +124,11 @@ in
       default = null;
       example = "admin";
       description = ''
-        Username required for HTTP Basic Auth on the dashboard and REST API.
-        Must be set together with <option>authPasswordFile</option> to enable
-        auth; if only one is set, X-Monitor logs a warning and leaves the
-        dashboard/API unauthenticated.
+        An admin's user name, signing in on the dashboard's sign-in page.
+        Must be set together with <option>authPasswordFile</option>; if only
+        one is set, X-Monitor logs a warning and leaves that account out.
+        Further users are added on the Users page, and the accounts file
+        (<option>accountsFile</option>) can declare more admins.
       '';
     };
 
@@ -136,10 +137,31 @@ in
       default = null;
       example = "/run/secrets/x_monitor_dashboard_password";
       description = ''
-        Path to a file on this host containing the HTTP Basic Auth password.
+        Path to a file on this host containing that admin's password.
         X-Monitor reads it at runtime, so the password never enters the Nix
         store — point this at a sops-nix/agenix-managed secret readable by
         the X-Monitor service user (<option>user</option>).
+      '';
+    };
+
+    accountsFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = "/run/secrets/x_monitor_accounts";
+      description = ''
+        Path to an accounts file of `name:hash` lines, written by
+        `npm run hash-password`, whose users are admins the dashboard cannot
+        change. Read at runtime, so it never enters the Nix store.
+      '';
+    };
+
+    environmentFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = "/run/secrets/x_monitor_env";
+      description = ''
+        A file of `X_MONITOR_*` variables for the service, such as the
+        single sign-on settings (`X_MONITOR_OIDC_*`), kept out of the Nix store.
       '';
     };
 
@@ -148,11 +170,9 @@ in
       default = null;
       example = "/run/secrets/x_monitor_session_secret";
       description = ''
-        Path to a file holding the key that signs dashboard session cookies.
-        Without it X-Monitor generates a key at every start, so a restart signs
-        every browser out; with it, sessions survive restarts and redeploys.
-        Any random string of 32 or more bytes will do. Read at runtime, so it
-        never enters the Nix store.
+        No longer used: sessions are kept in X-Monitor's database, so they
+        survive restarts without a signing key. Kept so existing configurations
+        still evaluate; X-Monitor logs that it ignores the setting.
       '';
     };
   };
@@ -165,27 +185,24 @@ in
       }
     ];
 
-    # X-Monitor runs as a single process (see x_monitor/__main__.py): one
-    # asyncio event loop owns both the target-polling schedule and the
-    # NiceGUI web dashboard, sharing the SQLite database directly in-process
-    # rather than over a loopback API.
+    # X-Monitor runs as one Node process: the engine's polling and the Fastify server for the dashboard and API share it.
     systemd.services.x-monitor = {
       description = "X-Monitor (network/system monitor + dashboard)";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
-      # ping (uptime plugin, run as a local subprocess) must be on PATH.
-      # The system `ssh` client is NOT needed here — X-Monitor speaks SSH
-      # natively via asyncssh (see core/connectors/ssh.py) rather
-      # than shelling out.
+      # ping, for the ICMP connector, must be on PATH; SSH is spoken natively, so no ssh client is needed.
       path = [
         pkgs.iputils
       ];
 
-      # The known_hosts file X-Monitor's own TOFU host-key trust persists to
-      # (see ssh.py's _TofuClient) lives here — writable, and
-      # ProtectHome hides ~/.ssh. Under the service's private /tmp.
-      environment.XMONITOR_SSH_CONTROL_DIR = "/tmp/x-monitor-ssh";
+      # The known_hosts file the SSH connector's trust-on-first-use keeps lives here, since ProtectHome hides ~/.ssh.
+      environment = {
+        XMONITOR_SSH_CONTROL_DIR = "/tmp/x-monitor-ssh";
+      }
+      // lib.optionalAttrs (cfg.accountsFile != null) {
+        X_MONITOR_PASSWORD_HASH_FILE = toString cfg.accountsFile;
+      };
 
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/x-monitor --config ${configFile} --db ${cfg.dataDir}/x-monitor.db --port ${toString cfg.port}";
@@ -194,6 +211,8 @@ in
         WorkingDirectory = cfg.dataDir;
         StateDirectory = "x-monitor";
         StateDirectoryMode = "0750";
+        EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
+        # A restore picked in Settings exits with 75 and is taken in on the next start.
         Restart = "on-failure";
         RestartSec = "5s";
 

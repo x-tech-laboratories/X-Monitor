@@ -68,7 +68,7 @@ config examples. For what X-Monitor is and how to run it, see the
 | [`uptime`](#uptime)                     | Host reachability                     | ICMP ping                                        | `up`, `latency_ms`                              | Wake (Wake-on-LAN, with `mac`) |
 | [`push`](#push)                         | External heartbeat (dead man's switch) | REST API (caller pushes in)                     | `last_push_epoch`, `reported_up`, `value`       | — |
 | [`http`](#http)                         | HTTP(S)/WebSocket endpoint health     | HTTP from the X-Monitor host, or `websocat` over SSH | `probe_ok`, `probe_status`, `probe_latency_ms`  | — |
-| [`dns_record`](#dns_record)             | DNS record resolution                 | DNS query (via dnspython, in-process)            | `resolved`, `ttl`, `matches_expected`            | — |
+| [`dns_record`](#dns_record)             | DNS record resolution                 | DNS query (Node's resolver, on the server)       | `resolved`, `ttl`, `matches_expected`            | — |
 | [`ddns_updater`](#ddns_updater)         | Dynamic DNS record kept current       | Public IP lookup + DNS query (in-process)        | `in_sync`, `last_update_epoch`                   | Force Update |
 | [`systemd_service`](#systemd_service)   | systemd unit state / last run         | SSH (`systemctl`)                                | `active` *or* `last_run_epoch`, `last_run_success` | Restart, Stop, Enable, Disable |
 | [`service_list`](#service_list)         | Systemd unit browser and control      | SSH (`systemctl`)                                | `services_total`, `services_active`, `services_failed` | Start, Stop, Restart, Enable, Disable, View Status |
@@ -147,7 +147,7 @@ Any action a monitor offers can run on its own at set times, the way cron runs a
 
 The expression has the usual five fields (minute, hour, day of month, month, day of week) in the X-Monitor host's local time, with `*`, ranges, lists, `/` steps, month and day names, and the aliases `@hourly`, `@daily`, `@weekly`, `@monthly` and `@yearly`. As in cron, an expression restricting both the day of month and the day of week runs on either.
 
-A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a job that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. The Schedules page in the sidebar lists every schedule in the fleet, soonest first, with its monitor, action, cron expression, next run, and when its last run started and whether it did. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
+A scheduled run goes through the same path as the button: it launches the same job, and the monitor's own guards apply, so a backup that is already running refuses a second one. Each run logs its outcome on the monitor, and the monitor's page lists its schedules with their next run. The Schedules page in the sidebar lists every schedule in the fleet, soonest first, with its monitor, action, cron expression, next run, and when its last run started and whether it did. Each time runs once: it is recorded before the action starts, so a restart never repeats it, and runs missed while X-Monitor was down collapse into one when it returns. A failed run is not retried until its next time. A new schedule, or one whose expression or `args` changed, first runs at its next time, never at once.
 
 ### Triggered actions
 
@@ -270,7 +270,7 @@ The inverse of every other monitor: instead of X-Monitor reaching out to a targe
 
 **Metrics**: `last_push_epoch` (Unix timestamp of the last heartbeat), `reported_up` (1/0, the caller's own status), `value` (optional, if the caller supplies one)
 
-To push a heartbeat, hit `GET` or `POST /api/push/{id}/{token}`, optionally with `status` (`up` or `down`, default `up`), `msg`, and `value` query parameters. This endpoint is not covered by the dashboard's sign-in (see [Authentication](configuration.md#authentication)) — the per-monitor token is its credential instead.
+To push a heartbeat, hit `GET` or `POST /api/push/{id}/{token}`, optionally with `status` (`up` or `down`, default `up`), `msg`, and `value` query parameters. This endpoint is not covered by the dashboard's sign-in (see [Signing in](configuration.md#signing-in)) — the per-monitor token is its credential instead.
 
 Alternatively, push to `/api/push/{id}` with a push-scoped [API token](configuration.md#api-tokens) in an `Authorization: Bearer` header. One such token can cover several monitors (or all of them), it stays out of URLs and so out of proxy access logs, and each heartbeat's event names the token that sent it. Both routes work side by side.
 
@@ -363,7 +363,7 @@ A reply matching every expectation is online; anything else — a connection fai
 ### `dns_record`
 Resolves a DNS record and reports failed on NXDOMAIN, no answer, a timeout, or (when `expected` is set) an answer outside the accepted values — catching a stale record, a botched migration, or a DNS provider outage.
 
-Runs in-process via [dnspython](https://www.dnspython.org/) rather than over SSH: there is no target host, only a domain to ask about. Query the system resolver by default, or point `resolver` at a specific one (public or internal) — doing so doubles as a liveness probe for that resolver, distinct from [`unbound`](#unbound)'s SERVFAIL-rate monitoring of one resolver's own stats.
+Runs in the X-Monitor server through Node's DNS resolver rather than over SSH: there is no target host, only a domain to ask about. Query the system resolver by default, or point `resolver` at a specific one (public or internal) — doing so doubles as a liveness probe for that resolver, distinct from [`unbound`](#unbound)'s SERVFAIL-rate monitoring of one resolver's own stats.
 
 | Option        | Description                                                                 |
 |---------------|-------------------------------------------------------------------------------|
@@ -478,7 +478,7 @@ The service detail UI also includes:
 * `Reload Daemon` to run `systemctl daemon-reload`
 * `Edit Unit File` when `allow_unit_file_edit: true` is enabled
 
-> Note: Remote editing requires passwordless sudo access for the service commands and the configured write helper (currently `python3` on the target). Restrict `allowed_write_paths` carefully.
+> Note: Remote editing requires passwordless sudo access for the service commands and for `tee`, which writes the edited file (`base64 -d | sudo tee <path>`). Restrict `allowed_write_paths` carefully.
 
 ```yaml
 # Continuous — long-running daemon
@@ -1961,7 +1961,7 @@ ssh_config:
   key_file: "/home/x_monitor/.ssh/id_ed25519"
 ```
 
-X-Monitor speaks SSH natively (AsyncSSH) rather than shelling out to the system
+X-Monitor speaks SSH natively (ssh2) rather than shelling out to the system
 `ssh` client, and opens one persistent connection per host — every SSH-based
 monitor on that host runs its commands as a channel on that one connection
 rather than a separate connection each. Host key verification is
@@ -1973,8 +1973,7 @@ against it — a changed key is refused rather than silently accepted.
 **The number of monitors you can point at one host is bounded by how many
 concurrent SSH sessions that host's `sshd` allows** (`MaxSessions` in
 `sshd_config`, default `10`). X-Monitor caps its own concurrency per host below
-that default (8 regular monitors + 2 for long-running jobs like a flake evaluation, at
-most 10 total in flight at once), so a host running its `sshd` at the
+that default (8 commands in flight at once), so a host running its `sshd` at the
 OpenSSH default is safe by construction — extra monitors queue rather than
 fail. Hosts with many monitors, or where jobs may overlap with a burst of
 polling, benefit from raising `MaxSessions` in that host's own `sshd_config`
@@ -1997,23 +1996,39 @@ plugin_paths:
 plugins:
   - name: "Weather"
     id: "weather"
-    type: "weather"               # /etc/x-monitor/plugins/weather.py, or a weather/ package
+    type: "weather"               # provided by a folder plugin in one of the plugin_paths
 ```
 
-A plugin type `<type>` is either `<type>.py` or a package directory `<type>/` with an `__init__.py`. The module must define exactly one concrete `Plugin` subclass (classes it imports, such as `Plugin` or `SignalPlugin`, do not count), written the same way as X-Monitor's own plugins: pure `commands()`/`parse()` or `requests()`/`parse_results()` returning a `CollectResult`, with the page described by a `UI_SPEC`.
+Each `plugin_paths` folder holds X-Libs folder plugins, one per subfolder. A subfolder's `package.json` names its server entry under `"x-plugin"`, and that entry's default export is the plugin: an id, a name, a version and a `start(context)` that provides monitor types by name with `context.provide("monitor_type", <type>, <class>)`. One plugin may provide several types. `context.services` hands it X-Monitor's `Plugin` base class, `CollectResult` and `command`, so its monitors are written the same way as X-Monitor's own: pure `commands()`/`parse()` or `requests()`/`parse_results()` returning a `CollectResult`, with the page described by a `UI_SPEC`.
 
-```python
-from x_monitor.plugins.base.plugin_base import Plugin
-from x_monitor.core.connectors.types import Command, CollectResult
-
-
-class Weather(Plugin):
-    def commands(self):
-        return [Command('curl -s wttr.in/?format=%t')]
-
-    def parse(self, results):
-        ok = results[0].exit_code == 0
-        return CollectResult(status='online' if ok else 'failed', logs=[(results[0].stdout, 'INFO')])
+```
+/etc/x-monitor/plugins/weather/
+├── package.json        {"name": "weather", "x-plugin": {"server": "server.js"}}
+└── server.js
 ```
 
-A name X-Monitor already uses stays X-Monitor's: the file is ignored with a warning in the log, unless its `plugin_paths` entry says `override: true`, which is logged too. A missing type, or a module that defines no `Plugin` class or more than one, stops only that monitor from loading, with the reason in the log. An edited plugin file is read again on the next config reload, and takes effect for the monitors that reload adds or changes; the rest keep running the code they started with until a restart.
+```js
+// server.js
+export default {
+  id: "example.weather",
+  name: "Weather",
+  version: "1.0.0",
+  start(context) {
+    const { Plugin, CollectResult, command } = context.services;
+    class Weather extends Plugin {
+      commands() {
+        return [command("curl -s wttr.in/?format=%t")];
+      }
+      parse(results) {
+        const ok = results[0].exit_code === 0;
+        return new CollectResult({ status: ok ? "online" : "failed", logs: [[results[0].stdout, "INFO"]] });
+      }
+    }
+    context.provide("monitor_type", "weather", Weather);
+  },
+};
+```
+
+Python plugin files from the Python X-Monitor no longer load. A spec attribute (`value_attr`, `color_attr`, `rows_attr`, `options_attr`) names a plain property of the plugin, without Python's leading underscore.
+
+A name X-Monitor already uses stays X-Monitor's: the plugin's type is ignored with a warning in the log, unless its `plugin_paths` entry says `override: true`, which is logged too. A folder plugin that fails to load is logged and skipped, and a type no plugin provides stops only the monitors that use it, with the reason in the log. Folder plugins are imported afresh on the next config reload, which takes effect for the monitors that reload adds or changes; the rest keep running the code they started with until a restart.

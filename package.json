@@ -1,0 +1,58 @@
+{
+  "name": "x-monitor",
+  "private": true,
+  "version": "0.2.0",
+  "description": "A web-based network and systems monitor for Linux hosts, homelabs and small networks",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "x-monitor": "src/server/main.ts",
+    "x-monitor-agent": "src/agent/main.ts"
+  },
+  "scripts": {
+    "dev:server": "X_MONITOR_CONFIG=${X_MONITOR_CONFIG:-config.example.json} X_MONITOR_PASSWORD_HASH_FILE=${X_MONITOR_PASSWORD_HASH_FILE:-password.hash} node --watch src/server/main.ts",
+    "dev:web": "vite",
+    "build": "tsc -b && vite build",
+    "start": "NODE_ENV=production node src/server/main.ts",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "lint": "oxlint",
+    "hash-password": "node src/server/hash_password.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/formbody": "^9.0.1",
+    "@fastify/rate-limit": "^11.2.2",
+    "@fastify/session": "^11.1.6",
+    "@fastify/static": "^10.1.7",
+    "@fastify/websocket": "^11.3.5",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "@x-tech-laboratories/halon": "^0.17.0",
+    "@x-tech-laboratories/x-libs": "^0.41.0",
+    "fastify": "^5.12.7",
+    "mqtt": "^5.15.0",
+    "nodemailer": "^10.3.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "ssh2": "^1.17.0",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ssh2": "^1.15.6",
+    "@vitejs/plugin-react": "^6.2.1",
+    "jsdom": "^27.0.0",
+    "oxlint": "^1.89.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

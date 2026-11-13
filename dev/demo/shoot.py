@@ -8,13 +8,13 @@ from playwright.async_api import async_playwright
 # The demo fleet's pages, by the name each screenshot is saved under.
 PAGES = {
     'overview': '/',
-    'events': '/events',
-    'schedules': '/schedules',
-    'logs': '/logs',
-    'journal': '/monitor/heimdall-journal',
-    'group': '/monitor/Local%20Services',
-    'http': '/monitor/self-http',
-    'systemd': '/monitor/ws-nginx',
+    'events': '/#/events',
+    'schedules': '/#/schedules',
+    'logs': '/#/logs',
+    'journal': '/#/monitor/heimdall-journal',
+    'group': '/#/monitor/Local%20Services',
+    'http': '/#/monitor/self-http',
+    'systemd': '/#/monitor/ws-nginx',
 }
 
 
@@ -28,9 +28,9 @@ async def shoot(port: int, out_dir: Path, schemes: list, names: list, wait_ms: i
             for name in names:
                 path = PAGES.get(name, name)
                 await page.goto(f'http://127.0.0.1:{port}{path}')
-                # The dashboard fills in over its websocket after load, so a shot taken at once is half empty.
+                # The page loads its views after it starts, so a shot taken at once is half empty.
                 await page.wait_for_timeout(wait_ms)
-                file = out_dir / f"{name.strip('/').replace('/', '_') or 'root'}-{scheme}.png"
+                file = out_dir / f"{name.strip('/#').replace('/', '_') or 'root'}-{scheme}.png"
                 await page.screenshot(path=str(file), full_page=True)
                 print(file)
             await page.close()

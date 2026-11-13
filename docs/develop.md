@@ -1,1134 +1,612 @@
 # Development Notes
 
-Architectural decisions and non-obvious rationale for X-Monitor, organized by topic.
-Code comments stay short (≤1 sentence); anything that needs more explanation
-lives here. This documents the architecture as it *is* — read it before changing
-the engine, the plugin contract, or the UI refresh model.
+Architectural decisions and their reasons, by topic. Code comments stay at one sentence; anything that needs more
+explanation lives here. This describes the code as it is; read it before changing the engine, the plugin contract or
+how the page refreshes.
 
-## Single process, one event loop
+## Setup
 
-X-Monitor runs as one OS process. `main()` (`x_monitor/__main__.py`) builds one
-`XMonitorEngine` (the Coordination Engine, `core/coordination/engine.py`), calls
-`setup_modules()` to load plugins, then hands the engine to `init_gui()`
-(`core/ui/main_dashboard.py`). The per-monitor polling loop and the NiceGUI web
-dashboard share the same asyncio event loop and the same live `Plugin`
-instances — there is no IPC between "collecting" and "displaying". A plugin's
-`render_ui()` reads through `self.data` (its read-only `PluginDataView`), which
-projects the same in-memory state the polling loop just wrote to.
+- `nix develop` gives the pinned toolchain; `npm ci` installs the dependencies.
+- `npm run dev:server` runs the server on `config.example.json` with `password.hash` as the accounts file, restarting
+  on every change, and `npm run dev:web` runs Vite for the page.
+- `npm run build` type-checks and builds the page into `dist/`; `npm start` serves it in production mode.
+- `nix run` runs the packaged `x-monitor`.
+- `dev/demo/run.sh` starts the dashboard on a self-contained demo fleet and `dev/demo/shoot.sh` screenshots it; see
+  `dev/demo/README.md`.
 
-**State lives in memory.** Collectors write into a `StateStore`
-(`core/state/`) of plain Python objects and the UI reads from it directly;
-SQLite is a persistence sink behind that, not a read path. It is written to
-(asynchronously, off the read path) and read once, at startup, to restore the
-store. The one exception is a finished job's full log, read on demand when a
-viewer opens it, on the writer thread so it follows every queued write.
+## One process, one event loop
+
+X-Monitor runs as one Node process. `serve()` in `src/server/main.ts` builds one `XMonitorEngine` (the Coordination
+Engine, `src/core/coordination/engine.ts`), loads the monitor tree with `setup_modules()`, builds the Fastify app
+(`src/server/app.ts`), starts listening and then calls `engine.run()`. The polling loops and the server share one event
+loop and the same live `Plugin` instances; there is no IPC between collecting and serving. A page view reads through
+the monitor's `data` (its read-only `PluginDataView`), which reads the same in-memory state the polling loop just wrote.
+
+**State lives in memory.** Collectors write into a `StateStore` (`src/core/state/store.ts`) and every read is served
+from it; SQLite is a persistence sink behind it, written in batches and read once at startup to restore the store. The
+one exception is a finished job's full log, read from disk when someone opens it.
 
 ## Engine model
 
-`core/` is organized as named engines the Coordination Engine (`XMonitorEngine`)
-owns and wires together:
+`src/core/` is organized as named engines the Coordination Engine owns and wires together:
 
-- **Settings Engine** (`core/settings/`) — `ConfigFileManager` loads and types
-  `config.yaml` (`config_schema.py`), at startup and again on each
-  [config reload](#config-reload); `LogLevels` holds the runtime log levels.
-- **State Engine** (`core/state/`) — `StateStore` holds the live system of
-  record in memory: current state (statuses, snapshots, settings, jobs) whole,
-  and history (metrics, events, log lines, job output) in bounded per-stream
-  ring buffers sized by `memory:` in `config.yaml`. Record types are in
-  `records.py`.
-- **Database Engine** (`core/database/`) — `DatabaseManager` fronts the store:
-  every read is served from memory, every write updates the store and is then
-  mirrored to SQLite on a background thread. Models live in `models.py`,
-  read-result dict shapes in `rowtypes.py`.
-- **Connector Engine** (`core/connectors/`) — all external IO. One
-  `ConnectorEngine` routes a plugin's heterogeneous request list
-  (`Command` / `HttpRequest` / `DnsQuery` / `PingRequest`) to the right
-  sub-connector (`ssh_connector` / `http_connector` / `dns_connector` /
-  `icmp_connector`).
-- **UI Engine** (`core/ui/`) — the NiceGUI dashboard. Reads only through
-  `plugin.data` or the Database Engine; it never reaches into a plugin's IO.
-- **Exporter Engine** (`core/exporters/`) — Prometheus pull render, InfluxDB
-  push task, and the MQTT / Home Assistant publisher.
+- **Settings Engine** (`src/core/settings/`): `ConfigFileManager` loads and types `config.yaml` (`config_schema.ts`)
+  at startup and on each [config reload](#config-reload); `LogLevels` holds the runtime log levels.
+- **State Engine** (`src/core/state/`): `StateStore` holds the live system of record: current state (statuses,
+  snapshots, settings, jobs) whole, and history (metrics, events, log lines, job output) in bounded per-stream buffers
+  sized by `memory:` in the config. Record types are in `records.ts`, the change bus in `changes.ts`.
+- **Database Engine** (`src/core/database/`): `DatabaseManager` fronts the store: every read is served from memory,
+  and every write updates the store and is then mirrored to SQLite through a `Persistence` sink
+  (`sqlite_persistence.ts`).
+- **Connector Engine** (`src/core/connectors/`): all external IO. One `ConnectorEngine` routes a monitor's request list
+  to the right connector: SSH, an agent, the local host, HTTP, DNS or ICMP.
 
-`EngineLike` (`core/contracts.py`) is the narrow slice of `XMonitorEngine` that the
-UI and plugins actually call, so those modules — and test doubles — depend on a
-small contract rather than the concrete class.
+The server adds the Notification Engine (`src/server/notifications/`) and the Exporter Engine
+(`src/server/exporters/`), injected into the engine so a reload can rebuild them, and the page-view builders
+(`src/server/views/`), which read only through `plugin.data` or the Database Engine.
+
+`EngineLike` (`src/core/contracts.ts`) is the narrow slice of `XMonitorEngine` monitors call, and `ServerEngine`
+(`src/server/engine_api.ts`) the slice the server calls, so those modules and their test doubles depend on a small
+contract rather than the class.
+
+`src/core/` and `src/monitors/` run on the server and on an agent that runs its own monitors, so they never import from
+`src/server/`, `src/web/`, React or Fastify (`tests/agent/imports.test.ts`).
 
 ## Pure plugins
 
-A `Plugin` exposes **only pure functions and data** — no IO, no persistence
-handles. "Pure" constrains *effects*, not *memory*: a plugin may keep derived
-mutable state between cycles (`oom`'s kill-count baseline, `syncthing`'s
-discovered folder ids) — what it may never hold is a connection, a database
-handle, or a side effect inside `requests()`/`parse_results()` themselves.
-It is constructed with just `(name, config)`. The engine's
-`_wire_plugin()` builds the plugin's engine-owned IO (an `ExecContext` for its
-target, kept in `engine._exec_contexts[id]`) and injects a read-only `PluginDataView` as
-`plugin.data`. The plugin holds neither a database handle nor a connection, and
-never learns whether its `ExecContext` wraps an agent or an SSH connection.
+A `Plugin` (`src/monitors/base/plugin_base.ts`) exposes **only pure functions and data**: no IO and no persistence
+handles. "Pure" constrains effects, not memory: a plugin may keep derived state between cycles (`oom`'s kill-count
+baseline, `syncthing`'s discovered folder ids), but it never holds a connection, a database handle, or a side effect
+inside `requests()` or `parse_results()`. It is constructed with just `(name, config)`. The engine wires its IO (an
+`ExecContext` for its target) and hands it a read-only `PluginDataView` as `plugin.data`. A plugin never learns whether
+its `ExecContext` wraps an agent or an SSH connection.
 
 Collection is:
 
-- `requests() -> List[Request]` then `parse_results(results) -> CollectResult`
-  — the declarative path (99% of plugins). Both are pure; the engine executes
-  the requests through the Connector Engine and hands the positionally-matched
-  results back.
-- `commands()` / `parse()` are the SSH-only shorthand `requests()` /
-  `parse_results()` default to, so an SSH plugin overrides only those.
-- `io_call()` is the escape hatch for genuinely sequential/conditional local IO
-  the request list can't express (e.g. `ddns_updater`: fetch public IP → resolve
-  DNS → compare → maybe push). It returns a zero-arg closure the engine runs off
-  the event loop.
-- `subscriptions() -> List[StreamSpec]` then `parse_event(stream_id, payload,
-  timestamp) -> Optional[CollectResult]` — the push path, for targets reached by
-  an agent. Also both pure. See [Agent transport](#agent-transport).
-- `RUNS_ON_AGENT` (default `True`) says a monitor of this type can run on its host's own agent
-  when that agent has `run_monitors` set, because it only runs commands on that host. A plugin that
-  makes HTTP, DNS or ICMP requests from the server, reads the engine, or works across hosts sets it
-  `False`. See [agent.md](agent.md#running-monitors-on-the-agent).
+- `requests(): Request[]` then `parse_results(results): CollectResult`, the declarative path most plugins take. Both are
+  pure; the engine runs the requests through the Connector Engine and hands back results in the same order.
+- `commands()` and `parse()`, the command-only shorthand `requests()` and `parse_results()` default to.
+- `io_call()`, the escape hatch for sequential or conditional IO a request list cannot express (`ddns_updater`: fetch
+  the public IP, resolve the record, compare, maybe update; `containers`: ask image registries through
+  `engine.http_fetch`). It returns a function the engine runs and awaits, and its value goes to `parse_results()`.
+- `subscriptions(): StreamSpec[]` then `parse_event(stream_id, payload, timestamp)`, the push path for targets an
+  agent reaches. Both pure; see [Agent transport](#agent-transport).
+- `RUNS_ON_AGENT` (default `true`) says a monitor of this type can run on its host's own agent when that agent has
+  `run_monitors` set, because it only runs commands on that host. A plugin that makes HTTP, DNS or ICMP requests from
+  the server, reads the engine, or works across hosts sets it `false`. See [agent.md](agent.md#running-monitors-on-the-agent).
 
-A plugin never persists anything itself. Its `parse_results()` returns one
-`CollectResult` describing everything to write (metrics, logs, log lines,
-status, a snapshot, settings); the engine persists it. Out-of-cycle writes (a
-push heartbeat from the REST endpoint, a group's expand/collapse state) route
-back through the engine surface — `engine.apply`, `engine.set_setting` — and
-job-row updates go through `plugin.jobs`, the `JobsGateway` the engine wires
-onto each plugin (`jobs.create`/`jobs.finish`/etc.; the job panel reads
-`jobs.is_running`/`jobs.recent` and cancels via `jobs.cancel`).
+A plugin never stores anything itself. `parse_results()` returns one `CollectResult` describing everything to write
+(metrics, events, log lines, status, a snapshot, settings); the engine writes it. Writes outside a cycle (a push
+heartbeat from the API, a parent's open child cards) go through the engine (`engine.apply`, `engine.set_setting`),
+and job updates through `plugin.jobs`, the `JobsGateway` the engine wires onto each plugin.
 
-**Side effects a plugin asks for.** A plugin can never cause IO from
-`parse_results()`, so a reaction to what it just measured — `uptime` waking a
-host that went down — is requested instead: after persisting each polled
-cycle the engine calls the plugin's pure `on_status(status, now)`, and when it
-returns `(action_id, kwargs)` the engine dispatches that action on its own
-task, exactly like a button click, so its outcome is logged the same way. The
-plugin keeps the bookkeeping (attempts, the last try) as derived state; the
-engine only runs what it is handed.
+**Side effects a plugin asks for.** A plugin can never cause IO from `parse_results()`, so a reaction to what it just
+measured (`uptime` waking a host that went down) is requested instead: after storing each polled cycle the engine calls
+the plugin's pure `on_status(status, now)`, and when it returns `[action_id, args]` the engine dispatches that action
+as if a button had been pressed, so its outcome is logged the same way.
 
-**Running an action elsewhere.** An `ActionPlan` with `via=<monitor id>` runs
-on that monitor's `ExecContext` instead of the plugin's own, which is how
-`uptime` sends a wake packet from a host inside another subnet. The plugin
-names a monitor, never a connection, so it stays transport-blind.
+**Running an action elsewhere.** An `ActionPlan` with `via: <monitor id>` runs on that monitor's `ExecContext`, which is
+how `uptime` sends a wake packet from a host inside another subnet; `agent: <id>` runs it on a named agent. The plugin
+names a monitor or agent, never a connection, so it stays transport-blind.
 
 ## The write path: `db.apply_result`
 
-There is no per-plugin writer object. The engine holds each plugin's identity
-`(target, id, name)` and persists a `CollectResult` with a single call:
+There is no per-plugin writer. The engine persists a `CollectResult` with one call:
 
+```ts
+this.db.apply_result(plugin.target, plugin.id, plugin.name, result);
 ```
-self.db.apply_result(plugin.target, plugin.id, plugin.name, result)
-```
 
-(via the engine's one-line `_apply()` helper). `DatabaseManager.apply_result`
-is the *only* place that translates the plugin-facing `CollectResult` contract
-into table-level writes — it fans the result out to `insert_metric`,
-`write_event` (which prefixes `[plugin_name]` for the events feed),
-`insert_log_line`, `insert_status`, `set_snapshot`, and `set_setting`.
+`DatabaseManager.apply_result` is the only place that turns the plugin-facing `CollectResult` into store writes: it
+fans the result out to metrics, events (prefixed `[plugin_name]` for the events feed), log lines, the status, the
+snapshot and settings, each at the result's own `timestamp` when it carries one.
 
-`PluginDataView` (`core/coordination/data_view.py`) is the read half: it scopes
-the plugin-id-keyed reads (`latest_metric`, `latest_snapshot`, `get_setting`)
-plus the handful of other reads the UI tables need, calling `DatabaseManager`
-directly. Every method on it is a read — there is deliberately no `apply`. This
-read/write split is what keeps plugins and the UI unable to reach the write path
-except through the engine.
+`PluginDataView` (`src/core/coordination/data_view.ts`) is the read half: it scopes the plugin-id-keyed reads
+(`latest_metric`, `latest_snapshot`, `get_setting`) plus the few other reads page views need. Every method on it is a
+read; there is deliberately no `apply`, which keeps plugins and pages away from the write path.
 
 ## Interface contracts
 
-Most seams here were originally duck-typed: caller and callee agreed on a dict
-shape or callback signature by convention. Where a contract crosses more than one
-module it's now named once — as a `Protocol`, `TypedDict`, or type alias — rather
-than reimplemented per call site. This is documentation for readers and type
-checkers, **not** runtime validation: YAML config and `UI_SPEC` dicts are still
-unchecked at the boundary (bad data fails at first use, not at load).
+A contract that crosses modules is named once as a TypeScript type rather than agreed on by convention. Types document
+and check the code; they do not validate data at runtime, so config and `UI_SPEC` values still fail at first use, not
+at load.
 
-`core/contracts.py` holds the cross-subsystem contracts:
-- `RefreshCallback` — "a sync function, or one returning an awaitable", the
-  signature `PluginPage._tick`, `_CallbackTick._tick` and `on_data_event` all share.
-- `MetricsSource` — the two-method read-only slice of `DatabaseManager`
-  (`latest_metrics`, `latest_statuses`) the exporters and REST API need.
-- `PushablePlugin` — a `runtime_checkable` Protocol for the `token`/`record_push`
-  surface `plugins/push.py` adds; `api.py` narrows via `isinstance` instead of
-  importing the concrete class.
-- `EngineLike` — the narrow engine surface the UI and plugins call.
-- `TransportConnection` — the two-member surface (`host`, `execute()`) both
-  transports share; `ExecContext.conn` is typed as this, so the invariant the
-  transport swap rests on is checkable rather than duck-typed.
-- `ActionButtonSpec` — one entry in `Plugin.get_actions()`, the header action
-  buttons rendered regardless of `UI_SPEC`. An entry with `kind: 'toggle'` is a
-  toggle button: it is pressed while the latest value of its `metric` is above
-  0.5, runs `on_action_id` or `off_action_id` when clicked, then polls so it
-  shows the state the target reports. An optional `icon` sets its glyph, and
-  an optional `confirm` text asks the user before the action runs. A
-  monitor's `actions` config adds its own entries after the plugin's, through
-  `Plugin.all_actions()`; the engine runs those before `plan_action` is asked
-  (`plugins/base/custom_actions.py`).
+`src/core/contracts.ts` holds the cross-subsystem contracts:
 
-Other typed boundaries: `core/ui/spec_types.py` (`UISpec` and its nested card /
-table / dialog / job-panel shapes that `generic_render` interprets),
-`core/settings/config_schema.py` (`config.yaml`'s shape — intentionally not
-exhaustive per plugin type), `core/database/rowtypes.py` (`DatabaseManager`'s
-dict-returning reads), and `core/connectors/types.py` (the
-`plan_action`/`dispatch_action` discriminated union the engine walks with
-`isinstance`).
+- `MetricsSource`: the read-only slice of `DatabaseManager` (`latest_metrics`, `latest_statuses`) exporters read.
+- `PushablePlugin` and `is_pushable()`: the `token` and `record_push()` surface `src/monitors/push.ts` adds, so the push
+  route needs no import of the class.
+- `EngineLike`: the narrow engine surface monitors call.
+- `TransportConnection`: the two-member surface (`host`, `execute()`) the SSH, agent and local transports share;
+  `ExecContext.conn` is typed as this, so the invariant the transport swap rests on is checked.
 
-**Config is checked at the top level only.** `ConfigFileManager._load` warns once
-per structural mistake — an unknown top-level section (with the nearest known name
-as a hint), a section written as the wrong kind of YAML, a plugin with no `type` or
-an agent with no `id` — so a typo'd section is named at startup instead of silently
-doing nothing. It never rejects a file: everything still loads as written, and a
-plugin's own keys stay that plugin's business, defaulted through `.get()`.
+Other typed boundaries: `src/shared/ui_spec.ts` (`UISpec` and its card, table, dialog and job-panel shapes, and
+`ActionButtonSpec` for header buttons), `src/shared/page_view.ts` (the JSON a page is drawn from),
+`src/core/settings/config_schema.ts` (the config's shape, not exhaustive per plugin type),
+`src/core/connectors/types.ts` (requests, results, `CollectResult` and the action plans, each told apart by `kind`), and
+`src/shared/agent_protocol.ts` (X-Monitor's messages on the agent socket).
+
+**Config is checked at the top level only.** `ConfigFileManager` warns once per structural mistake (an unknown
+top-level section, with the nearest known name as a hint; a section of the wrong kind; a plugin with no `type` or an
+agent with no `id`), so a typo is named at startup instead of silently doing nothing. It never rejects a file. The
+file is read as YAML 1.1, as PyYAML read it, and JSON is valid YAML, so `config.json` loads the same way.
 
 ## Polling loop
 
-Each monitor runs on its own `interval`, treated as a *period*: the loop
-sleeps to the next due time rather than for the full interval after each
-cycle, so a slow cycle does not stretch the schedule, and a cycle overrunning
-the whole period re-anchors instead of bursting. A 30s monitor is never
-rounded up to a slower one's schedule — with a random startup stagger
-(`STARTUP_JITTER_SECONDS`) so they don't all fire in the same event-loop
-iteration at boot. On a restart, a monitor whose saved result is younger than
-its interval waits until that result is one interval old before its first
-cycle, so a redeploy never repeats a daily scan. Exceptions are caught per-iteration, so one crashing monitor
-never stops its own future polls or anyone else's. Group plugins get a loop too;
-they re-read live child status from the DB each cycle.
+Each monitor runs on its own `interval`, treated as a period: the loop sleeps to the next due time rather than for the
+whole interval after each cycle, so a slow cycle does not stretch the schedule, and a cycle overrunning the whole
+period re-anchors instead of bursting. Monitors start with a random stagger (`STARTUP_JITTER_SECONDS`, 3) so they do
+not all fire at once. After a restart, a monitor whose saved result is younger than its interval waits until that
+result is one interval old, so a redeploy never repeats a daily scan. An error in one cycle is caught there, so one
+crashing monitor never stops its own later polls or anyone else's.
 
-**Any monitor can hold children.** `children` is a property of every `Plugin`,
-not of `group`: the engine builds it for any config entry, `Plugin.run_cycle`
-(the dashboard's Poll Now) polls the children before the monitor itself, and
-`child_statuses()` reads their latest statuses through the data view, so an
-aggregating plugin folds them in a pure `parse_results()`. The scheduled loop
-calls `run_cycle_now` directly and never cascades, so a parent may read child
-statuses up to one child interval old. The default `render_ui()` draws a
-monitor's own `UI_SPEC` and then one collapsible card per child
-(`plugins/base/child_cards.py`). A monitor whose status only repeats its
-children's sets `restates_children`; `monitor_graph.restates_children()` is
-what notifications, the overview, the fleet tiles and `/api/summary` check to
-leave it out, never a bare `bool(children)`. Only a `worst` group does.
+Each background task is a promise with an `AbortController`; aborting a monitor's loop stops it at its next await.
 
-Signals with different costs therefore just get different intervals: `smart` runs
-hourly and `cpu` every minute because they are separate monitors on separate
-loops, not two modules sharing one cycle. A slow check's status is its own, so it
-never lapses to online between probes, and a group rolls the pair up to the worst
-of the two.
+**Any monitor can hold children.** `children` belongs to every `Plugin`, not only `group`: the engine builds it for any
+config entry, `Plugin.run_cycle()` (Poll Now) polls the children before the monitor itself, and `child_statuses()`
+reads their latest statuses, so an aggregating plugin folds them in a pure `parse_results()`. The scheduled loop calls
+`run_cycle_now()` directly and never cascades, so a parent may read child statuses up to one child interval old. A
+monitor whose status only repeats its children's sets `restates_children`; `monitor_graph.ts`'s `restates_children()`
+is what notifications, the overview, the fleet tiles and `/api/summary` check to leave it out. Only a `worst` group
+does.
 
-`run_cycle_now` is single-flight per plugin (`_collecting[id]`), shared by the
-scheduler and any out-of-band (dashboard-triggered) collection, so a slow cycle
-never overlaps itself.
+`run_cycle_now()` is single-flight per monitor, shared by the scheduler and Poll Now, so a slow cycle never overlaps
+itself.
 
-**Cycle timing.** Every cycle that did IO is timed into `CycleStats`
-(`core/coordination/cycle_stats.py`), a 20-cycle window per monitor that
-`engine.cycle_timing(id)` reads back as last/average/max seconds plus SSH
-channel wait. It is memory only and always on; `logging.cycle_timings` governs
-only the `cycle_collect_seconds` / `cycle_parse_seconds` metric rows, which
-cost disk. `x_monitor_self` turns it into its slowest-first table and its "slow"
-warning. The channel wait is measured without threading anything through the
-connector API: `_run_cycle` wraps its dispatch in `measure_channel_wait()`,
-which sets a `ContextVar`, and `SSHConnection.execute` reports how long it
-queued on the per-host semaphore to whatever tally that var holds. The tasks
-`asyncio.gather` spawns copy the context, so every command of the cycle
-reports to the same tally, which keeps the longest single wait — a sum over
-parallel commands could exceed the cycle itself.
+**Cycle timing.** Every cycle that did IO is timed into `CycleStats` (`src/core/coordination/cycle_stats.ts`), a
+20-cycle window per monitor that `engine.cycle_timing(id)` reads back as last, average and longest seconds plus SSH
+channel wait. It is memory only and always on; `logging.cycle_timings` governs only the `cycle_collect_seconds` and
+`cycle_parse_seconds` metric rows, which cost disk. `x_monitor_self` turns it into its slowest-first table. The channel
+wait is measured without threading anything through the connector API: the cycle runs inside
+`measure_channel_wait()`, an `AsyncLocalStorage` scope, and the SSH connection reports how long each command queued on
+the host's semaphore to the tally in that scope, which keeps the longest single wait.
 
-Two monitors resolving to the same effective `id` (falls back to display name
-when config omits it) would silently overwrite each other's status/metrics/logs
-every cycle, since everything is keyed by `id`. Startup detects and logs this
-once, loudly.
+Two monitors with the same effective `id` (which falls back to the name) would overwrite each other's state, since
+everything is keyed by id. Startup logs it, and a reload refuses it.
 
 ## Config reload
 
-`config.yaml` is re-read and applied in place, without a restart and without
-dropping the connections unchanged monitors use. `engine.reload_config(source)`
-is the one entry point; four triggers call it: the file watcher, SIGHUP,
-`POST /api/config/reload`, and the dashboard's System menu. Reloads hold an
-`asyncio.Lock`, so they run one at a time, and each returns a `ReloadResult`
-(`core/coordination/reload.py`) and records its summary as an event: how many
+The config is re-read and applied in place, without a restart and without dropping the connections unchanged monitors
+use. `engine.reload_config(source)` is the one entry point; four things call it: the file watcher, SIGHUP,
+`POST /api/config/reload`, and **Reload config** in the dashboard's System menu. Reloads run one at a time, each
+returns a `ReloadResult` (`src/core/coordination/reload.ts`), and each records its summary as an event: how many
 monitors were added, removed and changed, and which settings need a restart.
 
-**Validate everything, then apply.** `_plan_reload` runs off the event loop.
-It reads the file strictly (`ConfigFileManager(strict=True)` raises
-`ConfigError` where the startup read would fall back to an empty config: a
-missing or empty file, bad YAML, a top level that is not a mapping), resolves
-every monitor's type through a fresh `PluginLoader`, and constructs every new
-or changed plugin. Any failure — an unknown type, a constructor that raises, two
-monitors with the same id — refuses the whole reload: the running tree is never
-touched, and the error goes to the log and the events feed. A reload never
-leaves half a config running. Building uses the same `_build_tree` as startup,
-which records each group's new children in a `_Node` rather than assigning
-them, so even a kept group's `children` stays as it was until the plan applies.
+**Validate everything, then apply.** `plan_reload()` reads the file strictly (where the startup read would fall back to
+an empty config, it throws), resolves every monitor's type through a fresh `PluginLoader`, and constructs every new or
+changed monitor. Any failure (an unknown type, a constructor that throws, two monitors with one id) refuses the whole
+reload: the running tree is untouched, and the error goes to the log and the events feed.
 
-**Monitors are diffed by id.** A monitor is unchanged when its plugin class
-and its effective config (after `ssh_defaults` are merged and a group's
-`agent` is inherited, not counting `children`) are equal to the running
-instance's (`reload.same_monitor`). An unchanged monitor keeps its instance, its
-polling task, its in-memory state and its connection, even when it moved to
-another group. Everything else is keyed by id, so a changed monitor is simply
-stopped and a new instance started, and its stored history carries over.
-Changing `ssh_defaults` therefore changes exactly the monitors it reaches.
+**Monitors are diffed by id.** A monitor is unchanged when its class and its effective config (after `ssh_defaults` are
+merged and a group's `agent` inherited, not counting `children`) equal the running one's (`same_monitor`). An unchanged
+monitor keeps its instance, its loop, its in-memory state and its connection, even when it moved to another group. A
+changed monitor is stopped and a new instance started; its stored history carries over because it is keyed by id.
 
-**Applying** (`_apply_reload`), in order:
+**Applying** (`apply_reload()`), in order:
 
-1. `_retire` stops removed and changed monitors: cancels and awaits their loop
-   task (tracked per id in `_monitor_tasks`), drops their exec context and
-   event streams, and clears their single-flight and timing state. Each
-   retired instance goes into `_retired`, so a cycle already in flight for it
-   (an out-of-band poll, an agent warm-up) finishes without writing.
-2. Agents whose stream set shrank are sent it straight away. The agent keeps
-   a stream whose id it already runs, so a changed monitor's stream has to
-   leave before it comes back with new parameters.
-3. The new config, plugin loader and global settings go in: retention windows,
-   cycle-timing metrics, log levels when `logging.level`/`levels` changed, and
-   agents when `agents:` changed (`AgentRegistry.configure` keeps each existing
-   connection object, because live exec contexts hold it).
-4. New instances are wired, the tree is swapped in one assignment
-   (`self.plugins = ...`), SSH connections no exec context refers to any more
-   are closed (`ConnectorEngine.close_unused`; the pool key is
-   `(host, port, user, key)`, so a changed monitor on the same host reuses its
-   connection), agents get their new stream sets, and new polling loops start
-   with the usual startup stagger.
-5. Notifications are rebuilt when the tree or the `notifications:` section
-   changed; the old engine stops watching but lets deliveries already under
-   way finish. Exporters restart when `exporters:` changed.
-6. Settings read only at startup — `database.path` (unless `--db` overrides
-   it), `database.write_batch_seconds`, `memory`, `auth`, `theme` — are
-   compared and reported as restart required rather than silently ignored.
+1. Removed and changed monitors are retired: their loops aborted, their exec contexts and event streams dropped. A cycle
+   already in flight for a retired monitor finishes without writing.
+2. The new config, plugin loader and global settings go in: retention windows, cycle-timing metrics, log levels, and
+   agents when `agents:` changed.
+3. New instances are wired and the tree is swapped in one assignment. SSH connections no exec context uses any more are
+   closed (the pool key is host, port, user and key, so a changed monitor on the same host keeps its connection),
+   agents get their new stream sets, and new loops start.
+4. Notifications are rebuilt when the tree or `notifications:` changed, exporters when `exporters:` changed, and agents
+   that run monitors get fresh plans.
+5. Settings read only at startup (`database.path` unless `--db` overrides it, `database.write_batch_seconds`, `memory`,
+   `auth`, `theme`) are compared and reported as restart required.
 
-**The UI follows through the change bus.** A reload that changed the tree
-increments `engine.monitors_version` and publishes a `MONITORS` change. The
-sidebar tree already rebuilds from `engine.plugins` on every change, so it
-picks up added and removed monitors on its own. `_render_index` registers a
-callback that compares the version with the one it last saw and redraws the
-overview, or re-points a monitor page at the replacement instance with the same
-id — or goes to the overview when that monitor is gone (`after_reload`).
+**Pages follow through the change bus.** A reload that changed the tree increments `engine.monitors_version` and
+publishes a `monitors` change, and every page reloads its views.
 
-**The file watcher** (`_watch_config`) polls every `CONFIG_POLL_SECONDS`
-rather than using inotify, which would be a new dependency and does not follow
-the ways a config gets replaced. It stats the resolved path — so an editor that
-writes a new file and renames it over the old one, and a NixOS switch that
-re-points the symlink into the store (where every file's mtime is the same),
-both change the fingerprint — waits for one further poll with the same
-fingerprint so a file mid-write is not read, and then reloads only when the
-content hash differs from the one last loaded, so a `touch` does nothing.
+**The file watcher** polls every `CONFIG_POLL_SECONDS` (3) rather than using inotify, which does not follow the ways a
+config gets replaced. It stats the resolved path, so an editor that renames a new file over the old one and a NixOS
+switch that re-points the symlink into the store both change the fingerprint; it waits one more poll with the same
+fingerprint so a file mid-write is not read, and reloads only when the content hash differs, so a `touch` does nothing.
 
 ## Runtime log levels
 
-A module logs through its own `logging.getLogger(__name__)`, so a logger's
-name is its module path and one module's verbosity can change without touching
-the rest. A module still calling `logging.info()` directly logs on the root
-logger and follows only the root level. `LogLevels` (`core/settings/log_levels.py`) is the one
-place levels change: `configure()` applies `logging.level` / `logging.levels`
-at startup and on a config reload, and undoes a per-logger level only when the
-config that set it drops it, so a level set by hand on some other logger
-survives a reload. The engine exposes it as `log_levels()`, `known_loggers()`
-and `set_log_level()`, which the REST route, the dashboard's System menu and the
-signal handlers all call.
+Each module logs through `create_logger_for("x_monitor.<module path>")` (`src/core/logging.ts`), so a logger's name is
+its module path and one module's verbosity changes without touching the rest. `LogLevels`
+(`src/core/settings/log_levels.ts`) is the one place levels change: it applies `logging.level` and `logging.levels` at
+startup and on a reload, and undoes a per-logger level only when the config that set it drops it. The engine exposes it
+as `log_levels()`, `known_loggers()` and `set_log_level()`, which the API, the System menu and the signal handlers call.
 
-Every change is logged at WARNING on `x_monitor.log_levels`, a logger with its own
-explicit WARNING level, so the record of who made logging quieter survives the
-change it describes. SIGUSR1 and SIGUSR2 step only the root level, one notch at
-a time, because a signal carries no argument. They and SIGHUP (a config reload)
-are installed with `loop.add_signal_handler` in `run()` and only when `main()` asks
-(`handle_signals=True`), so an engine built in a test never takes over the
-process's signals.
+Every change is logged at WARNING on `x_monitor.log_levels`, a logger with its own WARNING level, so the record of who
+made logging quieter survives the change it describes. SIGUSR1 and SIGUSR2 step only the root level, one notch at a
+time, because a signal carries no argument. They and SIGHUP are installed only when `main` asks (`handle_signals`), so
+an engine built in a test never takes over the process's signals.
 
 ## Agent transport
 
-`core/connectors/agent_connector.py` is the server half of the agent link; the
-daemon itself is the separate `x_monitor_agent` package.
+`src/core/connectors/agent_connector.ts` is the server half of the agent link and `src/agent/` the daemon. Both sides
+speak X-Libs' agent protocol (`@x-tech-laboratories/x-libs/agent/*`): the key login, running commands, long runs and
+heartbeats. Everything X-Monitor adds rides as an app message on the same socket, described in
+`src/shared/agent_protocol.ts`: the event streams the agent watches, desktop notifications, sleep holds, and the plan and
+records of an agent that runs its own monitors. The app is `x-monitor` at protocol version 3; an agent speaking another
+version is turned away, so agents are upgraded with the server.
 
-The whole design rests on one decision: `AgentConnection.execute()` has the same
-signature and the same `(exit_code, stdout, stderr)` failure mapping as
-`SSHConnection.execute()`. That is why moving a host onto an agent is a config
-key and not a plugin rewrite — `ExecContext` holds either object, and no plugin
-is transport-aware.
+The design rests on one decision: `AgentConnection.execute()` has the same signature and the same
+`[exit_code, stdout, stderr]` failure mapping as `SSHConnection.execute()`. That is why moving a host onto an agent is a
+config key and not a plugin rewrite.
 
-**Direction.** The agent dials the server, never the reverse. The monitored host
-opens no listening port and needs no certificate of its own, and a host behind
-NAT works untouched. The cost is that the server cannot reach an agent that has
-not dialled in; a monitor on an absent agent fails with an explicit message,
-which is the same shape as a refused SSH dial.
+**Direction.** The agent dials the server, never the reverse, at `/api/agent/ws` on the dashboard's own port. The
+monitored host opens no port and needs no certificate, and a host behind NAT works untouched. A monitor on an agent that
+has not dialled in fails with an explicit message, the same shape as a refused SSH dial.
 
-**Why WebSocket and not MQTT or SNMP.** SNMP and REST are both pull, so neither
-removes the polling floor that motivated the agent. MQTT would add a broker as a
-new single point of failure inside the monitoring path, and its pub/sub model
-means hand-building request/response correlation for the exec RPC that makes
-existing plugins work. A WebSocket rides the dashboard's existing port, auth and
-TLS, and costs no new server dependency — NiceGUI already brings FastAPI and
-uvicorn. MQTT remains the right answer for *exporting* to Home Assistant, which
-is a separate concern from the transport.
+**Login.** The upgrade names the agent's id in the `x-monitor-agent-host` header, the server sends a fresh nonce, and
+the agent signs `x-monitor-agent-v1|<id>|<nonce>` with its ed25519 key; the server checks it against the public key
+`agents:` lists for that id and holds no agent secrets. The X-Libs client refuses a `ws://` URL except to this machine,
+so commands and output travel encrypted.
 
-**Concurrency.** Commands are frames multiplexed on one socket, so there is no
-analogue of `MaxSessions` and no semaphore. The agent dispatches each `exec`
-into its own task, so a 30-second `smart` check cannot delay a 1-second sample on
-the same connection.
+**Concurrency.** Commands are frames multiplexed on one socket, so there is no `MaxSessions` and no semaphore. Each
+command runs in its own process group (`src/agent/executor.ts`) and a timeout kills everything it started, which the SSH
+path cannot do.
 
-**Process groups.** `x_monitor_agent/executor.py` runs each command with
-`start_new_session=True` and kills the whole process group on timeout. This
-closes a real gap in the SSH path, where killing the remote command left
-anything it had spawned running on the target.
+**Events.** A plugin's `subscriptions()` returns `StreamSpec`s keyed by its id; the server sends an agent its full set,
+never a delta, so a reconnecting agent converges without the server tracking what it knows. The agent runs one
+supervised loop per stream from `src/agent/watchers.ts` and pushes an event the moment something happens. A sample
+stream carries `max_quiet` (five intervals), so unchanged results are suppressed but one always lands per window and a
+quiet monitor never reads as stale, and `JournalMux` shares one `journalctl --follow` process across every
+unit-filtered journal stream (plus one kernel follower), so N service monitors cost two processes. The engine's
+`on_agent_event()` routes each event by stream id to the plugin's pure `parse_event()` and stores the result through the
+same `apply_result` the polling cycle uses.
 
-**Events.** A plugin's `subscriptions()` returns `StreamSpec`s keyed by its own
-plugin id; the engine registers them on the agent's connection and the endpoint
-sends the full set in the welcome frame (full set, never a delta, so a
-reconnecting agent converges without the server tracking what it knows). The
-agent runs one supervised coroutine per stream from `x_monitor_agent/watchers.py`
-and pushes an `event` frame the moment something happens. Two economies apply
-on the agent side: a generic sample stream carries `max_quiet` (five
-intervals), so unchanged results are suppressed but one frame always lands per
-window — a quiet monitor keeps advancing and can never read as stale — and
-`JournalMux` shares one `journalctl --follow --output=json` process across all
-unit-filtered journal streams (plus one `--dmesg` follower), routing each line
-to its stream in Python, so N service monitors cost two processes rather than
-N+1.
-`XMonitorEngine._on_agent_event` routes it back by stream id to the plugin's pure
-`parse_event()` and persists the result through the same batched
-`db.apply_result` the polling cycle uses — no IO on the event path.
+When an agent finishes its login the engine collects every monitor bound to it at once (`on_agent_connected()`).
+Monitors start their schedule when X-Monitor does, but an agent takes a moment to dial in, so a first cycle would record
+a failure; for an hourly check that meant an hour of failed after every restart. A monitor still waiting out a current
+saved result is left out.
 
-When an agent finishes its handshake the engine collects every monitor bound to
-it immediately (`_on_agent_connected`). Monitors start their schedule when X-Monitor
-does, but the agent takes a moment to dial in, so a monitor's first cycle
-normally runs before its transport exists and records a failure. For a 30s
-monitor that is invisible; for the hourly SMART and ZFS checks it meant an hour
-of reporting failed after every restart, which is long enough to be mistaken for
-a real fault. A monitor still waiting out a current saved result after a restart
-is left out, since its first cycle comes when it is due.
+Two conventions matter:
 
-Two conventions matter here:
+1. **The poll keeps owning status.** The plugins that stream (`oom`, `systemd_service`) return log lines from
+   `parse_event()` and leave status to `parse_results()`, so one noisy journal line never flips a healthy monitor.
+2. **A throwing plugin never takes down the socket.** `on_agent_event()` catches, logs and goes on.
 
-1. **The poll keeps owning status.** Both plugins that stream today (`oom`,
-   `systemd_service`) return log lines from `parse_event()` and leave `status`
-   to `parse_results()`. Otherwise one noisy journal line could flip a healthy
-   monitor, and a disconnected agent would look like a healthy one.
-2. **A raising plugin must not take down the socket.** `_on_agent_event`
-   catches, logs and continues, because it runs on the agent's receive task.
+## Agents that run monitors
 
-**Protocol location.** `x_monitor_agent/protocol.py` is canonical and
-`x_monitor/core/connectors/agent_protocol.py` re-exports it. It lives in the agent
-package because the agent is the constrained side: a monitored host installs
-`x-monitor-agent` and must not pull in nicegui, peewee and dnspython to do it. One
-definition, not two copies to keep in step.
+An agent with `run_monitors: true` runs its host's monitors itself and keeps running them while cut off from the
+server. The server compiles each such agent a plan (`src/core/coordination/agent_plans.ts`): the effective config of
+every monitor on that agent whose plugin has `RUNS_ON_AGENT` set. Checks that need the server's view of the network,
+groups, links and work across hosts stay on the server.
+
+The agent runs the server's own engine over that plan (`LocalEngine`, `src/core/coordination/local_engine.ts`), with a
+local command transport and an `AgentDatabase` (`src/core/database/agent_database.ts`): the server's database on a
+local SQLite file, plus an outbox of every result, job step and setting as a numbered record
+(`src/core/sync/records.ts`). Records stream to the server while connected and wait while offline; the server applies
+each at its own time and acknowledges it, and the agent trims what was acknowledged. The agent acknowledges the plan
+version it runs, and from then on the server no longer polls, schedules or triggers those monitors, sends their buttons
+down as actions, and marks them unavailable when the agent goes quiet. Which monitors an agent has taken survives a
+server restart in the settings store.
+
+Statuses that arrive late fill in the history without alerting (`LATE_STATUS_MILLISECONDS`); once live records resume,
+the Notification Engine sends one summary per agent. While offline, the agent raises desktop notifications itself
+through the local socket a desktop agent on the same host listens on.
 
 ## SSH transport
 
-`core/connectors/ssh_connector.py` uses asyncssh rather than shelling out to the
-system `ssh` client: one native connection per physical target, each command a
-channel on it rather than a forked process. `ConnectorEngine` pools one
-`SSHConnection` per `(host, port, username, key_path)`; a plugin's per-target
-handle is a small `ExecContext` value, so the engine itself stays a stateless
-singleton. `ExecContext.conn` is typed as the two-member
-`TransportConnection` Protocol (`core/contracts.py`), the shared surface both
-transports must keep.
+`src/core/connectors/ssh_connector.ts` uses ssh2, the maintained pure-JavaScript SSH implementation, rather than the
+system `ssh` client: one connection per physical target, each command a channel on it. `ConnectorEngine` pools one
+`SSHConnection` per host, port, user and key; a plugin's per-target handle is a small `ExecContext`.
 
-Three behaviors of the old subprocess design are reproduced deliberately, each
-verified against a real sshd:
+Three behaviours matter:
 
-1. **Killing a remote process.** asyncssh's `process.close()` does not reliably
-   terminate a remote command, so every timeout path explicitly `terminate()`s
-   then `kill()`s.
-2. **Host-key trust.** `known_hosts=[]` (not `None`) makes
-   `_TofuClient.validate_host_public_key` fire, reproducing
-   `StrictHostKeyChecking=accept-new`: trust and persist a host's key on first
-   use, reject any later mismatch.
-3. **Per-host channel limits.** X-Monitor bounds its own per-host concurrency
-   (`_MAX_CONCURRENT_PER_HOST = 8`, a semaphore) below sshd's default
-   `MaxSessions` of 10. This ceiling is intrinsic to SSH — a host with many
-   monitors either raises `MaxSessions` or moves to the agent transport, which
-   has no equivalent limit.
+1. **Killing a remote command.** A timed-out command is sent TERM, then KILL after a grace period, and its channel
+   closed; a command's own deadline (`deadline_prefix`) sits inside any `sudo`, so a root command can be killed by its
+   own `timeout`.
+2. **Host-key trust.** Trust on first use: the first key a host shows is stored in `known_hosts` under
+   `$XMONITOR_SSH_CONTROL_DIR` (default `x-monitor-ssh` under the system temp folder), and a later mismatch is refused.
+3. **Per-host channel limits.** X-Monitor bounds its own channels per host (`MAX_CONCURRENT_PER_HOST`, 8, a semaphore)
+   below sshd's default `MaxSessions` of 10. A host with many monitors raises `MaxSessions` or moves to the agent.
 
 ## Job control
 
-A long-running job (a flake evaluation, a container prune) is **not** a live
-SSH channel held open for hours. It is launched *detached on the target* with one ordinary command
-(`setsid sh -c '…' &`), writing its output to `<workdir>/out` and its exit code
-to `<workdir>/exit`, and is then advanced by ordinary polling commands on the
-owning plugin's normal monitor cycle. A plugin that sets `job_poll_interval` is
-polled that often while one of its jobs runs (`Plugin.next_cycle_in`), without
-moving its regular schedule; `attic_push` and `vuln_scan` launch their check and
-scan this way from a scheduled cycle rather than from an action. The builders/parsers in `ssh_connector.py`
-(`launch_command`/`parse_launch`, `poll_command`/`parse_poll`, `cancel_command`,
-`split_lines`) are pure — no runtime, no coroutine, no IO. One poll round-trip
-returns output size, exit code (empty if running), liveness (`kill -0`), and any
-output past the byte offset the last poll consumed (`Job.output_seq`).
+A long-running job (a flake evaluation, a container prune) is not a channel held open for hours. It is launched detached on
+the target with one ordinary command (`setsid sh -c '…' &`), writing its output to `<workdir>/out` and its exit code to
+`<workdir>/exit`, and is then advanced by ordinary polling commands on the owning monitor's cycle. A plugin that sets
+`job_poll_interval` is polled that often while one of its jobs runs (`Plugin.next_cycle_in()`), without moving its
+regular schedule. The command builders and parsers in `src/core/connectors/job_commands.ts` are pure: one poll returns
+the output size, the exit code (empty while running), whether the process lives, and any output past the offset the last
+poll consumed.
 
-Because the job lives on the target it **survives a X-Monitor restart**:
-`reconcile_orphaned_jobs` only fails jobs with no `pid` (crashed before launch);
-any job with a pid is re-adopted by the owning plugin's next poll (pid alive →
-resume; pid/exit gone → finalize).
+Because the job lives on the target it **survives an X-Monitor restart**: `reconcile_orphaned_jobs` fails only jobs with
+no pid (lost before launch), and a job with a pid is re-adopted by its monitor's next poll.
 
-A plugin's main job is the one `jobs.running()` returns; side jobs run beside
-it and never grey out its actions. A kind in `Plugin.SIDE_JOB_KINDS` is a side
-job the plugin polls itself. An action whose plan sets `ActionPlan.detached` (a
-custom action with `detached: true`, a container prune) is a side job of kind
-`action:<action id>` that the plugin never polls: the engine launches it, and `ActionJobs` in `coordination/action_jobs.py`
-polls every running one every few seconds. When one ends, its whole output goes
-to the action's interpreter as a `CmdResult`, as if the command had run inline.
-The action's arguments live only in memory, so after a restart a run is
-interpreted without them.
+A plugin's main job is the one `jobs.running()` returns; side jobs run beside it and never grey out its actions. A kind
+in `Plugin.SIDE_JOB_KINDS` is a side job the plugin polls itself. An action whose plan sets `detached` (a custom action
+with `detached: true`, a container prune) is a side job of kind `action:<action id>` the
+plugin never polls: the engine launches it, and `ActionJobs` (`src/core/coordination/action_jobs.ts`) polls every
+running one every five seconds, every two while someone has its log open. When one ends, its whole output goes to the
+action's interpreter as a `CmdResult`, as if the command had run inline. The action's arguments live only in memory, so
+after a restart a run is interpreted without them.
 
-A job's command prints its output as it runs, never into temporary files read
-out at the end, because its log is read while it runs. A command that keeps its
-stdout apart for parsing still copies its stderr to the log line by line with
-`ssh_connector.stream_stderr`.
+A job's command prints its output as it runs, never into files read at the end, because its log is read while it runs.
 
-Jobs live in the store like everything else, so **job ids are assigned by the
-store**, not by SQLite's autoincrement — `jobs.create` returns an id
-immediately, with the row persisted asynchronously under that same id. A
-`JobRecord` is the one mutable record type (successive polls advance `pid`,
-`progress`, `state`, `output_seq` in place); readers take a rendered dict via
-`as_dict()`, so a half-applied update is never observed. Note the durability
-edge this buys: if X-Monitor dies between launching a job and the next flush, the
-job is lost from both memory and disk, and the detached process on the target
-has nothing left to re-adopt it.
+Jobs live in the store like everything else, so **job ids are assigned by the store**: `jobs.create` returns an id at
+once, and the row is written under that id with the next batch. A `JobRecord` is the one record that changes in place;
+readers take a copy through `job_as_dict()`. If X-Monitor dies between launching a job and the next batch, the job is
+lost from memory and disk, and the process on the target has nothing to re-adopt it.
 
 ## SQLite: persistence, hydration, retention
 
-SQLite is write-mostly. It is read exactly once per process, at startup; every
-runtime read is served from the state store.
+SQLite is written much and read once, at startup; every runtime read is served from the store. It runs on `node:sqlite`
+through X-Libs `sql`, in WAL mode with `synchronous = NORMAL`.
 
-**One background writer thread** (`_AsyncWriter`) owns all writes. The polling
-loop and UI run on the asyncio event loop; committing to SQLite fsyncs, which can
-block noticeably (especially on ZFS) and would stall the async server if done
-inline. Writes are enqueued (non-blocking for the caller) and batched: the thread
-commits whatever arrives within `batch_window` seconds as one transaction.
+**Writes are batched.** Every write is queued and whatever arrives within `database.write_batch_seconds` (default 1)
+commits as one transaction. Because the store, not the database, is what pages read, a slow disk never makes a read
+wait. The trade-off is a crash losing the unflushed batch. `flush()` writes the queue, and `engine.shutdown()` calls it
+after closing every transport, so a clean exit keeps the tail.
 
-Because the store — not the database — is what the UI reads, a slow disk can no
-longer make a read wait, and nothing in the running system blocks on the
-writer. The durability trade-off is the flip side: a crash loses the unflushed
-batch, and since jobs are also memory-first, a job launched and lost within
-that window leaves an unreconciled remote process (see **Jobs** below).
-`flush()` waits for the queue; `engine.shutdown()` — registered as the UI
-server's shutdown hook — calls it after closing every transport, so a clean
-exit persists the tail of the batch.
+**The tables are the Python app's.** Tables, columns, indexes and the local text timestamps match the peewee models, so
+an existing X-Monitor database opens in place: the legacy column renames and every additive migration run on open,
+under X-Libs `migrate` with the owner `x-monitor`. Row ids stay SQLite integers, since these tables are logs that never
+sync between hosts.
 
-**Hydration** (`DatabaseManager.hydrate()`) restores the store at startup:
-latest status per collector, the recent tail of each metric series, recent
-events and log lines, all snapshots and settings, and recent/unfinished jobs.
-Each history stream loads only as deep as its buffer, so startup cost is
-bounded by `memory:` rather than by how large the database has grown. Each
-monitor, series and log target is found by stepping along its index one key at
-a time (`_distinct_keys`), since `SELECT DISTINCT` reads the whole index. A
-failure here is logged, not fatal — the store starts empty and collectors
-refill it.
+**Hydration** (`DatabaseManager.hydrate()`) restores the store at startup: the latest status per monitor, the recent
+tail of each metric series, recent events and log lines, all snapshots and settings, and recent or unfinished jobs.
+Each history stream loads only as deep as its buffer, so startup cost is bounded by `memory:` rather than by how large
+the database has grown. A failure here is logged, not fatal; the store starts empty and collectors refill it.
 
-Hydration runs in `engine.run()`, off the event loop, after the web server is
-already up. Until it finishes `engine.ready` is false: `StartingUpMiddleware`
-(`core/ui/startup.py`) answers every request with 503, agent events are
-dropped, and agents that connected early are collected once it is ready.
+Hydration runs in `engine.run()` after the server is already listening. Until it finishes `engine.ready` is false:
+`register_starting_page` (`src/server/startup.ts`) answers every request with 503 (a starting page for a browser,
+`{status: "starting"}` for the API), agent events are dropped, and agents that connected early are collected once it is
+ready.
 
-**Reads still run through `offload()`** in the UI (`core/ui/components.py`),
-which is now cheap insurance rather than a necessity: a store read is a dict
-lookup, but keeping the call off the loop costs nothing and preserves the rule
-that `read_fn` is pure with no NiceGUI element access. Element updates
-(`.rows = …`, `.update()`) are not thread-safe and must be applied after
-awaiting, back on the loop.
+**Indexing.** `metric` carries one series index on `(plugin_id, metric_name, timestamp, value, target)`, holding every
+column hydration loads for a series' tail, so the tail reads from the index alone. `ensure_series_index()` builds it at
+the start of hydration, behind the starting page.
 
-**Indexing.** `Metric` carries one series index, `metric_series_tail` on
-`(plugin_id, metric_name, timestamp, value, target)`. It holds every column
-hydration loads for a series' tail, so the tail is read from the index alone:
-a series' rows are scattered through the table in write order, and reading
-them there was one random page read per row. Only the newest row's `metadata`
-is fetched from the table, since nothing reads an older one. The index is
-built by `ensure_series_index()` at the start of hydration rather than in
-`_migrate`, so its one-off build on a large database runs behind the starting
-page; it replaces the narrower `(plugin_id, metric_name, timestamp)` index.
-`_migrate` also drops the single-column indexes no query ever used
-(`metric_target`, `metric_metric_name`, `logline_source`, most of `job`'s) —
-each was pure write amplification on the hottest tables.
+**Retention.** Metrics and a status row are written on every poll, so both tables grow without pruning. The prune loop
+runs `prune_metrics` and `prune_status` (the metric retention window) beside `prune_logs` and `prune_jobs` (the log
+retention window) once an hour; `prune_status` always keeps the newest row per monitor. `logging.metric_downsample_days`
+(off by default) thins metrics older than the window to one row per series per hour, one day per pass, remembering how
+far it got. `0` turns a window off.
 
-**Naming.** Every table spells the collector id `plugin_id`. Legacy DBs
-arrive with per-table variants (`metric.collector`, `event.source_id`,
-`statushistory.collector_id`, `logline.source`); `_migrate_renames` converges
-them before `create_tables`, since model-declared indexes such as
-`statushistory.plugin_id` already reference it.
+**Snapshots.** A snapshot exists because a metric carries one named number, which is wrong for a process list or a
+unit list. A plugin with row-level data returns a `snapshot` in its `CollectResult` and reads it back with
+`latest_snapshot`; the store holds the object as it is and serialises it only on the way to disk.
 
-**Retention.** Metrics and a status row are written on every poll of every
-plugin, so both tables grow unbounded without pruning. Alongside the prunes,
-`logging.metric_downsample_days` (default off) thins metrics older than the
-window to one row per series per hour — hydration only ever loads a series'
-recent tail, so old full-resolution rows serve nothing, and thinning them
-stretches how far back a chart can reach for the same disk footprint. It thins
-one day per writer job, each queueing the next, and remembers how far it got,
-so a first pass over weeks of rows never stalls the writes queued behind it. `prune_metrics` /
-`prune_status` (metric-retention window) run alongside `prune_logs` /
-`prune_jobs` (log-retention window) on the periodic prune loop; `prune_status`
-always keeps the newest row per collector so a plugin's current state is never
-pruned away. Retention windows are independent — see `logging.retention_days`
-and `logging.metric_retention_days` in `config.yaml` (the latter defaults to the
-former when unset). `0` disables a window (keep forever).
+**Log-line dedup** is enforced by the store, which keeps a hash set per target beside the buffer, since collectors
+re-fetch the same trailing lines every cycle. The set ages out with the buffer.
 
-**Migrations.** `create_tables` only creates missing tables, never alters an
-existing one, so a column or index added to a model appears on fresh installs
-but not upgraded databases (where queued inserts would then fail silently).
-`_migrate` backfills each additive, idempotent change on every start, with no
-version bookkeeping.
+**Retention and buffers** are separate knobs: `logging.retention_days` and `logging.metric_retention_days` prune the
+database file; `memory:` bounds the buffers. **Memory is bounded by config, not by uptime**: every stream has a ceiling
+(defaults in `default_buffer_sizes`), and jobs get two more bounds, `jobs_per_plugin` (oldest finished jobs evicted) and
+`finished_job_output` (a finished job's output trimmed to a short tail, its whole log kept on disk).
 
-**Snapshots.** `PluginSnapshot` exists because a `Metric` row carries one named
-number — wrong for a process list or systemd unit list, where every row matters.
-A plugin with row-level data returns a `snapshot` in its `CollectResult` (written
-via `set_snapshot`) once per cycle and reads it back with `latest_snapshot`.
+**State backups.** The state database's backups are X-Libs `sqlite_backups`: `VACUUM INTO` copies in a `backups` folder
+beside the database, taken daily and 14 kept by default, listed and restored under Settings or `/api/state-backups`. A
+restore is staged beside the database and taken in on the next start, before the engine opens it; X-Monitor exits with
+code 75 so its service manager starts it again.
 
-`set_snapshot` takes the **decoded object**, not a JSON string: the store holds
-it as-is and serialises it only on the way to disk, so a reader never pays a
-decode. (It previously took pre-serialised JSON, since the value went straight
-into a `TEXT` column.)
+## Page refresh: push, not polling
 
-**Log-line dedup** is enforced by the store, which keeps a hash set per target
-alongside the buffer, since collectors re-fetch the same trailing lines every
-cycle. The set ages out with the buffer (an evicted line's hash is discarded)
-so it cannot grow without bound. The DB's `UNIQUE dedup_hash` remains as a
-persistence-side backstop.
+Pages do not poll the server for changes. Every semantic write on the Database Engine publishes one change on the bus
+in `src/core/state/changes.ts`, tagged with its kind (`status`, `metric`, `event`, `log`, `job`, `snapshot`, `setting`,
+or `monitors` after a reload) and the monitor it belongs to. An idle system publishes nothing.
 
-**Retention vs. buffers** are separate knobs for separate resources.
-`logging.retention_days` / `logging.metric_retention_days` prune the *database
-file*; `memory:` bounds the *in-memory* buffers. The buffers are self-limiting
-(a deque drops its oldest entry on append), so the prunes never touch the store.
+The server follows the bus once (`follow_changes` in `src/server/app.ts`) and tells every open page through
+`/api/changes`, an X-Libs `EventStream` of server-sent events. The first change goes out at once and the rest arriving
+within `CHANGE_COOLDOWN_SECONDS` (0.5) collapse into one, which keeps latency at zero for an isolated change while
+bounding the rate on a busy system, where one cycle publishes a change per metric, log line and status. Each message
+names the kinds and monitors that changed.
 
-**Memory is bounded by config, not by uptime.** Every stream has a ceiling, so
-resident state reaches a steady state and stays there — measured flat across
-12k poll cycles (~40 MB RSS for 50 monitors x 5 metrics with chatty jobs).
-Roughly: `monitors x metrics x metric_history` metric points, `event_history`
-events, `log_history` lines per target.
+The page follows the stream with X-Libs `follow_changes`, which bumps a watch on each message and after a reconnect.
+Each view loads through X-Libs `use_resource` with `live` (`src/web/api.ts`): it reloads quietly when the watch bumps,
+and every 60 seconds as a backstop for values that age on their own, such as a running job's duration. Every call the
+page makes carries its stream client id, so a change the page made itself is not audited as a script's.
 
-Jobs are the exception to "just use a deque", because a job owns an output
-buffer rather than being one fixed-size entry, and they get two bounds:
-- `jobs_per_plugin` evicts a plugin's oldest **finished** jobs (running ones
-  are never evicted — their plugin is still advancing them).
-- `finished_job_output` trims a job's output to a short tail once it ends. A
-  running job keeps the full `job_output` buffer, since a plugin tails it live
-  to parse progress; afterwards the complete log lives on disk, and a caller
-  wanting an old job's full output must read it from there.
+Reads are lookups over live objects, so there is no cache and no TTL: a read sees what the last collector wrote.
 
-Without those two, `monitors x jobs x output_lines` would stay resident to
-serve a view that is only opened on demand.
+## The server and its API
 
-## UI refresh: push, not polling
+`src/server/app.ts` builds the Fastify app. Every call is written once in `src/server/methods.ts` over the engine, and
+four doors open onto the same methods:
 
-The UI subscribes to write notifications; it does **not** poll. Every semantic
-write on the Database Engine publishes one change to the bus in
-`core/state/changes.py`, tagged with its kind (`STATUS`, `METRIC`, `EVENT`,
-`LOG`, `JOB`, `SNAPSHOT`, `SETTING`) and the monitor it belongs to. An idle
-system publishes nothing and so costs nothing, and a status flip reaches the
-screen as soon as it is written rather than at the next tick of a timer.
+- the REST routes scripts have always used (`/api/health`, `/api/monitors`, `/api/events`, poll, actions, push, log
+  levels, config reload);
+- the page's own routes (`/api/sidebar`, `/api/overview`, `/api/monitors/:id/page`, `/run`, `/toggle`, jobs);
+- calls by name at `POST /api/call/:method`, described once in `src/server/api_spec.ts` as an X-Libs `ApiSpec`;
+- the same calls as MCP tools at `/api/mcp` and as an OpenAPI 3.1 document at `/api/openapi.json`.
 
-Publishing is synchronous, on whichever thread performed the write — a
-collector's worker thread, the agent's socket task, the UI's own loop. A
-subscriber therefore does the minimum possible inline and marshals the real work
-onto its own event loop; nothing in the bus awaits, holds a lock for long, or
-lets a subscriber's exception escape into the write path.
+A call named `list_`, `get_` or `search_` only reads and is marked read-only, which is what lets a viewer or a read
+token make it. A refusal is an `ApiError` carrying its status and `{error}` body, answered the same way by every door.
 
-Widgets still apply a refresh only when the value changed (`refresh_rows` and
-the inline equality checks in `history_chart`, the sidebar tree,
-`update_charts`), so a wake-up that finds nothing new is cheap.
+## Page views
 
-Reads are dict lookups and slices over live objects — sub-microsecond — so
-there is no cache and no TTL anywhere: a read sees what the last collector
-wrote, immediately. (Reads formerly went to SQLite behind a 1s TTL cache, which
-is what made polling expensive enough to need caching in the first place.)
-Widgets still read through `offload()` where they did before, since a NiceGUI
-callback should not block the loop, but the work it wraps is now trivial.
+The page never sees a `UI_SPEC`. The server's page-view builders (`src/server/views/`) walk a monitor's spec, its
+`custom_view()`, its stored readings and its attributes, and return plain JSON in the shapes `src/shared/page_view.ts`
+declares: rows of cells, each holding widget views (value cards, repeated items, gauges, share bars, strips, history
+charts, tables with row actions and toggle cells, button rows, dialogs, the job panel). The page draws them, runs the
+actions they name, and fills each `{row[field]}` from the row a click came from. `page_view.ts` also holds the few pure
+rules both sides apply, such as how a value takes its status colour. So a rule function in a spec (a formatter, a
+colour rule, a `visible_if` predicate) runs on the server and only its result crosses to the browser.
 
-**Thread-safety.** Collectors run on asyncio worker threads while the UI reads
-from its own pool, so the store is touched from several threads. Its flat
-dicts hold immutable records and need no lock (a single dict get/set is atomic
-under the GIL); the bounded buffers take an `RLock`, because appending and
-reading them are read-modify-write sequences. Buffer readers copy out under
-that lock and return lists, so a caller never iterates a deque a collector is
-appending to.
+`src/server/views/spec.ts` is the declarative page, as `generic_render()` was: a card dispatches on its first matching
+key (`repeat`, then `kind`, then `metrics`, then `metric`, then the static and attribute forms), and `host_card` and
+`status_card` are reserved names. `custom.ts` builds the pages the spec cannot draw alone (`systemd_service`, the
+journal's log search), and `group.ts` the composite grid and child cards. A spec's `value_attr`,
+`color_attr`, `rows_attr` and `options_attr` name plain attributes of the plugin (`plugin_attr`), without Python's
+leading underscore.
 
-### One change subscription per client
+## The page
 
-`_PageScheduler` (`core/ui/model.py`) drives every *tickable* registered for a
-NiceGUI client from a **single** subscription to the change bus. A tickable is
-anything with `_tick()` and `_detached()`:
+`src/web/` is a React page built by Vite. `main.tsx` holds the X-Libs `Shell` (top bar, sidebar with the views and the
+monitor tree, theme button, toasts and dialogs), the sign-in form and the hash router: `#/`, `#/monitor/<id>`,
+`#/events`, `#/schedules`, `#/logs`, `#/settings`, `#/account` and, for an admin, `#/users`. `api.ts` names every route
+the page calls, with the shapes the view builders return. Widgets come from X-Libs (`DataTable`, `Tree`, `LineChart`,
+`Donut`, `Meters`, `Strip`, dialogs, badges, controls); `src/web/widgets/` holds the three it lacks: the gauge, the share
+bar and the treemap.
 
-- A `PluginPage`, which refreshes a plugin detail page's cards/charts/tables.
-- A `_CallbackTick`, wrapping a bare refresh callback registered via
-  `on_data_event` / `schedule_callback` — used by the overview and events pages.
+Folder plugins for the page itself are listed under `/plugins` from a `plugins` folder beside the config, loaded by
+X-Libs `load_plugin_modules` and switched on or off in Settings.
 
-Both ride the one subscription, so the overview's sidebar/events/charts
-refreshes and a plugin page's widgets are all coalesced. This is what keeps a
-group's refresh cost from scaling with how many children are expanded — plugins
-have no idea whether they're standalone or one of many expanded children.
+## Accounts and tokens
 
-A change wakes *every* tickable on the client, not only those interested in the
-changed monitor. Refresh callbacks are registered by plugin render code and may
-read any monitor's data — a group page renders its children — so there is no
-reliable interest set to filter on.
+Sign-in is X-Libs accounts (`src/server/auth.ts` over `server/account_sign_in` and `server/account_store`): users,
+sessions and page-made tokens live in the state database under `account_*` tables, with the roles `viewer`,
+`operator` and `admin`. `needed()` says what each route takes: reads anyone signed in, other writes an operator,
+writes to state backups an admin. The admins are declared: the accounts file named by `X_MONITOR_PASSWORD_HASH_FILE`
+(`name:hash` lines from `npm run hash-password`) plus config's `auth.username` and password, its name lower-cased.
+`X_MONITOR_OIDC_*` adds single sign-on. With nobody to sign in as, no accounts are mounted and the dashboard and API stay
+open, as they did before any auth was configured; push tokens still work, since the push route checks them itself.
 
-**Debouncing is leading-edge.** The first change refreshes immediately and
-further changes arriving during `COOLDOWN_SECONDS` collapse into one trailing
-refresh. That keeps latency at zero for an isolated event while bounding the
-refresh rate on a busy system, where one collection cycle publishes one change
-for its metrics plus one per log line and status it writes.
+`auth.tokens` stays as declared tokens (`src/server/tokens.ts` over X-Libs `declared_tokens`): `read` signs in as a
+viewer, `control` as an operator, and `push` reaches only the push route. Only a SHA-256 digest of each token is kept;
+the tokens are 256-bit random values, so a fast unsalted hash is enough, and a presented token is compared in constant
+time. A token never opens a browser session. Tokens can also be made per user on Your account.
 
-An `IDLE_REFRESH_SECONDS` sweep runs alongside it as a backstop, for the two
-things a change notification cannot cover: values that age on their own (a
-running job's duration, "last seen" times) and reaping a client that closed
-while the system had nothing to publish.
+**The audit trail.** `acting_client()` names who made a request (the account, `token '<name>'`, or `<user>'s token`).
+The control routes write it into the monitor's events, push heartbeats carry it through `record_push(source)`, and every
+write made with a token is logged (reads only at debug, since a scraper calls every few seconds).
 
-`PluginPage.start()` does one synchronous refresh immediately before
-registering, so a freshly loaded page shows real data rather than its
-constructed defaults (`--`, empty tables) until the first tick. `run_now=False`
-on a callback defers only its first tick.
+**Agents are not accounts.** Each `agents:` entry has its own ed25519 public key, which the agent socket checks.
+
+## Theme
+
+The page wears Halon (`@x-tech-laboratories/halon`): `halon-tokens.css` is the only place a literal colour exists, in a
+light and a dark block, and `halon.css` the component rules, where every value is a `var(--token)`. The page imports
+both first, then X-Monitor's own `app.css` and `widgets.css`, which use only tokens. Charts are DOM and SVG painted with
+the same variables, so they follow the scheme with no repaint, and `src/shared/charts.ts` names Halon tokens rather than
+colours. The light, dark or system choice is the X-Libs theme button, kept in the browser.
+
+Text case follows what the text is: headings (table, job panel, events and dialog titles) are sentence case; labels
+(card and chart titles) are capitals; buttons are title case (`Poll Now`, `Shut Down`).
 
 ## Exporter Engine
 
-`ExporterEngine` (`core/exporters/__init__.py`) owns the push exporters; the
-Prometheus pull render needs no runtime object. The Coordination Engine calls
-`start(monitors)` from `run()` once the loop is live and `stop()` from
-`shutdown()`. `monitors` is a callable returning the live monitors, so an
-exporter that describes them (MQTT) always sees the current set.
+`ExporterEngine` (`src/server/exporters/index.ts`) owns the push exporters; the Prometheus render (`prometheus.ts`) needs
+no runtime object. The engine starts it once running and stops it on shutdown, and hands it a function returning the
+live monitors, so an exporter that describes them (MQTT) always sees the current set.
 
-**InfluxDB** pushes the whole latest snapshot on a fixed interval, its blocking
-`requests` call on a worker thread.
+**InfluxDB** pushes the latest snapshot on a fixed interval.
 
-**MQTT** (`core/exporters/mqtt.py`) is change-driven instead. It subscribes to
-the change bus and reacts to `STATUS` and `METRIC` changes only: the subscriber
-runs on the writer's thread, so it just hands the monitor id to the loop, where
-it joins a dirty set and wakes a drain task. The drain waits `COALESCE_SECONDS`
-before publishing, so a cycle that writes ten metrics and a status goes out as
-one pass over that monitor. Everything — discovery configs and current state —
-is marked for publishing on every (re)connect, on Home Assistant's
-non-retained birth message, and on the optional `interval`.
-
-*Why aiomqtt.* It is an asyncio client over paho-mqtt, so publishing lives on
-the single event loop with no thread of its own; it is an optional extra
-(`x-monitor[mqtt]`), imported only when `exporters.mqtt` is configured, and a
-missing install is logged as an error naming the extra rather than stopping the
-engine.
-
-*Availability.* The connection carries a retained last will of `offline` on
-`<base>/status`, and `online` is published retained on connect. A clean
-DISCONNECT suppresses the will, so `stop()` cancels the task, whose cancellation
-handler publishes `offline` itself before leaving.
-
-*Discovery.* One Home Assistant device per target host, identified by
-`<base>_<target>`; per monitor an `enum` status sensor and a `problem` binary
-sensor sharing `<base>/<monitor>/status`; one sensor per metric whose
-device_class and unit come from the metric name's suffix (`metric_traits`).
-Every sensor is `state_class: measurement`, since X-Monitor's `_total` metrics are
-counts of things, not monotonic counters. A config is sent once per connection
-the first time its monitor or metric is published, so a new metric is
-announced before its first value. Ids pass through `slug()`, which lowercases
-and keeps `a-z 0-9 _ -`, making every id a single topic level and a valid Home
-Assistant object id; unique ids include the base topic so they stay stable
-across restarts and distinct between X-Monitor instances. Monitors removed from the
-config keep their retained discovery entries until deleted in Home Assistant.
-
-*Failure.* Any error inside a session — a refused connect, a failed publish, a
-dropped message stream — ends that session; `run()` logs it (a warning for the
-first failure, debug while the outage lasts) and reconnects with exponential
-backoff from `BACKOFF_MIN` to `BACKOFF_MAX`. Nothing is queued while
-disconnected: the reconnect republishes the current state, which is all a
-subscriber needs.
-
-## Teardown
-
-NiceGUI resolves a `ui.timer`'s context *outside* the callback and raises "The
-parent slot of the element has been deleted." as soon as the client disconnects
-or the page re-renders — in NiceGUI's own task, so a try/except around the
-callback never sees it, and it floods the log every tick. Driving refreshes off
-the change bus rather than `ui.timer` removes that failure mode: the scheduler
-owns its own tasks and checks liveness itself.
-
-Each tick drops the tickables whose `_detached()` is true, and a scheduler with
-none left unsubscribes from the bus, cancels its idle sweep and removes itself
-from `_schedulers`. `_CallbackTick._detached()` tests the client it was
-registered under against `Client.instances`, giving it the same lifetime as a
-`PluginPage`. If the event loop is already gone when a change arrives,
-`_on_change` drops the subscription and returns — cancelling the tasks is the
-loop's job, not the publishing thread's.
-
-
-## Bindings
-
-X-Monitor uses NiceGUI's reactive `.bind_*()` only for `render_status_card`'s label
-text (`label.text` is a real `BindableProperty` with an on-change push hook).
-Everything else — `ui.table.rows`, `ui.echart.options`, label colors — has no
-such hook (verified against NiceGUI's source), so it refreshes through the
-client's shared change subscription via `page.on_refresh()`, setting values and
-calling `.update()` explicitly. `binding_refresh_interval` is left at NiceGUI's
-default: the binding propagation loop only has the one label to walk, and a
-refresh model that no longer runs on a timer has no reason to slow it.
-
-## NiceGUI routing quirk
-
-The dashboard is an explicit `@ui.page('/')` route, not NiceGUI's auto-index. In
-NiceGUI 3.x the auto-index re-executes the main script via
-`runpy.run_path(sys.argv[0])`; under the Nix wrapper `sys.argv[0]` is a shell
-script, so that parse fails with a `SyntaxError` and every request 500s.
-
-## Per-client navigation state
-
-Navigation state is created per client inside `index_page()`. `init_gui` runs
-once at startup, but each browser connection builds its own element tree —
-sharing one dict at module scope meant a new tab overwrote the previous tab's
-render callback, raising "the client this element belongs to has been deleted."
-Rebinding `_navigation_state['switch_func']` per client keeps `navigate_to`
-pointing at a live element tree (the most recently connected client).
-
-## Auth: a login page, not a credential prompt
-
-`core/ui/auth.py` gates every HTTP route on a signed session cookie;
-`core/ui/login.py` is the page that mints one. `register_auth` mounts the login
-routes and then the middleware, before the routes it protects — Starlette wraps
-the whole app regardless of registration order, but registering it early keeps
-intent obvious: everything that follows is gated.
-
-**Why a cookie and not Basic.** A Basic prompt is the browser's, not X-Monitor's:
-it cannot be styled, carries no sign-out, and re-sends the password on every
-request. The session cookie is a self-contained `v1.<payload>.<hmac>` token —
-username plus expiry, signed with `auth.session_secret` or a key generated at
-startup. Nothing is stored server-side, so sessions cost no memory and a
-restart without a configured key invalidates all of them.
-
-**Why the login page is hand-written HTML and not a NiceGUI page.** Setting a
-cookie needs an HTTP response, and a NiceGUI form submits over the websocket,
-which cannot set one; the alternative is NiceGUI's `app.storage.user`, which
-would add another piece of framework surface to the one page that has to work
-before anything else does. It is styled by inlining Layer 1 of the Halon theme
-(`static/halon-tokens.css`), so it follows the browser's scheme and still
-states no color of its own.
-
-**Two callers, two failure modes.** A browser (a `GET` for `text/html` outside
-`/api/` and `/metrics`) is redirected to `/login` with its original target
-carried in an opaque `next` value, validated on the way back out so the one
-page an anonymous visitor can reach is not an open redirect. Everything else
-gets a `401` — with no `WWW-Authenticate` header, or the native dialog this
-replaced would reappear. Since Prometheus and scripts cannot follow a form
-redirect, Basic credentials remain a valid alternative on any route.
-
-**What stays public.** `/login`, `/logout`, `/icon.svg`, and `/api/push/`,
-which checks its own credential: the monitor's per-monitor token in the path,
-or a push-scoped API token in the header. As before, this is a
-`BaseHTTPMiddleware` and so runs for `http` scopes only — the agent WebSocket
-authenticates itself (see `core/ui/agent_endpoint.py`).
-
-**Named API tokens.** `core/ui/tokens.py` resolves `auth.tokens` into a
-`TokenRegistry`; `main_dashboard` builds it once and hands it to both the gate
-and the push routes, so the REST API and push share one credential story. A
-client sends `Authorization: Bearer <token>` and gets one scope: `read` (`GET`
-on `/api/` and `/metrics`), `control` (those plus the write routes), or `push`
-(`/api/push/{id}`, optionally limited to listed monitors). The gate tries the
-session cookie, then a bearer token, then Basic. A bearer header decides the
-request on its own: an unknown token is `401` and a known one outside its
-scope is `403`, rather than falling through to Basic or the login redirect.
-
-- **Why SHA-256 and not a password KDF.** Config holds only
-  `sha256:<hex>` of each token. `x-monitor token new` mints 256 bits from
-  `secrets`, so there is nothing to guess from a dictionary and a leaked digest
-  is as hard to reverse as the token is to guess; a slow KDF would add its cost
-  to every scrape and API call for no gain. That argument needs a random token,
-  so a plaintext `token`/`token_file` shorter than 16 characters is refused,
-  and a plaintext `token` in the YAML logs a warning. For the same reason there
-  is no throttle on wrong tokens, unlike the login form.
-- **Constant-time matching.** A presented token is hashed once and its digest
-  compared with `hmac.compare_digest` against every configured digest, without
-  stopping at the first match, so timing reveals neither which entry matched
-  nor how many there are. There is no dict lookup keyed on the digest.
-- **Never the dashboard.** `ApiToken.allows_request` only admits paths under
-  `/api/` and `/metrics`, so a token cannot load the dashboard page or open
-  NiceGUI's socket. A token is a long-lived credential sitting in a script or
-  scrape config; letting it open a browser session would turn a leaked read
-  token into full dashboard control.
-- **Named tokens stay out of URLs.** The push route only reads them from the
-  header, so they never land in a reverse proxy's access log the way the
-  per-monitor path token does.
-- **The audit trail.** The gate stores who authenticated on
-  `request.state.x_monitor_client` (the account name, or `token '<name>'`), read
-  through `auth.acting_client`. The control routes write it into the monitor's
-  events ("Poll requested through the API by token 'ops'"), push heartbeats
-  carry it through `record_push(source=...)`, and the gate logs every
-  token-authenticated write (reads only at debug, since a scraper polls every
-  few seconds).
-- **Control routes.** `POST /api/monitors/{id}/poll` and
-  `/actions/{action_id}` mirror the monitor page's header buttons. Only ids in
-  `get_actions()` are reachable, called with no parameters, so an action that
-  needs a dialog's input stays dashboard-only.
-- **Agents are not in this list.** Each `agents:` entry already has its own
-  ed25519 public key, which the agent endpoint checks the login signature
-  against, so an agent scope here would be a second identity for the same host.
-- **Without an account.** Tokens only narrow what the gate lets through, so
-  without `username`/`password` there is no gate and read or control tokens do
-  nothing (a warning says so). Push tokens still work, since the push route
-  checks them itself.
-
-**Guessing and CSRF.** `LoginThrottle` counts failures per client address (the
-first `X-Forwarded-For` hop when there is one) and answers `429` with a
-`Retry-After` past five in five minutes. The login form carries a
-double-submit CSRF token in a `SameSite=Lax`, `/login`-scoped cookie, so a
-cross-site POST cannot log a victim into an attacker's account.
-
-## Theme: two CSS layers, no color in Python
-
-The dashboard wears the Halon theme, split the way Halon's design guide
-requires. `core/ui/static/halon-tokens.css` is Layer 1 — the only place a
-literal color exists, in a light block and a dark block that re-declares
-twenty-two of them; `core/ui/static/halon.css` is Layer 2, the Quasar/NiceGUI
-component rules, where every value is a `var(--token)`. `core/ui/theme.py`
-loads both once per process, maps Quasar's palette variables onto the tokens,
-and exposes the token names to Python as `var(--…)` strings — so an inline
-style written from Python (`STATUS_COLORS['failed']`) resolves per scheme in
-the browser and needs no Python branch for dark mode.
-
-Two hazards are worth knowing before editing either sheet:
-
-- **Quasar's utility classes (`bg-primary`, `text-white`) sit in an
-  `!important` cascade layer.** Important declarations in a layer outrank
-  unlayered author styles regardless of specificity, so no rule of ours can
-  recolor them. The fix is to stop them being emitted — `ui.button(color=None)`
-  — or, where the framework insists (toast fills), to give them a token that
-  does not flip (`--fill-*`).
-- **ECharts paints to a canvas and cannot read custom properties.** Charts
-  register with `theme.on_scheme_change()`, which hands them the literals of
-  the scheme the client reported and repaints them when it flips. Those
-  literals are parsed out of the token sheet at import, so they are not a
-  second copy of the palette.
-
-Text case follows what the text is:
-
-- **Headings** — table, job panel, events and dialog titles — are sentence
-  case: `Jobs`, `Deployment details`, `Unit file: nginx.service`. Acronyms
-  keep their capitals (`GC roots`).
-- **Labels** — card and chart titles — are written in capitals (`LAST SWITCH`);
-  the label style upper-cases them anyway, so the source and the screen agree.
-- **Buttons** are title case: `Poll Now`, `Shut Down`.
+**MQTT** (`mqtt.ts`, on the `mqtt` package) is change-driven. It follows the change bus for `status` and `metric`
+changes; a changed monitor joins a dirty set, and a drain waits `COALESCE_SECONDS` (1) before publishing, so a cycle that
+writes ten metrics and a status goes out as one pass. Everything is marked for publishing on every (re)connect, on Home
+Assistant's birth message, and on the optional `interval`. The connection carries a retained last will of `offline` on
+`<base>/status`, and `online` is published retained on connect. Discovery gives one Home Assistant device per target
+and, per monitor, a status `enum` sensor and a `problem` binary sensor, plus a sensor per metric whose unit and device
+class come from the metric name (X-Libs `mqtt_discovery`). Any error ends the session, which reconnects with backoff
+from one second to a minute; nothing is queued while disconnected, since the reconnect republishes the current state.
 
 ## The overview's fleet sections
 
-Above its charts the overview draws the fleet: a tile per root of the monitor tree, its
-dot showing the worst state among its monitors, opening that group's page; reachability strips for every
-uptime, http, mosquitto, dns_record and push monitor, grouped by host; a tile per NixOS deployment; and a
-bar per vulnerability scan. A section appears only when the fleet has monitors of its kind.
-
-`core/ui/views/fleet.py` builds each section with a pure function over monitors and readings,
-which is what its tests exercise, and redraws a section only when its rows changed. Everything it
-shows is read from the latest metrics and the in-memory metric history; nothing queries the
-status history on disk, so the strips cover the last 60 readings rather than a fixed time span.
+Above its charts the overview draws the fleet: a tile per root of the monitor tree, its dot showing the worst state
+among its monitors; reachability strips for every uptime, http, mosquitto, dns_record and push monitor, grouped by host;
+a tile per NixOS deployment; and a bar per
+vulnerability scan. A section appears only when the fleet has monitors of its kind. `src/server/views/fleet.ts` builds
+each section with a pure function over monitors and readings, read from the latest metrics and the in-memory history,
+so the strips cover the last 60 readings rather than a fixed time span.
 
 ## The logs view: searched live, not stored
 
-The Logs page and each `journal` monitor's page search the hosts' journals when asked, rather than
-reading copies X-Monitor kept. A journal holds every line every service writes, which would grow
-the database by far more than everything else together, and journald already keeps, rotates and
-indexes it. The search is the plugin's `query_logs` action, so it stays pure: `plan_action` builds
-the `journalctl -o json` command, `interpret_action` parses the reply into the action's metadata,
-and the engine runs it over SSH or the agent like any other action. `views/logs.py` dispatches it
-on every chosen monitor at once and merges the entries; nothing is written, so a search logs no
-event. The poll only counts warnings and errors after the cursor it last saw, so a busy host costs
-one small read per cycle.
+The Logs page and each `journal` monitor's page search the hosts' journals when asked, rather than reading copies
+X-Monitor kept. A journal holds every line every service writes, and journald already keeps, rotates and indexes it.
+The search is the plugin's `query_logs` action, so it stays pure: `plan_action` builds the `journalctl -o json` command,
+`interpret_action` parses the reply into the action's metadata, and the engine runs it over SSH or the agent like any
+other action. `src/server/views/logs.ts` dispatches it on every chosen monitor at once and merges the entries; nothing is
+written, so a search logs no event. The poll only counts warnings and errors after the cursor it last saw.
 
 ## Overview charts: a donut for status, a treemap for type
 
-The overview's two cards look alike but carry different data, and only one of
-them suits a donut. Status has five fixed slices, so part-to-whole reads at a
-glance. Type does not: a modest config already declares ~25 monitor types, most
-of them once, which is the case a pie handles worst — two dozen near-identical
-slivers, a legend taller than the plot, and ECharts' nine-hue default palette
-cycling, so the tenth type is painted the same blue as the first.
-
-The type card is a treemap instead. Tile area is the monitor count and the label
-inside each tile carries identity, which frees color to mean something: each
-tile takes the *worst* status among its monitors (`_worst_status`, severity
-`failed > warning > unavailable > info > online`), drawn from the five reserved status
-tokens. So the chart costs no categorical palette at any type count, and one
-failed unit inside an otherwise healthy type is visible without opening it.
-Clicking a tile still filters the monitor table exactly as the donut slice did.
-
-Two ECharts hazards are pinned by tests in `tests/unit/test_overview_charts.py`:
-
-- **A treemap silently ignores a `levels[0]` block.** A `label` or `itemStyle`
-  parked there never reaches a tile, and nothing warns — the tiles just render
-  with ECharts' defaults. Both belong on the series.
-- **`nodeClick` must be `False`.** Left at its default, a click zooms into the
-  tile instead of filtering the table. The `click` event still fires, so the
-  existing `on_point_click` wiring is unaffected.
-
-Canvas-painted charts cannot read CSS custom properties, so the tiles take
-literal colors from `theme.current_palette()` and repaint through
-`theme.on_scheme_change` (§ above). The card's status key is plain DOM, so it
-uses the `var(--token)` colors directly and needs no repaint at all.
+Status has five fixed slices, so part-to-whole reads at a glance in a donut. Type does not: a modest config declares
+around 25 monitor types, most of them once, which a pie handles worst. The type card is a treemap instead: tile area is
+the monitor count, the label inside carries identity, and each tile takes the worst status among its monitors from the
+five status tokens. So the chart needs no categorical palette, and one failed unit inside a healthy type shows without
+opening it. Clicking a tile or a slice filters the monitor table.
 
 ## Declarative UI spec
 
-Most plugins reduce to the same shape: a few metric cards with a formatter, a
-layout grid, a chart, an events table. A plugin declares that shape as a
-`UI_SPEC` dict and calls `spec.generic_render()` from `render_ui()`, instead of
-hand-writing widgets. Only genuinely bespoke plugins (`group`,
-`systemd_service`) keep a full hand-written `render_ui()` — a group renders its
-children as collapsible cards, or, when it declares a `layout`, as its own grid
-of their widgets (see below). A plugin that overrides `render_ui()` draws no
-child cards unless it calls `render_child_cards` itself.
+Most monitors reduce to the same shape: a few metric cards with a formatter, a layout grid, a chart, an events table. A
+plugin declares that shape as its `UI_SPEC` (`src/shared/ui_spec.ts`) rather than describing widgets. Only `group` and
+`systemd_service` need a page of their own, through `custom_view()`; `journal` adds a part to its spec's page
+the same way.
 
-Format/color/predicate functions are referenced by name from module registries
-(`FORMATTERS`, `COLOR_RULES`, `ITEM_FORMATTERS`, `ITEM_COLOR_RULES`,
-`ENABLED_PREDICATES`) — the shared vocabulary every plugin can use — or passed
-as the callable itself for a one-off transform (`spec.resolve()` accepts
-either). Name-keyed entries keep the shared parts of a spec serializable; a
-plugin-local method needs no registration ceremony. A plugin registers a name of
-its own only to publish a rule other plugins may reuse, never to hand one to its
-own spec — a card's own thresholds go in the spec as
-`'color': {'warning': self.warning, 'threshold': self.threshold}`.
+Formatter, colour and predicate rules are named from registries in `src/shared/ui_registry.ts` (`FORMATTERS`,
+`COLOR_RULES`, `ITEM_FORMATTERS`, `ITEM_COLOR_RULES`, `ENABLED_PREDICATES`), the shared vocabulary every plugin can use,
+or given as the function itself for a one-off rule. A plugin registers a name of its own only to publish a rule others
+may reuse; a card's own limits go in the spec as `color: { warning: this.warning, threshold: this.threshold }`.
 
-`core/ui/spec.py`'s module docstring is the author-facing reference for all of
-this: every top-level `UI_SPEC` key, every card/repeat/table/dialog field, and a
-table of each shared formatter and color rule with an example of what it renders.
-Read it rather than the renderer when writing a new spec.
+`src/server/views/layout.ts` lets the config override a monitor's arrangement two ways: replacing the rows, or
+per-widget overrides (visibility, height, flex, min width, title) merged onto the default rows. Every cell is made up
+front in declared order, so a page follows its layout rather than the order the builder fills it.
 
-`core/ui/layout.py` lets `config.yaml` override a plugin's default widget
-arrangement two ways: replacing the row structure entirely, or per-widget
-overrides (visibility, height, flex) merged onto the default rows — the same
-list-or-dict pattern `UI_SPEC['events']` / `['logs']` (`bool | dict`) uses.
-Every cell div is created up front in declared order, so a page follows its
-layout rather than the order `generic_render` happens to build widgets in.
-
-**A layout is injectable, which is what lets a group mix children.** A
-`generic_render(..., layout=...)` call renders into a caller-supplied layout
-instead of building one from the plugin's own config, and it asks that layout
-`renders(widget)` before constructing each widget. `CompositeLayout` is the
-group's implementation: its cells are named `'<child_id>.<widget>'`, and
-`view(child_id)` hands one child a window that answers in the child's own
-widget names. So a group can pull the CPU card off one monitor and the chart
-off another into the same row, and a widget no cell claims is never built —
-the child plugin has no idea it is being taken apart. Only a plugin with a
-`UI_SPEC` can be addressed this way; `systemd_service` and a nested group are
-referenced by a bare id and render whole.
+**A layout is injectable, which is what lets a group mix children.** A group with a `layout` addresses its
+descendants' widgets as `<child_id>.<widget>`; the builder renders each child's spec into the group's cells and builds
+only the widgets a cell claims. Only a monitor with a `UI_SPEC` can be taken apart this way; one with a page of its own
+is referenced by its bare id and drawn whole. Without a layout, a monitor with children shows one collapsible card per
+child, whose open state is kept per parent as a setting.
 
 ## Chart widgets
 
-A page of value cards says what a monitor reads now but not how it got there, and three cards
-for three related numbers read slower than one picture of them. So a spec can ask for a chart
-in place of a card: a gauge for one percentage, a share bar for parts of a whole, an uptime
-strip for a run of up/down checks, meters or status tiles for repeated items, and a history
-chart holding several series. `core/ui/charts.py` draws them; `spec.py`'s docstring lists the
-keys.
+A spec can ask for a chart in place of a card: a gauge for one percentage, a share bar for parts of a whole, an uptime
+strip for a run of up/down checks, meters or status tiles for repeated items, and a history chart holding several
+series. `src/shared/charts.ts` holds the geometry both sides share (how full a bar is, which strip cells are up, how
+histories line up on one axis), and the page draws each as DOM or SVG painted with Halon's variables.
 
-Everything except the history chart is plain DOM painted with Halon's CSS variables: an inline
-SVG ring with round caps for the gauge, one rounded element per strip cell, flex children for the
-share bar. They follow the client's scheme with no repaint and send only what changed. The
-multi-series chart is ECharts like `history_chart`, so it repaints its literal colors through `theme.on_scheme_change`; `palette()['series']` gives it the three
-`--series-*` tokens, the first of which is the accent itself.
+Cards and tiles stay plain whatever their state: status shows only in the marks inside them (the coloured value, badge,
+dot, arc, meter or strip cell), so a page of trouble reads as marks to scan rather than a wall of tinted panels. Every
+widget prints its value beside its shape, so the shape reinforces the number rather than carrying it alone.
 
-Cards and tiles stay plain whatever their state: status shows only in the marks inside them,
-the colored value, badge, dot, arc, meter or strip cell, so a page of trouble reads as marks to
-scan rather than a wall of tinted panels.
+## Monitor types and helpers
 
-Every widget prints its value next to its shape. A bar on its own track can be too faint to
-read (§3.6 of Halon's guide), and a printed number makes the shape reinforcement rather than
-the only carrier of the value.
+A monitor's `type` names a class: X-Monitor's own types are in `src/monitors/index.ts`, each imported only when a
+monitor uses it. A plugin that outgrows one file becomes a folder (`src/monitors/containers/`).
 
-## Plugin config & helpers
+**Out-of-tree types.** `PluginLoader` (`src/core/coordination/plugin_loader.ts`) owns the type-to-class step. A type
+X-Monitor does not ship is looked up in the `plugin_paths` folders, in order. Each folder holds X-Libs folder plugins
+(`plugin_folder`): a subfolder whose `package.json` names its server entry under `"x-plugin": {"server": ...}`, loaded
+through an X-Libs plugin host. Its `start(context)` provides `monitor_type` entries keyed by type name with
+`context.provide`, and reaches X-Monitor's `Plugin`, `CollectResult` and `command` through the host's services. A
+built-in name wins by default, because silently swapping a shipped plugin is the surprising outcome; an entry with
+`override: true` reverses that, and both cases log a warning. The type name must be an identifier. Each loader imports
+the folders once, and a reload builds a new loader, so an edited plugin is read again on the next reload.
 
-A monitor's `type` is the module name under `x_monitor/plugins/`, and
-`setup_modules()` loads the one concrete `Plugin` subclass that module *defines*
-— a class it merely imports (`SignalPlugin`, `Plugin`) is skipped, so a plugin
-module must define exactly one. Selecting by name instead would depend on
-alphabetical luck: `SignalPlugin` sorts before `Throughput`.
+A plugin whose subject is not the host it collects on (`vuln_scan` runs nmap on one agent against another host) sets
+`display_target`, and the engine labels the monitor with it instead of the transport's target.
 
-A plugin that outgrows one file becomes a package (`plugins/containers/`), and its class may then live in any of the package's own submodules.
+`src/monitors/base/plugin_helpers.ts` holds the shared pure helpers: `limit_from`, `level_for`, `floor_level_for`,
+`limits_text`, `StatusAccumulator`, `format_bytes`, and `parse_duration` and `format_duration` from X-Libs `durations`
+(`'1w'`, `'7d'`, `'2h30m'`, `'1d12h'`). `format_bytes` reads its value in GB by default and takes a unit for the rest.
+`text_parsing.ts` reads text as Python's builtins did (`split_lines`, `split_words`, `parse_int`, `parse_float`), and
+formats fixed decimals with ties to even (`format_fixed`), so messages read as they did.
 
-**Out-of-tree plugins.** `PluginLoader` (`core/coordination/plugin_loader.py`)
-owns the type-to-class step for `setup_modules()`. A type that is not a module
-under `x_monitor.plugins` is looked up in the `plugin_paths` directories, in order,
-as `<type>.py` or a `<type>/` package, and imported with
-`importlib.util.spec_from_file_location` under `x_monitor_external.<type>` — its
-own namespace, so an external module can never replace an `x_monitor.*` module in
-`sys.modules`, and a package's relative imports resolve inside it. The same
-one-concrete-subclass rule applies, since the loader and the built-in path
-share `_plugin_class`. A built-in name wins by default, because silently
-swapping a shipped plugin for a local file of the same name is the surprising
-outcome; an entry with `override: true` reverses that, and both cases log a
-warning naming the file. The type name must be a Python identifier, so a
-`type:` can never walk out of a plugin directory. Each loader imports a type at
-most once, and the engine builds a new loader from each config, so an edited
-external file is read afresh the next time a config is loaded.
+`src/monitors/base/disk_usage.ts` holds the `df` and `du` handling the three filesystem monitors share, so they cannot
+read the same output differently. `filesystems`, `disk_space` and `folders` stay separate monitors (a fleet-wide sweep,
+one path against one threshold, and folder sizes are different questions), but each builds its command with
+`df_command()` or `du_command()` and reads it back with `parse_df()` or `parse_du()`. `parse_df` reads every column but
+a leading `target` from the right, so a mount point with spaces survives. `metric_family.ts` finds the metrics a monitor
+records one per item (`folder_<name>_gb`, `fs_<name>_used_pct`) for both the monitor and the page.
 
-A plugin whose subject is not the host it collects on — `vuln_scan` runs nmap
-on one agent against another host — sets `display_target`, and `_wire_plugin`
-labels the monitor with that instead of the transport's target. `target` is
-otherwise always the transport's, so labels match what was collected.
+`src/monitors/base/dns_lookup.ts` is the one record lookup `dns_record` and `ddns_updater` share, so the two can never
+disagree about what a record resolves to.
 
-`plugins/base/plugin_helpers.py` holds `PluginConfigMixin` (the `id` / `target` /
-`interval` derivation every plugin needs, via `_init_config`) plus shared pure
-helpers (`parse_duration`, `format_duration`, `format_bytes`, `limit_from`, `level_for`), split
-out so they're reusable without dragging in the rest of `plugin_base.py`.
-`parse_duration` accepts plain numbers or strings like `'1w'`, `'7d'`,
-`'2h30m'`, `'30s'`, including compound forms like `'1d12h'`. `format_bytes` reads
-its value in GB by default and takes a unit for the rest — `format_bytes(n, 'B')`
-for a raw byte count — so a caller never divides before formatting, and it is the
-only byte formatter: the `bytes_gb` UI formatter is a thin wrapper on it.
+`src/monitors/base/signal_plugin.ts` holds what the single-signal monitors (`cpu`, `memory`, `load`, `temperature`,
+`interrupts`, `gpu`, `oom`, `throughput`, `connections`, `wifi`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`,
+`reboot_required`, `package_updates`, `interfaces`, `sessions`, `journal`, `power`) share: `worst_status` and a
+`SignalPlugin` base that turns the `cards()`, `tables()`, `charts()` and `rows()` a monitor declares into the usual host
+card, tables, charts and events page.
 
-`plugins/base/disk_usage.py` holds the `df` and `du` handling the three
-filesystem monitors share, so they cannot read the same output differently.
-`filesystems`, `disk_space` and `folders` stay separate monitors — a fleet-wide
-sweep, one path against one threshold, and folder sizes are different questions
-— but each builds its command with `df_command(columns, path=, byte_blocks=,
-exclude_types=)` or `du_command(path, timeout)` and reads it back with
-`parse_df(block, columns, header=)` or `parse_du(result, timeout)`. `parse_df`
-reads every column but a leading `target` from the right, so a mount point with
-spaces survives, and drops any row that does not parse (an inode column of `-`
-on a filesystem without inodes). `filesystems` alone passes `PSEUDO_FS_TYPES`,
-since it lists every mount; `disk_space` keeps its `| tail -1` and parses
-headerless. `path_key` turns a path into the metric-name fragment both
-`filesystems` and `folders` store series under.
+**One signal per monitor, grouped in config.** A host's page is assembled by a `group` (per host, then per domain), not
+by one plugin collecting seven things. That costs one round trip per monitor instead of one per host, which over a
+persistent socket is cheap, and buys per-signal status, interval and history, and cells a group layout can address one
+at a time (`ragnarok-cpu.cpu_chart`). Signals with different costs therefore get different intervals: `smart` runs
+hourly and `cpu` every minute because they are separate monitors on separate loops.
 
-`plugins/base/dns_lookup.py` is the one record lookup `dns_record` and
-`ddns_updater` share, so the two can never disagree about what a record
-currently resolves to. Their transports stay different: `dns_record` declares a
-`DnsQuery` the `DnsConnector` resolves, while `ddns_updater` resolves inside its
-`io_call` with `resolve_now(query)`. Both paths build their resolver with the
-connector's `build_resolver` (the named nameserver alone, or the system's when
-none is named) and map errors with its `failure_result` (`nxdomain` /
-`no_answer` / `timeout` / `dns_error`), and both read answers through
-`answer_values` (MX as `preference host`, TXT unquoted and joined, names without
-the trailing dot). `record_type` reads the config value and `failure_message`
-words a failed lookup. Each plugin keeps its own defaults — `ddns_updater`
-asks `8.8.8.8` with a 10s budget because it must see the public record, not a
-local override.
-
-`plugins/base/signal_plugin.py` holds what the single-signal monitors (`cpu`,
-`memory`, `load`, `temperature`, `interrupts`, `gpu`, `oom`, `throughput`,
-`connections`, `wifi`, `smart`, `zfs`, `btrfs`, `md`, `disk_io`, `reboot_required`,
-`package_updates`, `interfaces`, `sessions`) share: the severity
-ordering, `worst_status` for the ones that fold several disks or pools into one
-verdict, and a `SignalPlugin` base that turns the `cards()`/`tables()`/`charts()`/`rows()`
-a monitor declares into the usual host-card / tables / charts / events page. Each one
-collects exactly one signal, so it carries its own status, interval and history,
-and a monitor that needs hardware the host lacks is simply not configured rather
-than reporting unavailable for something nobody asked about.
-
-**One signal per monitor, grouped in config.** A host's page is assembled by a
-`group` — per host, then per domain — not by one plugin collecting seven things.
-That costs one agent round trip per monitor instead of one per host, which over
-a persistent WebSocket is cheap, and buys per-signal status, per-signal history,
-and cells a group layout can address individually
-(`"ragnarok-cpu.cpu_chart"`).
-
-The same holds for things a user names and acts on one at a time. `systemd_service`,
-`service_list`, `containers`, `vms` and `processes` look alike (list items, show state, offer
-per-item actions) but stay separate: each named unit wants its own status line and restart
-button, and systemd, podman, libvirt and `/proc` share no code a merged plugin could reuse.
-Each application plugin (`pihole`, `frigate`, `trilium`, …) is likewise its own monitor; a
-"network" or "media" grouping is a `group` in config, not a plugin. A plugin that
-combines other monitors, such as a quorum or a fleet-wide total, holds them as
-`children` and reads what they stored, rather than collecting their signals again.
+The same holds for things a user names and acts on one at a time. `systemd_service`, `service_list`, `containers`, `vms`
+and `processes` look alike but stay separate: each named unit wants its own status and restart button, and systemd,
+podman, libvirt and `/proc` share no code a merged plugin could reuse. Each application plugin (`pihole`, `frigate`,
+`trilium`, …) is its own monitor; a "network" or "media" grouping is a `group` in config. A plugin that combines other
+monitors, such as a quorum, holds them as `children` and reads what they stored rather than collecting their signals
+again.
 
 ## Testing
 
-`pytest` (via `nix develop` — there is no bare `python3` on the target dev
-environment). Plugin tests exercise the pure `commands()`/`parse()` or
-`requests()`/`parse_results()` directly through the `run_cycle` / `run_requests`
-/ `run_io_cycle` fixtures in `tests/conftest.py`, which drive a plugin with a
-fake connector and apply the resulting `CollectResult` — mirroring
-`XMonitorEngine._run_cycle` without a real event loop. `_FakeEngine` stands in for
-the Coordination Engine, and `plugin.storage` is a thin test-only per-plugin
-adapter over `db.apply_result` (production has no such object).
-
-**One test renders real widgets.** `tests/unit/test_ui_spec_render.py` builds a
-plugin's declarative UI inside a NiceGUI client and asserts the card a viewer
-gets, not the spec dict describing it. It loads `nicegui.testing.user_plugin`
-rather than the full `nicegui.testing.plugin`, whose Screen fixture needs
-selenium, and marks itself `nicegui_main_file(None)` because the page under test
-is declared in the test rather than imported from an app entry point. It renders
-with `start=False` and ticks the page itself, so nothing refreshes between
-assertions. Everything else about the UI is tested through the spec and the
-model; this is the one place widgets are built.
+Tests run under vitest (`npm test`, or `npx vitest run <file>` for one file), keep files in temporary folders and use
+no network. Monitor tests (`tests/monitors/`) drive the pure `commands()`/`parse()` or `requests()`/`parse_results()`
+through `tests/harness.ts`: `make_plugin` constructs a monitor and wires its data view, jobs gateway and a `FakeEngine`,
+and `run_cycle`, `run_requests` and `run_io_cycle` run one cycle through fabricated results and write what it returns,
+so a test reads the store as a page would. The other folders follow the source: `tests/core/`, `tests/server/`,
+`tests/views/` for the page-view builders, `tests/web/`, `tests/agent/` and `tests/integration/`.
+`npx tsc -p tsconfig.server.json --noEmit` and `tsconfig.web.json` type-check each side, and `npx oxlint` lints.
