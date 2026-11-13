@@ -307,15 +307,6 @@ def syncthing(plugin, tick, seed) -> Reading:
             'info' if syncing else 'online', folders)
 
 
-def borg(plugin, tick, seed) -> Reading:
-    """A repository backed up recently, or for one in five, missed past its max age."""
-    # One repository in five has missed its window, so the backups panel shows a late one.
-    late = seed % 5 == 0
-    age = plugin.max_age * (1.4 if late else 0.25 + (seed % 3) * 0.15)
-    return ({'last_backup_epoch': time.time() - age, 'archive_count': 30.0 + seed % 20,
-             'deduplicated_size': 400.0 + seed * 10, 'dedup_ratio': 2.4}, 'failed' if late else 'online')
-
-
 def nixos_upgrade(plugin, tick, seed) -> Reading:
     """A deployment that is in sync, drifting or waiting on a reboot."""
     drifting, reboot = seed % 4 == 1, seed % 4 == 2
@@ -336,7 +327,7 @@ SAMPLES: Dict[str, Callable[[Any, int, int], Any]] = {
     'throughput': throughput, 'connections': connections, 'processes': processes, 'disk_io': disk_io,
     'disk_space': disk_space, 'filesystems': filesystems, 'zfs': zfs, 'smart': smart,
     'uptime': uptime, 'http': http, 'ports': ports, 'pihole': pihole, 'unbound': unbound,
-    'containers': containers, 'syncthing': syncthing, 'borg': borg, 'nixos_upgrade': nixos_upgrade, 'vuln_scan': vuln_scan,
+    'containers': containers, 'syncthing': syncthing, 'nixos_upgrade': nixos_upgrade, 'vuln_scan': vuln_scan,
 }
 
 # Types whose sample runs the monitor's own parser on canned output, so each needs a real plugin.

@@ -1,5 +1,5 @@
 """The overview's fleet sections, built from stand-in monitors and readings: host tiles,
-reachability strips, backup ages, deployments and vulnerability findings."""
+reachability strips, deployments and vulnerability findings."""
 
 from types import SimpleNamespace
 
@@ -27,9 +27,9 @@ def roots():
     heimdall = monitor('heimdall', 'Heimdall', children=[
         monitor('heimdall-up', 'Availability', 'uptime'),
         monitor('heimdall-cpu', 'CPU', 'cpu'),
-        monitor('backups', 'Backups', children=[
-            monitor('borgmatic', 'Borgmatic', children=[
-                monitor('heimdall-disk', 'On Disk', 'borg', max_age=86400),
+        monitor('storage', 'Storage', children=[
+            monitor('pools', 'Pools', children=[
+                monitor('heimdall-disk', 'On Disk', 'disk_space'),
             ]),
         ]),
         monitor('heimdall-scan', 'Vulnerability Scan', 'vuln_scan'),
@@ -51,7 +51,7 @@ class TestPrimaryRoots:
 class TestLeavesWithPaths:
     def test_each_leaf_carries_the_groups_between_it_and_the_root(self, roots):
         paths = {leaf.id: path for leaf, path in fleet.leaves_with_paths(roots[0])}
-        assert paths['heimdall-disk'] == ['Backups', 'Borgmatic']
+        assert paths['heimdall-disk'] == ['Storage', 'Pools']
         assert paths['heimdall-cpu'] == []
 
     def test_a_leaf_held_by_two_groups_appears_once(self):
@@ -93,23 +93,6 @@ class TestStripRows:
             ('Odin', 'Availability', 'up'),
             ('Odin', 'Web', 'probe_ok'),
         ]
-
-
-class TestBackupRows:
-    def test_a_backup_at_its_max_age_fills_half_its_meter(self, roots):
-        rows = fleet.build_backup_rows(roots, {'heimdall-disk': 'online'},
-                                       readings({('heimdall-disk', 'last_backup_epoch'): 1000.0}),
-                                       now=1000.0 + 86400)
-        assert rows[0].percent == pytest.approx(50.0)
-        assert rows[0].value_text == '1 Day ago'
-
-    def test_the_label_names_the_host_and_the_tool_that_owns_the_repository(self, roots):
-        rows = fleet.build_backup_rows(roots, {}, readings({}), now=0)
-        assert rows[0].label == 'Heimdall · Borgmatic › On Disk'
-
-    def test_a_repository_with_no_archive_yet_says_so(self, roots):
-        rows = fleet.build_backup_rows(roots, {}, readings({}), now=0)
-        assert (rows[0].value_text, rows[0].percent, rows[0].state) == ('No archive yet', 0.0, 'unavailable')
 
 
 class TestDeployTiles:

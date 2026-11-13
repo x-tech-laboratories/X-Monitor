@@ -1,16 +1,14 @@
-"""The fleet sections of the overview: a tile per host, reachability strips, backup ages,
-deployments and vulnerability findings. Each section appears only when the fleet has monitors of
+"""The fleet sections of the overview: a tile per host, reachability strips, deployments
+and vulnerability findings. Each section appears only when the fleet has monitors of
 its kind, and each is built by a pure function over monitors and readings so it can be tested
 without a page."""
 
-import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from nicegui import ui
 
 from x_monitor.core.coordination.monitor_graph import iter_monitors, restates_children
-from x_monitor.plugins.base.plugin_helpers import format_age
 
 from .. import charts
 from ..components import LABEL_CLASS, ItemSlots, card, offload, on_data_event
@@ -33,9 +31,6 @@ STATUS_ORDER = ('online', 'info', 'warning', 'failed', 'unavailable')
 
 # Worst first, so a host takes the most severe state among its monitors.
 STATUS_SEVERITY = ('failed', 'warning', 'unavailable', 'info', 'online')
-
-# A backup meter is full at twice its monitor's max age, so the max age sits at its middle.
-BACKUP_SCALE = 2.0
 
 LatestMetric = Callable[[str, str], Optional[float]]
 MetricHistory = Callable[[str, str, int], List[Optional[float]]]
@@ -122,38 +117,6 @@ def build_strip_rows(roots: list) -> List[StripRow]:
             if metric and leaf.id not in seen:
                 seen.add(leaf.id)
                 rows.append(StripRow(leaf.id, root.name, leaf.name, metric))
-    return rows
-
-
-@dataclass
-class BackupRow:
-    id: str
-    label: str
-    value_text: str
-    percent: float
-    state: str
-
-
-def build_backup_rows(roots: list, statuses: Dict[str, str], latest: LatestMetric,
-                      now: float) -> List[BackupRow]:
-    """One meter per borg repository of the time since its newest archive, full at twice the
-    monitor's max age, labeled by host and the groups that name the repository."""
-    rows = []
-    for root in roots:
-        for leaf, path in leaves_with_paths(root):
-            if monitor_type(leaf) != 'borg':
-                continue
-            label = ' › '.join([*path[-1:], leaf.name])
-            newest = latest(leaf.id, 'last_backup_epoch')
-            max_age = float(getattr(leaf, 'max_age', 86400) or 86400)
-            if newest is None:
-                rows.append(BackupRow(leaf.id, f'{root.name} · {label}', 'No archive yet', 0.0,
-                                      statuses.get(leaf.id, 'unavailable')))
-                continue
-            age = max(0.0, now - newest)
-            rows.append(BackupRow(leaf.id, f'{root.name} · {label}', format_age(int(age)),
-                                  charts.fill_percent(age, max_age * BACKUP_SCALE),
-                                  statuses.get(leaf.id, 'unavailable')))
     return rows
 
 
@@ -272,18 +235,6 @@ def _legend(entries: List[Tuple[str, str]]):
                 ui.label(name)
 
 
-def draw_backup_meter() -> Callable[[BackupRow], None]:
-    """One backup's meter, in the accent while healthy and in its state's color otherwise; returns the
-    function that fills it from a BackupRow."""
-    show = charts.draw_meter_row(100.0 / BACKUP_SCALE)
-
-    def fill(row: BackupRow) -> None:
-        color = STATUS_COLORS[row.state] if row.state in ('warning', 'failed') else charts.color_for(None)
-        show(row.label, row.value_text, row.percent, color)
-
-    return fill
-
-
 def draw_deploy_tile() -> Callable:
     """One deployment's tile; returns the function that fills it from a deploy tile row."""
     _, show = charts.draw_status_tile()
@@ -308,18 +259,13 @@ def _render_reachability(strip_rows: List[StripRow]) -> list:
 
 
 def _render_section_boxes(types: set) -> Dict[str, Any]:
-    """The backup, deployment and findings panels the fleet has monitors for, each an empty box
+    """The deployment and findings panels the fleet has monitors for, each an empty box
     the refresh fills; keyed by section name."""
     boxes = {}
-    if types & {'borg', 'nixos_upgrade'}:
+    if 'nixos_upgrade' in types:
         with ui.row().classes('halon-grid'):
-            if 'borg' in types:
-                with card('flex-1 min-w-[320px]', title='Backups · time since newest archive'):
-                    boxes['backups'] = ui.element('div').classes('halon-repeat-bars')
-                    ui.label('A bar is half full at its max age and full at twice it.').classes('halon-caption')
-            if 'nixos_upgrade' in types:
-                with card('flex-1 min-w-[320px]', title='NixOS deployments'):
-                    boxes['deploys'] = ui.element('div').classes('halon-repeat-tiles')
+            with card('flex-1 min-w-[320px]', title='NixOS deployments'):
+                boxes['deploys'] = ui.element('div').classes('halon-repeat-tiles')
     if 'vuln_scan' in types:
         with card('w-full', title='Vulnerability findings'):
             _legend([('Vulnerable', FINDING_COLORS[0]), ('Likely', FINDING_COLORS[1]), ('Noted', FINDING_COLORS[2])])
@@ -338,7 +284,6 @@ def read_fleet(engine: Any, roots: list, sections: set, strip_rows: List[StripRo
 
     builders = {
         'hosts': lambda: build_host_tiles(roots, statuses),
-        'backups': lambda: build_backup_rows(roots, statuses, latest, time.time()),
         'deploys': lambda: build_deploy_tiles(roots, statuses, latest),
         'findings': lambda: build_finding_rows(roots, latest),
     }
@@ -364,7 +309,6 @@ def render_fleet(engine: Any, switch_view: Callable):
     boxes.update(_render_section_boxes({monitor_type(m) for m in by_id.values()}))
     drawers = {
         'hosts': lambda: draw_host_tile(open_host),
-        'backups': draw_backup_meter,
         'deploys': draw_deploy_tile,
         'findings': draw_finding_row,
     }

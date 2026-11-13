@@ -358,7 +358,7 @@ is a separate concern from the transport.
 
 **Concurrency.** Commands are frames multiplexed on one socket, so there is no
 analogue of `MaxSessions` and no semaphore. The agent dispatches each `exec`
-into its own task, so a 30-second `borg` check cannot delay a 1-second sample on
+into its own task, so a 30-second `smart` check cannot delay a 1-second sample on
 the same connection.
 
 **Process groups.** `x_monitor_agent/executor.py` runs each command with
@@ -436,7 +436,7 @@ verified against a real sshd:
 
 ## Job control
 
-A long-running job (a borg backup, a flake evaluation) is **not** a live
+A long-running job (a flake evaluation, a container prune) is **not** a live
 SSH channel held open for hours. It is launched *detached on the target* with one ordinary command
 (`setsid sh -c '…' &`), writing its output to `<workdir>/out` and its exit code
 to `<workdir>/exit`, and is then advanced by ordinary polling commands on the
@@ -457,9 +457,8 @@ resume; pid/exit gone → finalize).
 A plugin's main job is the one `jobs.running()` returns; side jobs run beside
 it and never grey out its actions. A kind in `Plugin.SIDE_JOB_KINDS` is a side
 job the plugin polls itself. An action whose plan sets `ActionPlan.detached` (a
-custom action with `detached: true`, a container prune, a borg diff or restore
-check) is a side job of kind `action:<action id>` that the plugin never polls:
-the engine launches it, and `ActionJobs` in `coordination/action_jobs.py`
+custom action with `detached: true`, a container prune) is a side job of kind
+`action:<action id>` that the plugin never polls: the engine launches it, and `ActionJobs` in `coordination/action_jobs.py`
 polls every running one every few seconds. When one ends, its whole output goes
 to the action's interpreter as a `CmdResult`, as if the command had run inline.
 The action's arguments live only in memory, so after a restart a run is
@@ -468,9 +467,7 @@ interpreted without them.
 A job's command prints its output as it runs, never into temporary files read
 out at the end, because its log is read while it runs. A command that keeps its
 stdout apart for parsing still copies its stderr to the log line by line with
-`ssh_connector.stream_stderr`; borg's framed calls pass `live=True` to
-`_sequence_command`, which prints each call's stdout under its frame as it
-comes and puts the exit code in the frame that follows.
+`ssh_connector.stream_stderr`.
 
 Jobs live in the store like everything else, so **job ids are assigned by the
 store**, not by SQLite's autoincrement — `jobs.create` returns an id
@@ -846,7 +843,7 @@ scope is `403`, rather than falling through to Basic or the login redirect.
 - **Control routes.** `POST /api/monitors/{id}/poll` and
   `/actions/{action_id}` mirror the monitor page's header buttons. Only ids in
   `get_actions()` are reachable, called with no parameters, so an action that
-  needs a dialog's input (borg restore, say) stays dashboard-only.
+  needs a dialog's input stays dashboard-only.
 - **Agents are not in this list.** Each `agents:` entry already has its own
   ed25519 public key, which the agent endpoint checks the login signature
   against, so an agent scope here would be a second identity for the same host.
@@ -900,8 +897,7 @@ Text case follows what the text is:
 
 Above its charts the overview draws the fleet: a tile per root of the monitor tree, its
 dot showing the worst state among its monitors, opening that group's page; reachability strips for every
-uptime, http, mosquitto, dns_record and push monitor, grouped by host; a meter per borg repository
-of the time since its newest archive, half full at its max age; a tile per NixOS deployment; and a
+uptime, http, mosquitto, dns_record and push monitor, grouped by host; a tile per NixOS deployment; and a
 bar per vulnerability scan. A section appears only when the fleet has monitors of its kind.
 
 `core/ui/views/fleet.py` builds each section with a pure function over monitors and readings,
@@ -1028,7 +1024,7 @@ A monitor's `type` is the module name under `x_monitor/plugins/`, and
 module must define exactly one. Selecting by name instead would depend on
 alphabetical luck: `SignalPlugin` sorts before `Throughput`.
 
-A plugin that outgrows one file becomes a package (`plugins/borg/`), and its class may then live in any of the package's own submodules.
+A plugin that outgrows one file becomes a package (`plugins/containers/`), and its class may then live in any of the package's own submodules.
 
 **Out-of-tree plugins.** `PluginLoader` (`core/coordination/plugin_loader.py`)
 owns the type-to-class step for `setup_modules()`. A type that is not a module
@@ -1111,8 +1107,8 @@ The same holds for things a user names and acts on one at a time. `systemd_servi
 `service_list`, `containers`, `vms` and `processes` look alike (list items, show state, offer
 per-item actions) but stay separate: each named unit wants its own status line and restart
 button, and systemd, podman, libvirt and `/proc` share no code a merged plugin could reuse.
-Each application plugin (`pihole`, `borg`, `frigate`, …) is likewise its own monitor; a
-"backup" or "media" grouping is a `group` in config, not a plugin. A plugin that
+Each application plugin (`pihole`, `frigate`, `trilium`, …) is likewise its own monitor; a
+"network" or "media" grouping is a `group` in config, not a plugin. A plugin that
 combines other monitors, such as a quorum or a fleet-wide total, holds them as
 `children` and reads what they stored, rather than collecting their signals again.
 
