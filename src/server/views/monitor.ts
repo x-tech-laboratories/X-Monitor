@@ -6,7 +6,7 @@ import type { ActionButtonSpec, LayoutRow } from "../../shared/ui_spec.ts";
 import type { ActionReply, BodyView, DialogView, HeaderActionView, MonitorPageView, MuteView } from "../../shared/page_view.ts";
 import { outcome_notice } from "../../shared/page_view.ts";
 import { dialog_views } from "./components.ts";
-import { browser_view, own_log_search, systemd_service_rows, type SystemdViewData } from "./custom.ts";
+import { own_log_search, systemd_service_rows, type SystemdViewData } from "./custom.ts";
 import type { NotificationsLike, ViewEngine } from "./engine.ts";
 import { child_cards, composite_body } from "./group.ts";
 import { format_when } from "./schedules.ts";
@@ -54,17 +54,13 @@ export function build_body(plugin: Plugin, context: "page" | "inline", build: Bu
   if (spec) {
     const layout = spec_layout(plugin, spec.layout ?? [], context);
     build_spec(plugin, { context, layout });
-    if (kind === "borg_browser" || kind === "borg") {
-      const data = custom?.kind === "borg_browser" && typeof custom.data === "object" && custom.data !== null ? (custom.data as Record<string, unknown>) : null;
-      layout.cell(String(data?.cell ?? "browser")).push(browser_view(plugin, data));
-    }
     if (kind === "journal") {
       const search = custom?.kind === "journal" ? ((custom.data as { log_search?: { cell?: string; page_only?: boolean; monitor_ids?: string[]; show_host?: boolean; default_limit?: number } } | null)?.log_search ?? null) : null;
       if (context === "page" || search?.page_only === false) layout.cell(search?.cell ?? "log_search").push(own_log_search(plugin, search));
     }
     rows = layout.rows;
   }
-  const own_custom = custom !== null && !["borg_browser", "borg", "journal"].includes(custom.kind) ? { kind: custom.kind, data: custom.data, extra: {} } : null;
+  const own_custom = custom !== null && custom.kind !== "journal" ? { kind: custom.kind, data: custom.data, extra: {} } : null;
   return { monitor_id: plugin.id, rows, children: plugin.children.length > 0 ? child_cards(plugin, build) : [], custom: own_custom };
 }
 

@@ -14,7 +14,6 @@ JSON endpoints for consuming X-Monitor's state programmatically. With sign-in on
 |----------|---------|
 | `GET /api/health` | `{"status": "ok"}` |
 | `GET /api/summary` | Monitors counted by status, leaving out plain groups, with `unhealthy` for everything not online or info |
-| `GET /api/backups` | Every backup monitor's health, stalest first, with how many are healthy |
 | `GET /api/monitors` | All monitors with id, name, type, target, and current status |
 | `GET /api/monitors/{id}` | A single monitor plus its latest metrics and the ids of its actions |
 | `GET /api/metrics` | Latest value of every collected metric |

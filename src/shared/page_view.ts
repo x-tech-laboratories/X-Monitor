@@ -227,15 +227,6 @@ export interface LogSearchView {
   default_limit: number;
 }
 
-// The borg archive browser.
-export interface BrowserView {
-  type: "browser";
-  monitor_id: string;
-  archives: string[];
-  restore_dir: string;
-  browse_limit: number;
-}
-
 // A cell a custom view fills itself.
 export interface SlotView {
   type: "slot";
@@ -244,7 +235,7 @@ export interface SlotView {
 
 export type WidgetView =
   | ValueCardView | GaugeView | ShareView | StripView | RepeatView | ChartView | FeedView | TableView | ButtonsView
-  | JobPanelView | SectionTitleView | NestedBodyView | LogSearchView | BrowserView | SlotView;
+  | JobPanelView | SectionTitleView | NestedBodyView | LogSearchView | SlotView;
 
 // ── Dialogs ──────────────────────────────────────────────────────────────────
 

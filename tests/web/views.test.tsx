@@ -28,7 +28,6 @@ const OVERVIEW: OverviewView = {
   fleet: {
     hosts: [{ id: "odin", name: "Odin", state: "failed", caption: "2 monitors · 1 failed", counts: { online: 1, failed: 1 } }],
     reachability: [{ id: "odin-up", host: "Odin", name: "Availability", metric: "up", states: ["online", "failed"], share_text: "50.0% up" }],
-    backups: null,
     deploys: null,
     findings: null,
   },

@@ -141,7 +141,6 @@ export async function build_app(options: AppOptions): Promise<XMonitorApp> {
 
     scope.get("/health", async () => methods.get_health());
     scope.get("/summary", async () => methods.get_summary());
-    scope.get("/backups", async () => methods.list_backup_monitors());
     scope.get("/monitors", async () => methods.list_monitors());
     scope.get<{ Params: { monitor_id: string } }>("/monitors/:monitor_id", async (request, reply) => answer(reply, () => methods.get_monitor(request.params.monitor_id)));
     scope.get("/metrics", async () => methods.list_metrics());
@@ -235,8 +234,6 @@ export async function build_app(options: AppOptions): Promise<XMonitorApp> {
     scope.post<Monitor>("/monitors/:monitor_id/mute", async (request, reply) => answer(reply, () => methods.set_muted(request.params.monitor_id, Boolean(body_of(request).muted))));
     scope.post<{ Params: { monitor_id: string; child_id: string } }>("/monitors/:monitor_id/children/:child_id/open", async (request, reply) =>
       answer(reply, () => methods.set_child_open(request.params.monitor_id, request.params.child_id, Boolean(body_of(request).open))));
-    scope.get<Monitor & { Querystring: { archive?: string; path?: string } }>("/monitors/:monitor_id/browse", async (request, reply) =>
-      answer(reply, () => methods.get_archive_folder(request.params.monitor_id, request.query.archive ?? "", request.query.path ?? "")));
     scope.post<Monitor>("/monitors/:monitor_id/jobs/cancel", async (request, reply) => answer(reply, () => methods.cancel_job(request.params.monitor_id)));
     scope.post<Monitor>("/monitors/:monitor_id/jobs/start", async (request, reply) => {
       const body = body_of(request);

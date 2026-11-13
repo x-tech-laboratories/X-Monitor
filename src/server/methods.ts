@@ -13,7 +13,7 @@ import type { NotificationEngine } from "./notifications/index.ts";
 import type { Plugin } from "../monitors/base/plugin_base.ts";
 import type { ActionReply } from "../shared/page_view.ts";
 import {
-  browse_folder, cancel_job, job_log_view, JobWatches, logs_view, monitor_page_view, notifications_view, overview_view, run_cell_toggle, run_header_toggle,
+  cancel_job, job_log_view, JobWatches, logs_view, monitor_page_view, notifications_view, overview_view, run_cell_toggle, run_header_toggle,
   run_page_action, schedule_rows, search_kwargs, search_logs, set_child_open, sidebar_view, start_job, type NotificationsLike,
 } from "./views/index.ts";
 
@@ -113,21 +113,6 @@ export function create_methods(context: MethodContext) {
       }
       const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
       return { total, ...counts, unhealthy: total - counts.online! - counts.info! };
-    },
-
-    // Every backup monitor's health in one list, stalest first.
-    async list_backup_monitors() {
-      const statuses = db.latest_statuses();
-      const rows: Record<string, unknown>[] = [];
-      for (const plugin of iter_monitors(engine.plugins)) {
-        const summarize = plugin.backup_summary;
-        if (restates_children(plugin) || typeof summarize !== "function") continue;
-        rows.push({ id: plugin.id, name: plugin.name, target: plugin.target ?? null, status: statuses[plugin.id] ?? "unavailable", ...(summarize.call(plugin) as Record<string, unknown>) });
-      }
-      const age = (row: Record<string, unknown>) => (row.newest_archive_age === null || row.newest_archive_age === undefined ? Infinity : Number(row.newest_archive_age));
-      rows.sort((first, second) => age(second) - age(first));
-      const healthy = rows.filter((row) => row.status === "online" || row.status === "info").length;
-      return { total: rows.length, healthy, unhealthy: rows.length - healthy, repositories: rows };
     },
 
     async list_monitors() {
@@ -326,11 +311,6 @@ export function create_methods(context: MethodContext) {
     async search_logs(monitor_ids: string[], since = "1h", priority = 6, unit = "", text = "", limit = 500) {
       if (!LOG_SINCE.includes(since)) throw new ApiError(400, { error: `since must be one of ${LOG_SINCE.filter((choice) => choice).join(", ")} or empty` });
       return search_logs({ plugins: engine.plugins as never, dispatch_action: (plugin, action_id, args) => engine.dispatch_action(plugin, action_id, args) }, monitor_ids, search_kwargs(since, priority, unit, text, limit));
-    },
-
-    // One folder of a borg archive, listing it through the monitor when it has not been listed yet.
-    async get_archive_folder(monitor_id: string, archive: string, path = "") {
-      return browse_folder(engine, as_plugin(find(context, monitor_id)), archive, path);
     },
 
     // Everything a monitor's page draws: its header, actions and their states, notification state and body.

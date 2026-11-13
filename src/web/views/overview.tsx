@@ -1,7 +1,7 @@
-// The overview: a tile per host, reachability strips, backup ages, deployments and vulnerability findings, the status
+// The overview: a tile per host, reachability strips, deployments and vulnerability findings, the status
 // donut and type treemap whose clicks filter the monitor table, and the recent metrics and events.
 
-import { Donut, Meters, ShareBar, Strip, Treemap } from "@x-tech-laboratories/x-libs/web/react/charts";
+import { Donut, ShareBar, Strip, Treemap } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { SearchBox } from "@x-tech-laboratories/x-libs/web/react/controls";
 import { PageHeading, Section, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
@@ -72,20 +72,10 @@ function FleetSections({ fleet }: { fleet: FleetView }) {
           ))}
         </Section>
       )}
-      {(fleet.backups || fleet.deploys) && (
-        <div className="grid-row">
-          {fleet.backups && (
-            <Section title="Backups · time since newest archive">
-              <Meters message="No backups yet." rows={fleet.backups.map((row) => ({ label: row.label, href: link(["monitor", row.id]), value_text: row.value_text, percent: row.percent, color: row.state === "warning" || row.state === "failed" ? status_color(row.state) : color_for(null), marks: [50], title: null }))} />
-              <p className="muted small">A bar is half full at its max age and full at twice it.</p>
-            </Section>
-          )}
-          {fleet.deploys && (
-            <Section title="NixOS deployments">
-              <Tiles>{fleet.deploys.map((tile) => <Tile key={tile.id} label={tile.name} value={<><StatusDot state={tile.state} /> {tile.caption}</>} tone={tone_of(tile.state)} href={link(["monitor", tile.id])} />)}</Tiles>
-            </Section>
-          )}
-        </div>
+      {fleet.deploys && (
+        <Section title="NixOS deployments">
+          <Tiles>{fleet.deploys.map((tile) => <Tile key={tile.id} label={tile.name} value={<><StatusDot state={tile.state} /> {tile.caption}</>} tone={tone_of(tile.state)} href={link(["monitor", tile.id])} />)}</Tiles>
+        </Section>
       )}
       {fleet.findings && (
         <Section title="Vulnerability findings">

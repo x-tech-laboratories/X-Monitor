@@ -86,7 +86,7 @@ describe("the overview", () => {
     db.insert_metric("host.lan", "scan", "open_ports", 5);
     const leaves = [
       fake_monitor("web", { config: { type: "http" } }),
-      fake_monitor("backup", { name: "Repo", config: { type: "borg" }, max_age: 3600 }),
+      fake_monitor("backup", { name: "Repo", config: { type: "smart" } }),
       fake_monitor("deploy", { name: "Deploy", config: { type: "nixos_upgrade" } }),
       fake_monitor("scan", { name: "Scan", config: { type: "vuln_scan" } }),
     ];
@@ -99,7 +99,7 @@ describe("the overview", () => {
     const fleet = body.fleet;
     expect(fleet.hosts[0]).toMatchObject({ id: "host", state: "failed", caption: "4 monitors · 1 failed" });
     expect(fleet.reachability[0]).toMatchObject({ id: "web", host: "Host", metric: "probe_ok", share_text: "66.7% up" });
-    expect(fleet.backups[0]).toMatchObject({ label: "Host · Repo", value_text: "No archive yet", percent: 0, state: "failed" });
+    expect(fleet).not.toHaveProperty("backups");
     expect(fleet.deploys[0]).toMatchObject({ caption: "gen 42 · drift" });
     expect(fleet.findings[0]).toMatchObject({ vulnerable: 2, text: "2 · 0 · 0 · 5 open ports" });
     expect(body.recent_metrics.length).toBeGreaterThan(0);
@@ -240,13 +240,12 @@ describe("the change stream", () => {
 });
 
 describe("the state database's backups", () => {
-  it("are listed and taken at their own path, beside the backup monitors' /api/backups", async () => {
+  it("are listed and taken at their own path", async () => {
     const folder = mkdtempSync(join(tmpdir(), "state-"));
     const database = new DatabaseSync(join(folder, "x-monitor.db"));
     const backups = sqlite_backups({ folder: () => join(folder, "backups"), naming: backup_naming("x-monitor", ".sqlite"), database: () => database, database_path: () => join(folder, "x-monitor.db") });
     server = await serve(fake_engine([]), { auth_settings: {}, database, backups: { backups, schedule: json_backup_schedule(join(folder, "schedule.json")) } });
     expect((await server.app.inject({ method: "POST", url: "/api/state-backups" })).statusCode).toBe(200);
     expect((await server.app.inject({ url: "/api/state-backups" })).json()).toHaveLength(1);
-    expect((await server.app.inject({ url: "/api/backups" })).json()).toMatchObject({ total: 0 });
   });
 });

@@ -301,7 +301,7 @@ Three behaviours matter:
 
 ## Job control
 
-A long-running job (a borg backup, a flake evaluation) is not a channel held open for hours. It is launched detached on
+A long-running job (a flake evaluation, a container prune) is not a channel held open for hours. It is launched detached on
 the target with one ordinary command (`setsid sh -c '…' &`), writing its output to `<workdir>/out` and its exit code to
 `<workdir>/exit`, and is then advanced by ordinary polling commands on the owning monitor's cycle. A plugin that sets
 `job_poll_interval` is polled that often while one of its jobs runs (`Plugin.next_cycle_in()`), without moving its
@@ -314,7 +314,7 @@ no pid (lost before launch), and a job with a pid is re-adopted by its monitor's
 
 A plugin's main job is the one `jobs.running()` returns; side jobs run beside it and never grey out its actions. A kind
 in `Plugin.SIDE_JOB_KINDS` is a side job the plugin polls itself. An action whose plan sets `detached` (a custom action
-with `detached: true`, a container prune, a borg diff or restore check) is a side job of kind `action:<action id>` the
+with `detached: true`, a container prune) is a side job of kind `action:<action id>` the
 plugin never polls: the engine launches it, and `ActionJobs` (`src/core/coordination/action_jobs.ts`) polls every
 running one every five seconds, every two while someone has its log open. When one ends, its whole output goes to the
 action's interpreter as a `CmdResult`, as if the command had run inline. The action's arguments live only in memory, so
@@ -424,8 +424,8 @@ colour rule, a `visible_if` predicate) runs on the server and only its result cr
 
 `src/server/views/spec.ts` is the declarative page, as `generic_render()` was: a card dispatches on its first matching
 key (`repeat`, then `kind`, then `metrics`, then `metric`, then the static and attribute forms), and `host_card` and
-`status_card` are reserved names. `custom.ts` builds the pages the spec cannot draw alone (`systemd_service`, borg's
-archive browser, the journal's log search), and `group.ts` the composite grid and child cards. A spec's `value_attr`,
+`status_card` are reserved names. `custom.ts` builds the pages the spec cannot draw alone (`systemd_service`, the
+journal's log search), and `group.ts` the composite grid and child cards. A spec's `value_attr`,
 `color_attr`, `rows_attr` and `options_attr` name plain attributes of the plugin (`plugin_attr`), without Python's
 leading underscore.
 
@@ -494,7 +494,7 @@ from one second to a minute; nothing is queued while disconnected, since the rec
 
 Above its charts the overview draws the fleet: a tile per root of the monitor tree, its dot showing the worst state
 among its monitors; reachability strips for every uptime, http, mosquitto, dns_record and push monitor, grouped by host;
-a meter per borg repository of the time since its newest archive; a tile per NixOS deployment; and a bar per
+a tile per NixOS deployment; and a bar per
 vulnerability scan. A section appears only when the fleet has monitors of its kind. `src/server/views/fleet.ts` builds
 each section with a pure function over monitors and readings, read from the latest metrics and the in-memory history,
 so the strips cover the last 60 readings rather than a fixed time span.
@@ -520,8 +520,8 @@ opening it. Clicking a tile or a slice filters the monitor table.
 
 Most monitors reduce to the same shape: a few metric cards with a formatter, a layout grid, a chart, an events table. A
 plugin declares that shape as its `UI_SPEC` (`src/shared/ui_spec.ts`) rather than describing widgets. Only `group` and
-`systemd_service` need a page of their own, through `custom_view()`; `borg` and `journal` add a part to their spec's
-page the same way.
+`systemd_service` need a page of their own, through `custom_view()`; `journal` adds a part to its spec's page
+the same way.
 
 Formatter, colour and predicate rules are named from registries in `src/shared/ui_registry.ts` (`FORMATTERS`,
 `COLOR_RULES`, `ITEM_FORMATTERS`, `ITEM_COLOR_RULES`, `ENABLED_PREDICATES`), the shared vocabulary every plugin can use,
@@ -552,7 +552,7 @@ widget prints its value beside its shape, so the shape reinforces the number rat
 ## Monitor types and helpers
 
 A monitor's `type` names a class: X-Monitor's own types are in `src/monitors/index.ts`, each imported only when a
-monitor uses it. A plugin that outgrows one file becomes a folder (`src/monitors/borg/`, `src/monitors/containers/`).
+monitor uses it. A plugin that outgrows one file becomes a folder (`src/monitors/containers/`).
 
 **Out-of-tree types.** `PluginLoader` (`src/core/coordination/plugin_loader.ts`) owns the type-to-class step. A type
 X-Monitor does not ship is looked up in the `plugin_paths` folders, in order. Each folder holds X-Libs folder plugins
@@ -596,8 +596,8 @@ hourly and `cpu` every minute because they are separate monitors on separate loo
 
 The same holds for things a user names and acts on one at a time. `systemd_service`, `service_list`, `containers`, `vms`
 and `processes` look alike but stay separate: each named unit wants its own status and restart button, and systemd,
-podman, libvirt and `/proc` share no code a merged plugin could reuse. Each application plugin (`pihole`, `borg`,
-`frigate`, …) is its own monitor; a "backup" or "media" grouping is a `group` in config. A plugin that combines other
+podman, libvirt and `/proc` share no code a merged plugin could reuse. Each application plugin (`pihole`, `frigate`,
+`trilium`, …) is its own monitor; a "network" or "media" grouping is a `group` in config. A plugin that combines other
 monitors, such as a quorum, holds them as `children` and reads what they stored rather than collecting their signals
 again.
 

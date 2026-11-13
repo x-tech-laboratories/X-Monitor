@@ -1,9 +1,8 @@
-// The fleet sections of the overview: a tile per host, reachability strips, backup ages, deployments and vulnerability
-// findings. Each section appears only when the fleet has monitors of its kind, and each is built by a pure function
-// over monitors and readings.
+// The fleet sections of the overview: a tile per host, reachability strips, deployments and vulnerability findings.
+// Each section appears only when the fleet has monitors of its kind, and each is built by a pure function over
+// monitors and readings.
 
-import { format_age } from "../../monitors/base/plugin_helpers.ts";
-import { fill_percent, strip_states, STRIP_CELLS, up_share_text, type StripState } from "../../shared/charts.ts";
+import { strip_states, STRIP_CELLS, up_share_text, type StripState } from "../../shared/charts.ts";
 import type { DatabaseManager } from "../../core/database/database.ts";
 import { iter_monitors, restates_children, type GraphView as GraphNode } from "../../core/coordination/monitor_graph.ts";
 
@@ -22,9 +21,6 @@ export const STATUS_ORDER = ["online", "info", "warning", "failed", "unavailable
 
 // Worst first, so a host takes the most severe state among its monitors.
 export const STATUS_SEVERITY = ["failed", "warning", "unavailable", "info", "online"] as const;
-
-// A backup meter is full at twice its monitor's max age, so the max age sits at its middle.
-export const BACKUP_SCALE = 2.0;
 
 export type LatestMetric = (monitor_id: string, name: string) => number | null;
 
@@ -111,36 +107,6 @@ export function build_strip_rows(roots: readonly FleetMonitor[]): StripRow[] {
   return rows;
 }
 
-export interface BackupRow {
-  id: string;
-  label: string;
-  value_text: string;
-  percent: number;
-  state: string;
-}
-
-// One meter per borg repository of the time since its newest archive, full at twice the monitor's max age, labelled
-// by host and the groups that name the repository.
-export function build_backup_rows(roots: readonly FleetMonitor[], statuses: Record<string, string>, latest: LatestMetric, now: number): BackupRow[] {
-  const rows: BackupRow[] = [];
-  for (const root of roots) {
-    for (const [leaf, path] of leaves_with_paths(root)) {
-      if (monitor_type(leaf) !== "borg") continue;
-      const label = [...path.slice(-1), leaf.name].join(" › ");
-      const newest = latest(leaf.id, "last_backup_epoch");
-      const max_age = Number(leaf.max_age ?? 86400) || 86400;
-      const state = statuses[leaf.id] ?? "unavailable";
-      if (newest === null) {
-        rows.push({ id: leaf.id, label: `${root.name} · ${label}`, value_text: "No archive yet", percent: 0, state });
-        continue;
-      }
-      const age = Math.max(0, now - newest);
-      rows.push({ id: leaf.id, label: `${root.name} · ${label}`, value_text: format_age(Math.trunc(age)), percent: fill_percent(age, max_age * BACKUP_SCALE), state });
-    }
-  }
-  return rows;
-}
-
 export interface DeployTile {
   id: string;
   name: string;
@@ -192,23 +158,21 @@ export function build_finding_rows(roots: readonly FleetMonitor[], latest: Lates
 
 // ── Reading the fleet ────────────────────────────────────────────────────────
 
-export type SectionName = "hosts" | "backups" | "deploys" | "findings";
+export type SectionName = "hosts" | "deploys" | "findings";
 
 export interface FleetModel {
   hosts?: HostTile[];
-  backups?: BackupRow[];
   deploys?: DeployTile[];
   findings?: FindingRow[];
 }
 
 // Every asked section's rows from the latest readings, plus each strip's recent history.
-export function read_fleet(engine: { db: Pick<DatabaseManager, "latest_statuses" | "latest_metric" | "metric_history"> }, roots: readonly FleetMonitor[], sections: ReadonlySet<SectionName>, strip_rows: readonly StripRow[], now: number = Date.now() / 1000): [FleetModel, (number | null)[][]] {
+export function read_fleet(engine: { db: Pick<DatabaseManager, "latest_statuses" | "latest_metric" | "metric_history"> }, roots: readonly FleetMonitor[], sections: ReadonlySet<SectionName>, strip_rows: readonly StripRow[]): [FleetModel, (number | null)[][]] {
   const db = engine.db;
   const statuses = db.latest_statuses();
   const latest: LatestMetric = (monitor_id, name) => db.latest_metric(monitor_id, name)?.value ?? null;
   const builders: Record<SectionName, () => unknown> = {
     hosts: () => build_host_tiles(roots, statuses),
-    backups: () => build_backup_rows(roots, statuses, latest, now),
     deploys: () => build_deploy_tiles(roots, statuses, latest),
     findings: () => build_finding_rows(roots, latest),
   };
@@ -227,29 +191,26 @@ export interface ReachabilityRow extends StripRow {
 export interface FleetView {
   hosts: HostTile[];
   reachability: ReachabilityRow[];
-  backups: BackupRow[] | null;
   deploys: DeployTile[] | null;
   findings: FindingRow[] | null;
 }
 
 // The fleet sections the overview shows, each null when the fleet has no monitors of its kind.
-export function fleet_view(engine: { plugins: readonly FleetMonitor[]; db: Pick<DatabaseManager, "latest_statuses" | "latest_metric" | "metric_history"> }, now: number = Date.now() / 1000): FleetView | null {
+export function fleet_view(engine: { plugins: readonly FleetMonitor[]; db: Pick<DatabaseManager, "latest_statuses" | "latest_metric" | "metric_history"> }): FleetView | null {
   const roots = primary_roots(engine);
   if (roots.length === 0) return null;
   const types = new Set([...iter_monitors(roots)].map(monitor_type));
   const sections = new Set<SectionName>(["hosts"]);
-  if (types.has("borg")) sections.add("backups");
   if (types.has("nixos_upgrade")) sections.add("deploys");
   if (types.has("vuln_scan")) sections.add("findings");
   const strips = build_strip_rows(roots);
-  const [model, histories] = read_fleet(engine, roots, sections, strips, now);
+  const [model, histories] = read_fleet(engine, roots, sections, strips);
   return {
     hosts: model.hosts ?? [],
     reachability: strips.map((row, index) => {
       const states = strip_states(histories[index]);
       return { ...row, states, share_text: up_share_text(states) };
     }),
-    backups: model.backups ?? null,
     deploys: model.deploys ?? null,
     findings: model.findings ?? null,
   };

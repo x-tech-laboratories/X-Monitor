@@ -25,7 +25,6 @@ export type SampleMonitor = Plugin & Partial<{
   cpu_warning: number | null;
   cpu_threshold: number | null;
   max_processes: number;
-  max_age: number;
   checks: { metric: string }[];
 }>;
 
@@ -210,14 +209,6 @@ function syncthing(_plugin: SampleMonitor, tick: number, seed: number): Reading 
     syncing ? "info" : "online", folders];
 }
 
-function borg(plugin: SampleMonitor, _tick: number, seed: number): Reading {
-  // One repository in five has missed its window, so the backups panel shows a late one.
-  const late = seed % 5 === 0;
-  const max_age = plugin.max_age ?? 86400;
-  const age = max_age * (late ? 1.4 : 0.25 + (seed % 3) * 0.15);
-  return [{ last_backup_epoch: Date.now() / 1000 - age, archive_count: 30 + (seed % 20), deduplicated_size: 400 + seed * 10, dedup_ratio: 2.4 }, late ? "failed" : "online"];
-}
-
 function nixos_upgrade(_plugin: SampleMonitor, _tick: number, seed: number): Reading {
   const drifting = seed % 4 === 1;
   const reboot = seed % 4 === 2;
@@ -323,7 +314,7 @@ type ParsedSample = (plugin: Plugin, tick: number, seed: number) => CollectResul
 
 export const READINGS: Record<string, Sample> = {
   cpu, memory, load, temperature, throughput, connections, processes, disk_io, disk_space, filesystems, zfs, smart,
-  uptime, http, ports, pihole, unbound, containers, syncthing, borg, nixos_upgrade, vuln_scan,
+  uptime, http, ports, pihole, unbound, containers, syncthing, nixos_upgrade, vuln_scan,
 };
 
 // Types whose sample runs the monitor's own parser on canned output, so each needs a real monitor.

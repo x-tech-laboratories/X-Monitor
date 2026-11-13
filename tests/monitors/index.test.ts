@@ -5,7 +5,7 @@ import { builtin_monitor_types } from "../../src/monitors/index.ts";
 
 // Every monitor type the Python app shipped, by the `type` a config names.
 const python_types = [
-  "attic_push", "blockurl", "borg", "btrfs", "cloud", "command", "connections", "containers", "cpu", "ddns_updater", "disk_io",
+  "attic_push", "blockurl", "btrfs", "cloud", "command", "connections", "containers", "cpu", "ddns_updater", "disk_io",
   "disk_space", "dns_record", "filesystems", "folders", "freshrss", "frigate", "gpu", "group", "host_control", "http",
   "interfaces", "interrupts", "journal", "load", "md", "memory", "mosquitto", "nix_gc", "nixos_upgrade", "oom",
   "package_updates", "pihole", "ports", "power", "processes", "push", "qbittorrent", "reboot_required", "service_list",

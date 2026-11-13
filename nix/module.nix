@@ -15,37 +15,13 @@ let
     literalExpression
     ;
 
-  # Recursively inject the default borg passphrase_file into every `borg`
-  # monitor that doesn't already set one, walking the nested plugin tree
-  # (borg monitors usually live under group `children`). The file is read by
-  # X-Monitor at runtime on this host, so the secret never enters the Nix store.
-  injectBorgPassphrase =
-    plugins:
-    map (
-      p:
-      let
-        withChildren =
-          if p ? children then p // { children = injectBorgPassphrase p.children; } else p;
-      in
-      if (p.type or null) == "borg" && !(p ? passphrase_file) && !(p ? passphrase) then
-        withChildren // { passphrase_file = cfg.borgPassphraseFile; }
-      else
-        withChildren
-    ) plugins;
-
-  withBorgPassphrase =
-    if cfg.settings != null && cfg.borgPassphraseFile != null && cfg.settings ? plugins then
-      cfg.settings // { plugins = injectBorgPassphrase cfg.settings.plugins; }
-    else
-      cfg.settings;
-
   # Merge in dashboard/API auth when both authUsername and authPasswordFile
   # are set. Only the password *path* is written to the generated YAML (which
   # lands in the Nix store) — X-Monitor reads the file itself at runtime, so the
   # password never enters the store.
   withAuth =
-    if withBorgPassphrase != null && cfg.authUsername != null && cfg.authPasswordFile != null then
-      withBorgPassphrase
+    if cfg.settings != null && cfg.authUsername != null && cfg.authPasswordFile != null then
+      cfg.settings
       // {
         auth =
           (cfg.settings.auth or { })
@@ -58,7 +34,7 @@ let
           };
       }
     else
-      withBorgPassphrase;
+      cfg.settings;
 
   finalSettings = withAuth;
 
@@ -141,24 +117,6 @@ in
       type = types.bool;
       default = false;
       description = "Open the dashboard port in the firewall.";
-    };
-
-    borgPassphraseFile = mkOption {
-      type = types.nullOr types.path;
-      default = null;
-      example = "/run/secrets/borg_laptop_passphrase";
-      description = ''
-        Path to a file on this host containing the passphrase for encrypted
-        borg repositories. Injected as `passphrase_file` into every `borg`
-        monitor in <option>settings</option> that does not set its own
-        `passphrase_file` or `passphrase`.
-
-        X-Monitor reads the file at runtime and passes the passphrase to the remote
-        borg command, so the secret lives only on the machine X-Monitor runs on —
-        the monitored hosts need no copy. Point this at a
-        sops-nix/agenix-managed secret readable by the X-Monitor service user; the
-        value never enters the Nix store.
-      '';
     };
 
     authUsername = mkOption {

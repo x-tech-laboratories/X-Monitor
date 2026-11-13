@@ -152,19 +152,6 @@ describe("summary", () => {
   });
 });
 
-describe("backup monitors", () => {
-  it("lists only backup monitors, stalest first", async () => {
-    const backup = (id: string, age: number | null) => fake_monitor(id, { config: { type: "borg" }, backup_summary: () => ({ repo: "/r", newest_archive_age: age, fresh: age !== null && age < 100 }) });
-    const db = new DatabaseManager();
-    db.insert_status("fresh", "online");
-    db.insert_status("old", "failed");
-    server = await serve(fake_engine([backup("fresh", 10), fake_monitor("cpu"), backup("never", null), backup("old", 500)], db), { auth_settings: {} });
-    const body = (await server.app.inject({ url: "/api/backups" })).json();
-    expect(body.repositories.map((row: { id: string }) => row.id)).toEqual(["never", "old", "fresh"]);
-    expect([body.total, body.healthy, body.unhealthy]).toEqual([3, 1, 2]);
-  });
-});
-
 describe("events and metrics", () => {
   it("filter events and clamp the limit", async () => {
     const db = new DatabaseManager();

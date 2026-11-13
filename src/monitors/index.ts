@@ -5,7 +5,6 @@ import type { PluginClass } from "./base/plugin_base.ts";
 export const builtin_monitor_types: Record<string, () => Promise<PluginClass>> = {
   attic_push: async () => (await import("./attic_push.ts")).AtticPush,
   blockurl: async () => (await import("./blockurl.ts")).Blockurl,
-  borg: async () => (await import("./borg/plugin.ts")).Borg,
   btrfs: async () => (await import("./btrfs.ts")).Btrfs,
   cloud: async () => (await import("./cloud.ts")).Cloud,
   command: async () => (await import("./command.ts")).CommandPlugin,

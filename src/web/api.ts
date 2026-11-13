@@ -19,7 +19,7 @@ export function use_feed_client_id(read: () => string): void {
 
 export const api = create_api({ open_paths: ["/api/login"], headers: (): Record<string, string> => (feed_client_id() ? { "x-client-id": feed_client_id() } : {}) });
 export const accounts = create_accounts_client();
-// The state database's backups; /api/backups is the backup monitors' list.
+// The state database's backups.
 export const backups = backup_client(api, "/api/state-backups");
 
 // Bumped whenever the server says something changed, so every open view loads again.
@@ -65,7 +65,6 @@ export interface HostTile {
 export interface FleetView {
   hosts: HostTile[];
   reachability: { id: string; host: string; name: string; metric: string; states: StripState[]; share_text: string }[];
-  backups: { id: string; label: string; value_text: string; percent: number; state: string }[] | null;
   deploys: { id: string; name: string; state: string; caption: string }[] | null;
   findings: { id: string; name: string; vulnerable: number; suspected: number; noted: number; text: string }[] | null;
 }
@@ -147,11 +146,6 @@ export interface JobLog {
   lines: { seq: number; stream: string; message: string; timestamp: string }[];
 }
 
-export interface BrowseFolder {
-  status: string;
-  rows: { name: string; path: string; dir: boolean; size: string; size_bytes: number | null; mtime: string }[];
-}
-
 // ── Calls ────────────────────────────────────────────────────────────────────
 
 // What a toggle or cell toggle sends.
@@ -178,7 +172,6 @@ export const calls = {
   renew_watch: (lease: string) => api<{ ok: boolean }>(`/api/job-watches/${encoded(lease)}/renew`, "POST"),
   end_watch: (lease: string) => api<{ ok: boolean }>(`/api/job-watches/${encoded(lease)}`, "DELETE"),
   open_child: (id: string, child_id: string, open: boolean) => api<{ open: boolean }>(`/api/monitors/${encoded(id)}/children/${encoded(child_id)}/open`, "POST", { open }),
-  browse: (id: string, archive: string, path: string) => api<BrowseFolder>(`/api/monitors/${encoded(id)}/browse?archive=${encoded(archive)}&path=${encoded(path)}`),
   mute: (id: string, muted: boolean) => api<{ message: string }>(`/api/monitors/${encoded(id)}/mute`, "POST", { muted }),
   // Python's REST event log, which the Events page reads.
   events: (filter: { level: string; target: string; search: string }) => api<EventRow[]>(`/api/events?limit=500&level=${encoded(filter.level)}&target=${encoded(filter.target)}&search=${encoded(filter.search)}`),

@@ -19,7 +19,6 @@ const job_id = { name: "job_id", schema: { type: "integer", description: "A job'
 export const api: ApiSpec<PublicMethods> = {
   get_health: { description: "Says the server is up.", params: [] },
   get_summary: { description: "Counts the monitors by status, leaving out plain groups, with `unhealthy` for everything not online or info.", params: [] },
-  list_backup_monitors: { description: "Lists every backup monitor's health, stalest first, with how many are healthy.", params: [] },
   list_monitors: { description: "Lists every monitor once, with its type, target, status and whether it holds children.", params: [] },
   get_monitor: { description: "Shows one monitor with its latest metrics and the ids of its header actions.", params: [monitor_id] },
   list_metrics: { description: "Lists the latest value of every metric of every monitor.", params: [] },
@@ -85,10 +84,6 @@ export const api: ApiSpec<PublicMethods> = {
       { name: "text", schema: { type: "string", default: "" }, optional: true },
       { name: "limit", schema: { type: "integer", minimum: 1, default: 500 }, optional: true },
     ],
-  },
-  get_archive_folder: {
-    description: "Lists one folder of a borg archive, listing it through the monitor first when it has not been listed yet.",
-    params: [monitor_id, { name: "archive", schema: { type: "string" } }, { name: "path", schema: { type: "string", default: "" }, optional: true }],
   },
   get_monitor_page: { description: "Shows everything a monitor's page draws: its header, its actions and their states, its notification state, its dialogs and its widgets with their readings.", params: [monitor_id] },
 };

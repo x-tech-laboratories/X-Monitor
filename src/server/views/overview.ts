@@ -144,14 +144,14 @@ export interface OverviewView {
   recent_events: Record<string, unknown>[];
 }
 
-export function overview_view(engine: { plugins: readonly OverviewMonitor[]; db: DatabaseManager }, now: number = Date.now() / 1000): OverviewView {
+export function overview_view(engine: { plugins: readonly OverviewMonitor[]; db: DatabaseManager }): OverviewView {
   const monitors = collect_leaf_monitors(engine.plugins);
   const statuses = engine.db.latest_statuses();
   const [status_counts, type_counts] = build_chart_counts(monitors, statuses);
   return {
     monitor_count: monitors.length,
     lede: `${monitors.length} monitor${monitors.length === 1 ? "" : "s"}`,
-    fleet: fleet_view(engine, now),
+    fleet: fleet_view(engine),
     status_counts,
     type_tiles: treemap_tiles(type_counts),
     monitors: build_table_rows(monitors, statuses),

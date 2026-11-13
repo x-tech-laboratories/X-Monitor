@@ -17,7 +17,6 @@ import type {
 import { row_params, substitute, title_words } from "../../shared/page_view.ts";
 import { calls } from "../api.ts";
 import { confirmed, notify, notify_error, StateValue, status_color, StatusDot, tone_of } from "../ui.tsx";
-import { ArchiveBrowser } from "./browser.tsx";
 import { open_job_log, open_spec_dialog } from "./dialogs.tsx";
 import { LogSearch } from "./logs.tsx";
 
@@ -307,7 +306,6 @@ export function Widget({ widget }: { widget: WidgetView }) {
     case "section": return <h3 className="section-title">{widget.title}</h3>;
     case "body": return <Body body={widget.body} />;
     case "log_search": return <LogSearch monitors={widget.monitors} show_host={widget.show_host} default_limit={widget.default_limit} />;
-    case "browser": return <ArchiveBrowser widget={widget} />;
     case "slot": return null;
   }
 }

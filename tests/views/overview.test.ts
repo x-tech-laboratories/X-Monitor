@@ -268,21 +268,6 @@ describe("the other fleet sections", () => {
     expect(fleet.build_strip_rows(roots()).map((row) => [row.host, row.name, row.metric])).toEqual([["Heimdall", "Availability", "up"], ["Odin", "Availability", "up"], ["Odin", "Web", "probe_ok"]]);
   });
 
-  it("fill a backup at its max age half way", () => {
-    const [row] = fleet.build_backup_rows(roots(), { "heimdall-disk": "online" }, readings({ "heimdall-disk/last_backup_epoch": 1000 }), 1000 + 86400);
-    expect(row.percent).toBeCloseTo(50);
-    expect(row.value_text).toBe("1 Day ago");
-  });
-
-  it("label a backup by its host and the tool that owns the repository", () => {
-    expect(fleet.build_backup_rows(roots(), {}, readings({}), 0)[0].label).toBe("Heimdall · Borgmatic › On Disk");
-  });
-
-  it("say so for a repository with no archive yet", () => {
-    const [row] = fleet.build_backup_rows(roots(), {}, readings({}), 0);
-    expect([row.value_text, row.percent, row.state]).toEqual(["No archive yet", 0, "unavailable"]);
-  });
-
   it("show a deployment's generation, sync, reboot and drift", () => {
     const [tile] = fleet.build_deploy_tiles(roots(), { "heimdall-nixos": "online" }, readings({ "heimdall-nixos/generation": 812, "heimdall-nixos/up_to_date": 1 }));
     expect([tile.name, tile.state, tile.caption]).toEqual(["Heimdall", "online", "gen 812 · in sync"]);
@@ -315,13 +300,12 @@ describe("reading the fleet", () => {
   });
 
   it("offers the sections the fleet has monitors for", () => {
-    const view = fleet.fleet_view({ plugins: roots(), db: empty_db as never }, 0)!;
+    const view = fleet.fleet_view({ plugins: roots(), db: empty_db as never })!;
     expect(view.hosts.map((host) => host.name)).toEqual(["Heimdall", "Odin"]);
     expect(view.reachability).toHaveLength(3);
-    expect(view.backups).toHaveLength(1);
     expect(view.deploys).toHaveLength(1);
     expect(view.findings).toHaveLength(1);
-    expect(fleet.fleet_view({ plugins: [fm("solo", "Solo", "cpu")], db: empty_db as never }, 0)!.backups).toBeNull();
+    expect(fleet.fleet_view({ plugins: [fm("solo", "Solo", "cpu")], db: empty_db as never })!.deploys).toBeNull();
   });
 });
 
