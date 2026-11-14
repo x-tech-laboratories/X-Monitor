@@ -2,6 +2,8 @@
 
 [![AI readiness](https://img.shields.io/endpoint?url=https://x-tech-laboratories.github.io/badges/x-tech-laboratories/X-Monitor.json)](https://x-tech-laboratories.github.io/guidelines/readiness/)
 
+<a href="https://liberapay.com/BeatLink/donate"><img alt="Donate using Liberapay" src="https://liberapay.com/assets/widgets/donate.svg"></a>
+
 X-Monitor is a web-based network and systems monitor for Linux hosts, homelabs and small networks, inspired by Uptime Kuma, Prometheus, Grafana and Loki. One dashboard watches your machines, services and devices, and can act on them too: restart a service, reboot a host, wake it over the network.
 
 ![The X-Monitor overview page on the demo fleet's sample data](docs/images/overview.png)
