@@ -5,6 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,3 +24,9 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run lint
+  # Refreshes a stale Nix npm deps hash on a pull request, and fails on one elsewhere.
+  npm-deps-hash:
+    uses: x-tech-laboratories/X-Libs/.github/workflows/npm-deps-hash.yml@main
+    permissions:
+      contents: write
+      actions: write
