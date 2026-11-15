@@ -1,6 +1,7 @@
 {
   lib,
   buildNpmPackage,
+  importNpmLock,
   nodejs_24,
   makeWrapper,
 }:
@@ -24,7 +25,9 @@ buildNpmPackage {
   };
 
   nodejs = nodejs_24;
-  npmDepsHash = import ./npm-deps-hash.nix;
+  # Read from package-lock.json, so there is no deps hash to keep in step with it.
+  npmDeps = importNpmLock { npmRoot = ../.; };
+  npmConfigHook = importNpmLock.npmConfigHook;
 
   nativeBuildInputs = [ makeWrapper ];
 
