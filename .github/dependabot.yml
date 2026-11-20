@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Keeps X-Libs and Halon on their latest releases, bumped together so the Halon peer of X-Libs matches.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: "@x-tech-laboratories/*"
+    groups:
+      x-tech:
+        patterns: ["@x-tech-laboratories/*"]
