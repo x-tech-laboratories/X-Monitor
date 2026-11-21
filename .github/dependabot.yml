@@ -10,3 +10,6 @@ updates:
     groups:
       x-tech:
         patterns: ["@x-tech-laboratories/*"]
+    # Our own releases skip the default 3-day cooldown, which X-Libs outpaces several times a day.
+    cooldown:
+      exclude: ["@x-tech-laboratories/*"]
