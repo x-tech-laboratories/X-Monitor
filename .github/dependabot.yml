@@ -1,15 +1,19 @@
 version: 2
 updates:
-  # Keeps X-Libs and Halon on their latest releases, bumped together so the Halon peer of X-Libs matches.
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: daily
-    allow:
-      - dependency-name: "@x-tech-laboratories/*"
+      interval: weekly
     groups:
+      # X-Libs and Halon in one pull request, so the Halon peer of X-Libs matches.
       x-tech:
         patterns: ["@x-tech-laboratories/*"]
+      # Third-party patch and minor updates in one pull request; a major update comes on its own.
+      npm:
+        patterns: ["*"]
+        exclude-patterns: ["@x-tech-laboratories/*"]
+        update-types: [minor, patch]
     # Our own releases skip the default 3-day cooldown, which X-Libs outpaces several times a day.
+    # Revisit once X-Libs stabilizes and releases slow down.
     cooldown:
       exclude: ["@x-tech-laboratories/*"]
