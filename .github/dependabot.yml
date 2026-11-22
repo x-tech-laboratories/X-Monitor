@@ -13,6 +13,10 @@ updates:
         patterns: ["*"]
         exclude-patterns: ["@x-tech-laboratories/*"]
         update-types: [minor, patch]
+    ignore:
+      # The types follow the Node runtime, 24 in CI and the flakes, so their majors move with it by hand.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     # Our own releases skip the default 3-day cooldown, which X-Libs outpaces several times a day.
     # Revisit once X-Libs stabilizes and releases slow down.
     cooldown:
