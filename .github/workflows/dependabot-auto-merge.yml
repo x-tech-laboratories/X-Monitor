@@ -8,11 +8,18 @@ permissions:
 
 jobs:
   auto-merge:
-    # Only Dependabot's grouped X-Libs and Halon bumps; the required checks on main still decide when it merges.
-    if: github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/npm_and_yarn/x-tech-')
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - run: gh pr merge --auto --merge "$PR_URL"
+      - id: meta
+        uses: dependabot/fetch-metadata@v3
+      # X-Libs and Halon merge at any version, since each 0.x minor of theirs breaks and CI with the nix build is the gate;
+      # other packages merge only for patch and minor updates. The required checks on main still decide when.
+      - if: >-
+          steps.meta.outputs.dependency-group == 'x-tech' ||
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
