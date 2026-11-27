@@ -153,6 +153,15 @@ describe("the gate", () => {
     expect(response.headers["www-authenticate"]).toBeUndefined();
   });
 
+  it("refuses an unsigned request to the API, and its percent-encoded path too", async () => {
+    const app = await app_with_routes();
+    expect((await app.inject({ url: "/api/monitors" })).statusCode).toBe(401);
+    for (const url of ["/%61pi/monitors", "/api/%6donitors", "/%61pi/mcp"]) {
+      expect([400, 401]).toContain((await app.inject({ url })).statusCode);
+    }
+    expect([400, 401]).toContain((await app.inject({ method: "POST", url: "/%61pi/monitors/web/poll" })).statusCode);
+  });
+
   it("signs the configured user in, names them, and refuses a wrong password", async () => {
     const app = await app_with_routes();
     const headers = await sign_in(server!);
