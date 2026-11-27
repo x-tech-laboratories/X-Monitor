@@ -27,7 +27,7 @@
     "@fastify/formbody": "^9.0.2",
     "@fastify/rate-limit": "^11.3.0",
     "@fastify/session": "^11.2.1",
-    "@fastify/static": "^10.1.12",
+    "@fastify/static": "^11.0.0",
     "@fastify/websocket": "^11.3.5",
     "@modelcontextprotocol/server": "^2.4.0",
     "@x-tech-laboratories/halon": "^0.32.1",
