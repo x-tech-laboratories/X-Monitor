@@ -1,6 +1,6 @@
 # Instructions for AI agents
 
-X-Monitor is a network and system monitor for Linux written in TypeScript: a Fastify server, a React page on X-Libs
+X-Monitor is a network and system monitor for Linux written in TypeScript: a Fastify server, a React page on X-App
 and Halon, and an optional agent for monitored hosts. Read `README.md` first; the design is in `docs/develop.md`.
 
 ## Setup and checks
@@ -25,7 +25,7 @@ and Halon, and an optional agent for monitored hosts. Read `README.md` first; th
   [Design Guidelines](https://x-tech-laboratories.github.io/standards/design/), whose source is `src/content/docs/standards/`
   in [x-tech-laboratories.github.io](https://github.com/x-tech-laboratories/x-tech-laboratories.github.io). Ask before
   changing either, since a change applies to every X-app.
-- Use [X-Libs](https://github.com/x-tech-laboratories/X-Libs) and Halon ([X-Themes](https://github.com/x-tech-laboratories/X-Themes))
-  before writing your own code: check the module table in the X-Libs README first.
-- A feature another app could use belongs in X-Libs, or Halon for styling, with tests and a README row. If that is out
-  of reach, add it to the candidates in X-Libs' `docs/TODO.md`.
+- Use [X-App](https://github.com/x-tech-laboratories/X-App) and Halon ([X-Themes](https://github.com/x-tech-laboratories/X-Themes))
+  before writing your own code: check the module table in the X-App README first.
+- A feature another app could use belongs in X-App, or Halon for styling, with tests and a README row. If that is out
+  of reach, add it to the candidates in X-App's `docs/TODO.md`.
